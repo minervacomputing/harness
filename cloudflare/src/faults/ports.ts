@@ -30,8 +30,10 @@
 // Each model call and tool execution pi starts is counted per run (`FaultPlan.entered`), the run being the newest that names
 // the call's session.
 //
-// A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline, and one whose plan sets `retention`
-// keeps what it holds for those periods instead of RETENTION's (docs/plans/chunk-15a-design.md, Periods), such as minutes.
+// A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline, one whose plan sets `pi_settle_ms`
+// lets a start wait that long for pi's earlier work before it resets the object (the bound, pi-stops.ts), and one whose plan
+// sets `retention` keeps what it holds for those periods instead of RETENTION's (docs/plans/chunk-15a-design.md, Periods),
+// such as minutes.
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
 //
@@ -242,6 +244,10 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 		runTimeoutMs: (context) => {
 			const configured = planOf(context.ctx).config("run_timeout_ms");
 			return configured === null ? base.runTimeoutMs(context) : Number(configured);
+		},
+		piSettleMs: (context) => {
+			const configured = planOf(context.ctx).config("pi_settle_ms");
+			return configured === null ? base.piSettleMs(context) : Number(configured);
 		},
 		retention: (ctx) => {
 			const configured = planOf(ctx).config("retention");

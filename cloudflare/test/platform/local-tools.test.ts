@@ -4,15 +4,16 @@
 // EU bucket, and a conversation's container played by test/platform/sandbox-memory.ts (local workerd has no containers).
 // Covered: results held until a checkpoint saved them and their cards after, phases, the final rehash, the folder version
 // published with the run's changes and warnings, a turn that only reads, the run's container destroyed at its end, a cancelled
-// run's end marking the work of a command pi's abort does not end, a deletion that waits for such a command, a folder over its
-// limits (folder_limit and its message), a container that fails its hardening (worker_failed) or never starts (attempts until
-// worker_exited), and crashes between a checkpoint's upload and its record, its record and the release, and the release and
-// pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
+// run's end marking the work of a command pi's abort does not end, a deletion that waits for such a command, the next start
+// waiting for it (and its bound, and a start cancelled while it waits), a folder over its limits (folder_limit and its
+// message), a container that fails its hardening (worker_failed) or never starts (attempts until worker_exited), and crashes
+// between a checkpoint's upload and its record, its record and the release, and the release and pi's commit (the Checkpoints
+// row of ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
 
 import { env } from "cloudflare:workers";
 import type { RunEvent } from "@minerva/contract";
 import type { Fact, Scope } from "@minerva/contract/internal";
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { filesBucket } from "../../src/addressing.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
@@ -69,13 +70,13 @@ interface World {
 	sandbox: MemorySandbox;
 }
 
-async function world(options: { faults?: Fault[] } = {}): Promise<World> {
+async function world(options: { faults?: Fault[]; piSettleMs?: number } = {}): Promise<World> {
 	const within = scope();
 	const conversationId = uuid7();
 	const sandbox = new MemorySandbox(() => filesBucket(env, { id: within.workspace, jurisdiction: "eu" }));
 	SANDBOXES.set(conversationId, sandbox);
 	const conversation = () => objectOf({ scope: within, conversation: conversationId });
-	if (options.faults) await conversation().faultPlan(options.faults);
+	if (options.faults) await conversation().faultPlan(options.faults, { piSettleMs: options.piSettleMs });
 	return {
 		within,
 		conversationId,
@@ -150,6 +151,48 @@ function phases(events: RunEvent[]): string[] {
 
 function restarts(events: RunEvent[]): number[] {
 	return events.flatMap((event) => (event.type === "status" && "attempt" in event.data ? [event.data.attempt as number] : []));
+}
+
+/** Waits until the object logged that it reached a fault point. */
+async function reached(w: World, point: string): Promise<void> {
+	await until(
+		async () => (await w.conversation.faultFired()).map((entry) => entry.point),
+		(points) => points.includes(point),
+	);
+}
+
+function cancel(w: World, runId: RunId) {
+	return commands.cancelRun({ scope: w.within, conversation: w.conversationId, run: runId, reason: "cancelled" });
+}
+
+/**
+ * From the run's start, which its section shows inside the lane before its wait, for 1 s while an earlier run's command is
+ * held: no model call or tool execution, and no pi session, so no `run:<id>` submission.
+ */
+async function waits(w: World, runId: RunId): Promise<void> {
+	await until(async () => phases(await eventsOf(w, runId)), (all) => all.includes("Starting the agent"));
+	await sleep(1000);
+	const run = await w.conversation.faultRun(runId);
+	expect([run.entered, run.run?.session]).toEqual([{ model: 0, tool: 0 }, null]);
+}
+
+/** The run completes in its first attempt, its first model call begun once the held run's `bash` task ended, on one clock. */
+async function completesAfter(w: World, runId: RunId, held: RunId): Promise<void> {
+	expect((await settled(w, runId)).status).toBe("completed");
+	const run = await w.conversation.faultRun(runId);
+	expect(run.attempts).toEqual([{ attempt: 1, ended: "completed" }]);
+	const bash = (await w.conversation.faultRun(held)).piTasks.find((task) => task.kind === "pi.tool");
+	expect(run.marks[0]?.begin).toBeGreaterThanOrEqual(bash?.endedAt ?? Number.POSITIVE_INFINITY);
+}
+
+/** The console's warnings while `body` runs. */
+async function warnings(body: (lines: () => string[]) => Promise<void>): Promise<void> {
+	const warned = vi.spyOn(console, "warn");
+	try {
+		await body(() => warned.mock.calls.map((args) => args.map(String).join(" ")));
+	} finally {
+		warned.mockRestore();
+	}
 }
 
 const call = (name: string, args: { [key: string]: unknown }): FakeTurn => ({ tools: [{ name, arguments: args as never }] });
@@ -321,6 +364,61 @@ describe("the local tools in the conversation", () => {
 			["pi.generation", "terminal", true],
 			["pi.tool", "terminal", true],
 		]);
+	});
+
+	test("a start waits until a cancelled run's command, which pi's abort does not end, has ended, then runs in its first attempt", async () => {
+		const w = await world({ faults: [{ point: "local:released", mode: "hold", tool: "bash" }] });
+		await warnings(async (lines) => {
+			const a = await post(w, [bash("echo hi"), DONE]);
+			await reached(w, "local:released");
+			expect(await cancel(w, a)).toEqual({ state: "cancelled" });
+			const b = await post(w, [DONE]);
+			await waits(w, b);
+			await w.conversation.faultRelease("local:released");
+			await completesAfter(w, b, a);
+			expect(lines()).toContainEqual(expect.stringContaining(`run ${a}'s call bash answered after the run ended; its result is refused (run ${b} acts now)`));
+		});
+	});
+
+	test("a start whose wait passes the bound resets the object once, and runs in its first attempt in the next instance", async () => {
+		const w = await world({ faults: [{ point: "local:released", mode: "hold", tool: "bash" }], piSettleMs: 2000 });
+		await warnings(async (lines) => {
+			const a = await post(w, [bash("echo hi"), DONE]);
+			await reached(w, "local:released");
+			expect(await cancel(w, a)).toEqual({ state: "cancelled" });
+			const entered = (await w.conversation.faultRun(a)).entered;
+			const b = await post(w, [DONE]);
+			expect((await settled(w, b)).status).toBe("completed");
+			const bound = `run ${b} could not start: pi's earlier work did not end within 2 s`;
+			expect(lines().filter((line) => line.includes(bound))).toHaveLength(1);
+			expect((await w.conversation.faultRun(b)).attempts).toEqual([{ attempt: 1, ended: "completed" }]);
+			expect(restarts(await eventsOf(w, b))).toEqual([]);
+			const left = await w.conversation.faultRun(a);
+			expect(left.piTasks.map(({ kind, status, abortRequested }) => [kind, status, abortRequested])).toEqual([
+				["pi.generation", "terminal", true],
+				["pi.tool", "terminal", true],
+			]);
+			expect([entered, left.entered]).toEqual([
+				{ model: 1, tool: 1 },
+				{ model: 1, tool: 1 },
+			]);
+		});
+	});
+
+	test("a start cancelled while it waits configures nothing, and the next start waits for the same command", async () => {
+		const w = await world({ faults: [{ point: "local:released", mode: "hold", tool: "bash" }] });
+		const a = await post(w, [bash("echo hi"), DONE]);
+		await reached(w, "local:released");
+		expect(await cancel(w, a)).toEqual({ state: "cancelled" });
+		const b = await post(w, [DONE]);
+		await waits(w, b);
+		expect(await cancel(w, b)).toEqual({ state: "cancelled" });
+		const c = await post(w, [DONE]);
+		await waits(w, c);
+		await w.conversation.faultRelease("local:released");
+		await completesAfter(w, c, a);
+		const cancelled = await w.conversation.faultRun(b);
+		expect([cancelled.run?.status, cancelled.run?.session, cancelled.entered, cancelled.piTasks]).toEqual(["cancelled", null, { model: 0, tool: 0 }, []]);
 	});
 });
 

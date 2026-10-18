@@ -24,6 +24,7 @@ import type { Attachment, Folder } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type RunStatus, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import type { GateDecision } from "./gate.ts";
 import type { SandboxPort } from "./local-run.ts";
+import { PI_SETTLE_MS } from "./pi-stops.ts";
 import { RETENTION, type RetentionPeriods } from "./retention.ts";
 import type { Published, RunStore } from "./store.ts";
 
@@ -140,6 +141,8 @@ export interface ConversationPorts {
 	sandbox(context: PortsContext): SandboxPort;
 	/** The deadline a Laravel run starts with, in ms from its start; null for none. The setting, unless the test build's plan sets one. */
 	runTimeoutMs(context: PortsContext): number | null;
+	/** How long a start waits for pi's earlier work before the object resets (pi-stops.ts): PI_SETTLE_MS, unless the test build's plan sets one. */
+	piSettleMs(context: PortsContext): number;
 	/** What the conversation keeps and how long (retention.ts): RETENTION, unless the test build's plan shortens it. */
 	retention(ctx: DurableObjectState): RetentionPeriods;
 	/**
@@ -273,6 +276,7 @@ export const defaultPorts: ConversationPorts = {
 	fetch: () => (input, init) => fetch(input, init),
 	sandbox: ({ env, ctx, workspace, conversationId }) => sandboxObject(env, ctx.exports, workspace, conversationId) as unknown as SandboxPort,
 	runTimeoutMs: ({ env }) => settings(env).runTimeoutMs,
+	piSettleMs: () => PI_SETTLE_MS,
 	retention: () => RETENTION,
 };
 

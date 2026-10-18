@@ -2,8 +2,9 @@
 // run's operation does not own (pi-work.ts `belongs`) is orphaned, and a stop marks orphans one by one with `abortTask`. It
 // never aborts a whole pi conversation and never withdraws a submission, so the active run's work is never touched. Marking
 // and settling stay apart, as pi's calls do: `abortTask` resolves once its mark is committed and the run invocation it saw
-// ended, not once the task is terminal, which only `waitForTask` shows. pi is passed to each call and the operation read
-// through the host, so unit tests run this class on pi over node:sqlite.
+// ended, not once the task is terminal, which only `waitForTask` shows. Starts run one at a time in its lane, each waiting
+// for the orphans to end before it configures pi or submits (The start's wait). pi is passed to each call and the operation
+// read through the host, so unit tests run this class on pi over node:sqlite.
 
 import type { Harness, TaskRecord } from "@earendil-works/pi-durable";
 import { belongs, type Operation } from "./pi-work.ts";
@@ -11,11 +12,25 @@ import { belongs, type Operation } from "./pi-work.ts";
 /** chord's background context: never cancelled, no values. */
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context minerva-pi-stops]" });
 
-/** What a stop reads besides pi: the acting run's operation, and where a failed mark is logged. */
+/** How long a start waits for pi's earlier work in production, from when its section is queued, before the object resets. */
+export const PI_SETTLE_MS = 30_000;
+
+/** What a stop reads besides pi: the acting run's operation, the bound on a start's wait, and where a failure is logged. */
 export interface PiStopsHost {
 	/** The acting run's operation, or null when no run acts, which leaves every live task orphaned. */
 	operation(): Promise<Operation | null>;
+	/** How long a start's section may wait, in the lane and in its settle, in ms from when it is queued. */
+	bound(): number;
 	log(message: string, error: unknown): void;
+}
+
+/** What a start's section waits with. */
+export interface Section {
+	/**
+	 * A settle until `end` or the section's deadline aborts; true when the start may go on, which neither did. Once it
+	 * answers, the section no longer waits, and its deadline resets nothing.
+	 */
+	settle(pi: Pick<Harness, "inspect" | "abortTask" | "waitForTask">, end: AbortSignal): Promise<boolean>;
 }
 
 /** One mark: the live tasks it found orphaned, background ones included, and the end of their marks. */
@@ -27,6 +42,8 @@ export interface Marked {
 
 export class PiStops {
 	readonly #host: PiStopsHost;
+	/** The end of the last section queued, never rejected. */
+	#lane: Promise<void> = Promise.resolve();
 
 	constructor(host: PiStopsHost) {
 		this.#host = host;
@@ -68,5 +85,37 @@ export class PiStops {
 				return;
 			}
 		}
+	}
+
+	/**
+	 * A start's section: `fn` runs once every section queued before it has ended, whether it threw or not, so no start
+	 * configures pi or submits while an earlier one is between its checks and its submit. Its deadline is `bound()` ms after
+	 * this call, so it covers the time in the lane and the wait. If it passes while the section still waits, `expired` is
+	 * called once; a section whose deadline passed in the lane never runs. Its timer is cleared once it ended.
+	 */
+	section(fn: (section: Section) => Promise<void>, expired: (bound: number) => Promise<void>): Promise<void> {
+		const bound = this.#host.bound();
+		const deadline = new AbortController();
+		let waiting = true;
+		const timer = setTimeout(() => {
+			deadline.abort(new Error(`pi's earlier work did not end within ${bound} ms.`));
+			if (waiting) expired(bound).catch((error: unknown) => this.#host.log("a start past its bound failed", error));
+		}, bound);
+		const section: Section = {
+			settle: async (pi, end) => {
+				await this.settle(pi, AbortSignal.any([end, deadline.signal]));
+				// In the stretch that reads both signals: the timer either fired before it, or finds the wait over.
+				waiting = false;
+				return !end.aborted && !deadline.signal.aborted;
+			},
+		};
+		const ran = this.#lane
+			.then(() => (deadline.signal.aborted ? undefined : fn(section)))
+			.finally(() => {
+				waiting = false;
+				clearTimeout(timer);
+			});
+		this.#lane = ran.catch(() => {});
+		return ran;
 	}
 }

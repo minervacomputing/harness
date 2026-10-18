@@ -1,14 +1,24 @@
-// Stopping pi's work by its run (src/conversation/pi-stops.ts; docs/plans/chunk-19a-design.md, U5): the production class
-// over pi-durable's own Harness on PiHarness's session store, opened and resumed as PiHarness does with the Conversation's
-// settings, and tools of the test's own. Runs share one session, as chunk 19b makes every turn of a conversation do, and
-// the acting run's operation is read as the Conversation reads it (pi-work.ts `operationOf`).
+// Stopping pi's work by its run, and the starts' lane (src/conversation/pi-stops.ts; docs/plans/chunk-19a-design.md, U5): the
+// production class over pi-durable's own Harness on PiHarness's session store, opened and resumed as PiHarness does with the
+// Conversation's settings, and tools and a task kind of the test's own. Runs share one session, as chunk 19b makes every turn
+// of a conversation do, and the acting run's operation is read as the Conversation reads it (pi-work.ts `operationOf`).
 
 import { createModels, type FauxProviderHandle, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
-import { type Conversation, type ConversationId, createRegistry, defineTool, Harness, type Submission, type SubmissionRecord, type TaskId } from "@earendil-works/pi-durable";
+import {
+	type Conversation,
+	type ConversationId,
+	createRegistry,
+	defineTask,
+	defineTool,
+	Harness,
+	type Submission,
+	type SubmissionRecord,
+	type TaskId,
+} from "@earendil-works/pi-durable";
 import type { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
 import { openPiSessionStore } from "agents/harness/pi";
 import { afterEach, describe, expect, test } from "vitest";
-import { PiStops } from "../../src/conversation/pi-stops.ts";
+import { PI_SETTLE_MS, PiStops } from "../../src/conversation/pi-stops.ts";
 import { operationOf, PI_SETTINGS } from "../../src/conversation/pi-work.ts";
 import { durableStorage, openDatabase } from "./sqlite.ts";
 
@@ -55,6 +65,21 @@ const stubborn = defineTool({
 	},
 });
 
+/** A background task whose invocation runs until it is released, whatever pi's abort says. */
+const background = defineTask<Record<string, never>, { phase: "run" }, null>({
+	name: "test.background",
+	version: 1,
+	initial: () => ({ phase: "run" }),
+	phases: {
+		async run(task, runtime) {
+			await holding(task.id, runtime.signal, true);
+		},
+	},
+	async abort(_task, runtime, context) {
+		await runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context);
+	},
+});
+
 const opened: Harness[] = [];
 afterEach(async () => {
 	for (const release of releases.splice(0)) release();
@@ -73,14 +98,17 @@ interface Pi {
 	logged: string[];
 }
 
-/** pi on a Conversation's storage, opened, rooted and resumed as PiHarness does, with one session for the runs and its stops. */
-async function openPi(): Promise<Pi> {
+/**
+ * pi on a Conversation's storage, opened, rooted and resumed as PiHarness does, with one session for the runs and its stops,
+ * whose starts may wait `bound` ms.
+ */
+async function openPi(bound = PI_SETTLE_MS): Promise<Pi> {
 	const storage = await openPiSessionStore(durableStorage(openDatabase()));
 	const faux = fauxProvider();
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const registry = createRegistry();
-	registry.install({ name: "minerva", tools: [hold, stubborn] });
+	registry.install({ name: "minerva", tools: [hold, stubborn], tasks: [background] });
 	const harness = await Harness.open(storage, { models, registry, settings: PI_SETTINGS }, BG);
 	opened.push(harness);
 	await harness.root(BG);
@@ -94,6 +122,7 @@ async function openPi(): Promise<Pi> {
 	const logged: string[] = [];
 	const stops = new PiStops({
 		operation: async () => (acting === null ? null : operationOf(storage, { id: acting, session: String(conversation.id) })),
+		bound: () => bound,
 		log: (message) => logged.push(message),
 	});
 	return { harness, storage, faux, session: conversation.id, conversation, stops, act: (run) => (acting = run), logged };
@@ -127,6 +156,12 @@ async function tasksOf(pi: Pi, runs: { run: string; submission: number }[]) {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** What a section does once its bound passed while it waited: logged, so a test that expects none finds it. */
+const expired = (pi: Pi) => async (bound: number) => void pi.logged.push(`the bound of ${bound} ms passed`);
+
+/** The end signal of a run that never ends. */
+const noEnd = () => new AbortController().signal;
 
 const A = "0199a000-0000-7000-8000-00000000000a";
 const B = "0199a000-0000-7000-8000-00000000000b";
@@ -193,6 +228,7 @@ describe("stopping pi's work by its run, on one session two runs share", () => {
 				submitted.resolve(await submit(pi, B, "Hold, then answer"));
 				return op;
 			},
+			bound: () => PI_SETTLE_MS,
 			log: (message) => pi.logged.push(message),
 		});
 		const { orphans, marked } = await end.mark(pi.harness);
@@ -251,5 +287,117 @@ describe("stopping pi's work by its run, on one session two runs share", () => {
 			[A, "pi.generation", "terminal", true],
 			[A, "pi.tool", "terminal", true],
 		]);
+	});
+});
+
+describe("the starts' lane, on one session two runs share", () => {
+	test("A's section, held at its submit while A is cancelled, ends before B's starts; B's wait settles A's input, and B answers in its own run", async () => {
+		const pi = await openPi();
+		pi.faux.setResponses([call("hold"), fauxAssistantMessage(fauxText("B's answer"))]);
+		const order: string[] = [];
+		const aEnd = new AbortController();
+		const aAtSubmit = Promise.withResolvers<void>();
+		const aSubmits = Promise.withResolvers<void>();
+		let a: Awaited<ReturnType<typeof submit>> | undefined;
+		pi.act(A);
+		const aSection = pi.stops.section(async (section) => {
+			expect(await section.settle(pi.harness, aEnd.signal)).toBe(true);
+			aAtSubmit.resolve();
+			await aSubmits.promise;
+			// Its tool started, so A's generation, not B's, takes the first answer.
+			const aStarted = started();
+			a = await submit(pi, A, "Hold");
+			await aStarted;
+			order.push("A submitted");
+		}, expired(pi));
+		await aAtSubmit.promise;
+
+		aEnd.abort();
+		pi.act(B);
+		let aAtWait: SubmissionRecord["status"] | undefined;
+		let b: Awaited<ReturnType<typeof submit>> | undefined;
+		const bSection = pi.stops.section(async (section) => {
+			order.push("B started");
+			expect(await section.settle(pi.harness, noEnd())).toBe(true);
+			aAtWait = await status(pi, A);
+			b = await submit(pi, B, "Answer");
+		}, expired(pi));
+		await sleep(200);
+		expect(order).toEqual([]);
+
+		aSubmits.resolve();
+		await aSection;
+		await bSection;
+		expect(order).toEqual(["A submitted", "B started"]);
+		expect(a?.committed).toBe("placed");
+		expect(aAtWait).toBe("unanswered");
+		expect(b?.committed).toBe("placed");
+		const answered = await b?.submission.wait(BG);
+		expect(answered?.status).toBe("done");
+		await pi.conversation.waitForIdle(BG);
+		expect(
+			await tasksOf(pi, [
+				{ run: A, submission: a?.submission.id ?? 0 },
+				{ run: B, submission: b?.submission.id ?? 0 },
+			]),
+		).toEqual([
+			[A, "pi.generation", "terminal", true],
+			[A, "pi.tool", "terminal", true],
+			[B, "pi.generation", "terminal", false],
+		]);
+		expect(pi.logged).toEqual([]);
+	});
+
+	test("a background invocation that ignores its signal is marked, and B's wait goes on without it", async () => {
+		const pi = await openPi();
+		pi.faux.setResponses([fauxAssistantMessage(fauxText("B's answer"))]);
+		const running = started();
+		const task = await pi.conversation.commit((tx) => tx.createTask(background, {}, { ownership: { kind: "conversation" }, background: true }), BG);
+		const held = await running;
+		expect(held.task).toBe(task);
+
+		pi.act(B);
+		let b: Awaited<ReturnType<typeof submit>> | undefined;
+		await pi.stops.section(async (section) => {
+			expect(await section.settle(pi.harness, noEnd())).toBe(true);
+			b = await submit(pi, B, "Answer");
+		}, expired(pi));
+		await expect.poll(async () => (await pi.storage.task(task, BG))?.abortRequested).toBe(true);
+		expect((await pi.storage.task(task, BG))?.state.status).toBe("running");
+		expect(b?.committed).toBe("placed");
+		expect((await b?.submission.wait(BG))?.status).toBe("done");
+
+		held.release();
+		await expect.poll(async () => (await pi.storage.task(task, BG))?.state.status).toBe("terminal");
+		expect(pi.logged).toEqual([]);
+	});
+
+	test("a section that throws does not stop the next, and a section's timer fires only while it waits", async () => {
+		const pi = await openPi(300);
+		const failed = pi.stops.section(async () => {
+			throw new Error("The section failed.");
+		}, expired(pi));
+		let next: boolean | undefined;
+		const after = pi.stops.section(async (section) => {
+			next = await section.settle(pi.harness, noEnd());
+		}, expired(pi));
+		await expect(failed).rejects.toThrow("The section failed.");
+		await after;
+		expect(next).toBe(true);
+
+		pi.faux.setResponses([call("stubborn")]);
+		pi.act(A);
+		const aStarted = started();
+		await submit(pi, A, "Run until released");
+		const held = await aStarted;
+		pi.act(B);
+		let waited: boolean | undefined;
+		await pi.stops.section(async (section) => {
+			waited = await section.settle(pi.harness, noEnd());
+		}, expired(pi));
+		expect(waited).toBe(false);
+		await sleep(400);
+		expect(pi.logged).toEqual(["the bound of 300 ms passed"]);
+		held.release();
 	});
 });

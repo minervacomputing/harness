@@ -78,7 +78,7 @@ import { FactDelivery } from "./delivery.ts";
 import { BACKLOG_MESSAGE, FACT_DELIVERY } from "./facts.ts";
 import { laravelCredentials } from "./laravel-runs.ts";
 import { destroyRunSandbox, LocalRun } from "./local-run.ts";
-import { PiStops } from "./pi-stops.ts";
+import { PiStops, type Section } from "./pi-stops.ts";
 import { type Admission, admitModel, admitTool, operationOf, PI_SETTINGS, piWork, type ToolAdmission } from "./pi-work.ts";
 import { type ConversationPorts, type FolderPort, PORTS, type PortsContext, runStatePort, type WriteLedger } from "./ports.ts";
 import { ToolQueue, untilAborted } from "./queue.ts";
@@ -202,12 +202,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	readonly #saving = new Set<RunId>();
 	/** Local calls waiting for their run's container to be ready ("Preparing files"), by run. */
 	readonly #waiting = new Map<RunId, number>();
-	/** pi's stops (pi-stops.ts), against the acting run's operation as the factory's storage holds it. */
+	/** pi's stops and the starts' lane (pi-stops.ts), against the acting run's operation as the factory's storage holds it. */
 	readonly #stops = new PiStops({
 		operation: async () => {
 			const run = this.#store.activeRun();
 			return run !== null && ACTING.has(run.status) && this.#piStorage !== null ? operationOf(this.#piStorage, run) : null;
 		},
+		bound: () => this.#ports.piSettleMs(this.#portsContext() as PortsContext),
 		log: (message, error) => this.#log(message, error),
 	});
 
@@ -544,49 +545,77 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * The loop starts: `running` (once per attempt), the run's tools installed, its pi session created with
-	 * the history replay (only here, never on resume), and its prompt submitted once, as `run:<id>`.
+	 * The loop starts, in PiStops's lane (docs/plans/chunk-19a-design.md, The start's wait). Not awaited by the events that
+	 * start it: its wait can last until the bound.
 	 */
 	#startLoop(runId: RunId): Promise<void> {
 		const running = this.#loops.get(runId);
 		if (running) return running;
-		const work = (async () => {
-			const run = this.#store.run(runId);
-			if (!run || !ACTING.has(run.status)) return;
-			const fence = { runId, attempt: run.attempt };
-			if (!this.#store.isCurrent(fence)) return;
-			// Outside pi's transactions (store.ts `outside`): its `run.status` fact must not roll back.
-			await this.#store.outside(() => this.#store.startAttempt(fence));
-			this.#phase(fence, this.#restarted.has(runId) ? "Resuming the agent" : "Starting the agent");
-			this.#installTools(run);
-			let session = run.session;
-			// The turn came with its start, its history selected and clipped (internal/start.ts).
-			const { instructions, turn } = this.#store.snapshot(run);
-			if (session === null) {
-				const pi = await this.harness.pi();
-				let providerSession: string | null = null;
-				const created = await pi.createConversation(
-					{
-						ownership: { kind: "ownerless" },
-						agent: { model: { ...MODEL_REF }, instructions: sessionInstructions(instructions, LOCAL_TOOLS) },
-						init: async (tx: Tx, id: PiConversationId) => {
-							providerSession = (await tx.doc(ProviderDoc, id)).sessionId;
-							await replay(tx, id, turn.history);
-						},
-					},
-					BG,
-				);
-				// A reset here leaves a session no run names, which retention deletes once no run is active.
-				await this.#point("loop:created", String(created.id));
-				session = await this.#store.outside(() => this.#store.claimSession(runId, String(created.id), providerSession));
-			}
-			if (session === null || !this.#store.isCurrent(fence)) return;
-			this.#prepareLocal(run);
-			this.#showPhase(fence);
-			await this.harness.submit(turn.prompt, { session, operationId: `run:${runId}` });
-		})().finally(() => this.#loops.delete(runId));
+		const work = this.#stops
+			.section(
+				(section) => this.#startSection(runId, section),
+				(bound) => this.#startTimedOut(runId, bound),
+			)
+			.finally(() => this.#loops.delete(runId));
 		this.#loops.set(runId, work);
 		return work;
+	}
+
+	/**
+	 * A start's section: `running` (once per attempt), then a wait until no live pi work is another run's, which the run's
+	 * end or the bound cuts short; then the run's tools installed, its pi session created with the history replay (only here,
+	 * never on resume), and its prompt submitted once, as `run:<id>`.
+	 */
+	async #startSection(runId: RunId, section: Section): Promise<void> {
+		const run = this.#store.run(runId);
+		if (!run || !ACTING.has(run.status)) return;
+		const fence = { runId, attempt: run.attempt };
+		if (!this.#store.isCurrent(fence)) return;
+		// In the check's synchronous stretch: `#controller` would make a new controller for a run that has ended.
+		const ended = this.#controller(runId).signal;
+		// Outside pi's transactions (store.ts `outside`): its `run.status` fact must not roll back.
+		await this.#store.outside(() => this.#store.startAttempt(fence));
+		this.#phase(fence, this.#restarted.has(runId) ? "Resuming the agent" : "Starting the agent");
+		if (!(await section.settle(await this.harness.pi(), ended)) || !this.#store.isCurrent(fence)) return;
+		this.#installTools(run);
+		let session = run.session;
+		// The turn came with its start, its history selected and clipped (internal/start.ts).
+		const { instructions, turn } = this.#store.snapshot(run);
+		if (session === null) {
+			const pi = await this.harness.pi();
+			let providerSession: string | null = null;
+			const created = await pi.createConversation(
+				{
+					ownership: { kind: "ownerless" },
+					agent: { model: { ...MODEL_REF }, instructions: sessionInstructions(instructions, LOCAL_TOOLS) },
+					init: async (tx: Tx, id: PiConversationId) => {
+						providerSession = (await tx.doc(ProviderDoc, id)).sessionId;
+						await replay(tx, id, turn.history);
+					},
+				},
+				BG,
+			);
+			// A reset here leaves a session no run names, which retention deletes once no run is active.
+			await this.#point("loop:created", String(created.id));
+			session = await this.#store.outside(() => this.#store.claimSession(runId, String(created.id), providerSession));
+		}
+		if (session === null || !this.#store.isCurrent(fence)) return;
+		this.#prepareLocal(run);
+		this.#showPhase(fence);
+		await this.harness.submit(turn.prompt, { session, operationId: `run:${runId}` });
+	}
+
+	/**
+	 * A start's section waited past the bound while its run still acts: the watch made due now and synced, so the next
+	 * instance opens at once, then the object reset, which ends the invocations that held the wait. The next instance's gate
+	 * counts no attempt for a run with no submission, its cleanup marks the orphans before pi resumes, and the start runs again.
+	 */
+	async #startTimedOut(runId: RunId, bound: number): Promise<void> {
+		if (!this.#store.isActive(runId)) return;
+		this.#log(`run ${runId} could not start: pi's earlier work did not end within ${bound / 1000} s`);
+		await this.lifecycle.jobs.push({ id: `watch:${runId}`, fn: "watch", time: Date.now(), payload: { runId } });
+		await this.ctx.storage.sync();
+		this.#reset(`run ${runId} could not start: pi's earlier work did not end.`, true);
 	}
 
 	/**
@@ -612,9 +641,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const again = await this.#cleanSandbox();
 		if (again) this.#push({ id: "sandbox", fn: "sandbox", time: again.rescheduleAt });
 		const run = this.#store.activeRun();
-		if (run?.status === "queued" && (await this.#store.outside(() => this.#store.activate(run.id)))) {
-			await this.#startLoop(run.id).catch((error: unknown) => this.#log("the loop could not start", error));
-		}
+		if (run?.status === "queued" && (await this.#store.outside(() => this.#store.activate(run.id)))) this.#defer(() => this.#startLoop(run.id));
 		await this.#delivery.deliver();
 	}
 
@@ -738,7 +765,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/**
 	 * The start's wake-up, until pi has the run's input: a run the previous version left `queued` is activated (#recover),
-	 * and an acting run pi has no submission for is submitted.
+	 * and an acting run pi has no submission for has its start's section started, or finds it running, and is watched again.
 	 */
 	async #watch(runId: RunId): Promise<{ rescheduleAt: number } | undefined> {
 		const again = { rescheduleAt: Date.now() + WATCH_MS };
@@ -752,10 +779,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const before = await work();
 		// In progress: pi's own wake job drives it from here.
 		if (before === null || before === "in_progress") return undefined;
-		if (before === "settled") await this.#reconcile(runId).catch((error: unknown) => this.#log("a settled run could not be reconciled", error));
-		else await this.#startLoop(runId).catch((error: unknown) => this.#log("the loop could not start", error));
-		const after = await work();
-		return after === "settled" || after === "not_submitted" ? again : undefined;
+		if (before === "not_submitted") {
+			// Not awaited: the section can wait until the bound, and Lifecycle drives due jobs one after another.
+			this.#defer(() => this.#startLoop(runId));
+			return again;
+		}
+		await this.#reconcile(runId).catch((error: unknown) => this.#log("a settled run could not be reconciled", error));
+		return (await work()) === "settled" ? again : undefined;
 	}
 
 	/**

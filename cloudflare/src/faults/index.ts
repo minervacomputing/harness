@@ -116,13 +116,14 @@ export class Conversation extends BaseConversation {
 
 	faultPlan(
 		faults: Fault[],
-		config: { model?: string | null; runTimeoutMs?: number | null; calibrate?: Calibration | null; retention?: Partial<RetentionPeriods> | null } = {},
+		config: { model?: string | null; runTimeoutMs?: number | null; piSettleMs?: number | null; calibrate?: Calibration | null; retention?: Partial<RetentionPeriods> | null } = {},
 	): void {
 		const plan = planOf(this.ctx);
 		plan.set(faults);
 		if (config.model !== undefined) plan.setConfig("model", config.model);
 		if (config.calibrate !== undefined) plan.setConfig("calibrate", config.calibrate === null ? null : JSON.stringify(config.calibrate));
 		if (config.runTimeoutMs !== undefined) plan.setConfig("run_timeout_ms", config.runTimeoutMs === null ? null : String(config.runTimeoutMs));
+		if (config.piSettleMs !== undefined) plan.setConfig("pi_settle_ms", config.piSettleMs === null ? null : String(config.piSettleMs));
 		if (config.retention) checkPeriods(config.retention);
 		if (config.retention !== undefined) plan.setConfig("retention", config.retention === null ? null : JSON.stringify(config.retention));
 	}
@@ -267,7 +268,7 @@ export class Conversation extends BaseConversation {
 			entered: planOf(this.ctx).entered(runId),
 			marks: marksOf(this.ctx, runId),
 			piTasks,
-			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance, prune, created_at FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
+			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance, prune, created_at, session FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
 			attempts: sql.exec<{ attempt: number; ended: string | null }>("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
 			calls: sql.exec<{ attempt: number; instance: string }>("SELECT attempt, instance FROM call_records WHERE run_id = ? ORDER BY attempt, created_at", runId).toArray(),
 			writes: sql.exec<{ key: string; status: string; attempt: number }>("SELECT key, status, attempt FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId).toArray(),

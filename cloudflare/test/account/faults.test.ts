@@ -19,7 +19,10 @@
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
 //   turn's container; a detached writer, a FIFO and a symlink at the checkpoint; five attachments of 50 MiB
 //   (the folder's limit) copied, hydrated and kept in the version; crashes between a checkpoint's upload,
-//   record, release and pi's commit; the container destroyed at the run's end.
+//   record, release and pi's commit; the container destroyed at the run's end;
+// - a kill between a cancel and the next start, while the cancelled run's command is past its checkpoint: the next
+//   instance marks the cancelled run's work before pi resumes, pi resumes none of it, and the next run waits for it to
+//   end, then runs in its first attempt (docs/plans/chunk-19a-design.md, F1).
 //
 // The memory-limit resets are resets.test.ts's, the sandbox itself sandbox.test.ts's and
 // sandbox-faults.test.ts's. Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
@@ -33,6 +36,7 @@ import {
 	file,
 	finish,
 	finished,
+	fired,
 	folder,
 	LIST,
 	LIST_INBOX,
@@ -59,6 +63,16 @@ import {
 } from "./driver.ts";
 
 afterAll(finish, 300_000);
+
+async function until<T>(read: () => Promise<T>, done: (value: T) => boolean, what: string, timeoutMs = 120_000): Promise<T> {
+	const started = Date.now();
+	for (;;) {
+		const value = await read().catch(() => undefined);
+		if (value !== undefined && done(value)) return value;
+		if (Date.now() - started > timeoutMs) throw new Error(`${what}; last: ${JSON.stringify(value)}`);
+		await sleep(500);
+	}
+}
 
 describe.concurrent("attempts on the platform", () => {
 	test("ctx.abort() in a safe tool: the read runs again in attempt 2", async () => {
@@ -337,4 +351,36 @@ describe.concurrent("the local tools in the container", () => {
 			console.info(`a crash at ${point}: ${view.seconds} s`);
 		});
 	}
+
+	test("a kill between a cancel and the next start: the cancelled run's work is marked before pi resumes, never resumed, and acts on nothing", async () => {
+		const w = await world({
+			faults: [
+				{ point: "local:released", mode: "hold", tool: "bash" },
+				{ point: "pi:stop", mode: "abort" },
+			],
+		});
+		const a = await post(w, script([sh("echo ran >> ran.txt"), { text: "Done." }]));
+		await until(async () => (await fired(w)).map((entry) => entry.point), (points) => points.includes("local:released"), "A's command was never released");
+		// As Laravel does: sent again until it is answered, and a repeat answers from the stored end.
+		await until(() => cancel(w, a, "cancelled"), (answer) => answer.state === "cancelled", "A's cancel was never answered");
+		const b = await post(w, script([LIST_INBOX, { text: "Done." }]));
+		const view = await settled(w, b);
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(view.internals.attempts).toEqual([{ attempt: 1, ended: "completed" }]);
+		expect((await fired(w)).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([
+			["local:released", "hold", "bash"],
+			["pi:stop", "abort", a],
+		]);
+		const left = await run(w, a);
+		expect(left.internals.piTasks.map(({ kind, status, abortRequested }) => [kind, status, abortRequested])).toEqual([
+			["pi.generation", "terminal", true],
+			["pi.tool", "terminal", true],
+		]);
+		expect(left.internals.entered).toEqual({ model: 1, tool: 1 });
+		expect(toolCalls(left.events)).toEqual([]);
+		// A's checkpoint is the folder B started from and left as it was.
+		expect((await file(w, "ran.txt")).text).toBe("ran\n");
+		expect((await provider(w)).requests.map((request) => `${request.method} ${request.path}`)).toEqual(["GET /folders/inbox/notes"]);
+		console.info(`a kill between a cancel and the next start: ${view.seconds} s`);
+	});
 });
