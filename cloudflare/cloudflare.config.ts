@@ -202,6 +202,9 @@ export default defineConfig(({ mode }) => {
 				MINERVA_ACCESS_CLIENTS: setting("MINERVA_ACCESS_CLIENTS"),
 				MINERVA_LARAVEL_URL: setting("MINERVA_LARAVEL_URL"),
 
+				// GitHub's link to install the App (src/connectors/github/connector.ts): no link while it is empty.
+				MINERVA_GITHUB_APP_SLUG: setting("MINERVA_GITHUB_APP_SLUG"),
+
 				// Uploaded from the instance's secrets.env by `pnpm run deploy`, which uploads only the secrets declared here.
 				// A declared secret is required, so model keys (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY) join
 				// this list in the steps that use them; until then they are commented-out placeholders in that file.

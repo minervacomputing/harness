@@ -22,6 +22,7 @@
 // (internal/catalog.ts).
 
 import { z } from "zod";
+import { githubAppSlug } from "../../config.ts";
 import {
 	type Binding,
 	type Connector,
@@ -621,16 +622,15 @@ const ADD_COMMENT = defineOperation<z.output<typeof AddComment>>({
 	},
 });
 
-/** `MINERVA_GITHUB_APP_SLUG` as the Worker is configured: nodejs_compat puts its bindings in `process.env`. */
+/** `MINERVA_GITHUB_APP_SLUG` as the Worker is configured (nodejs_compat puts its bindings in `process.env`), parsed as the build parsed it. */
 function configuredAppSlug(): string | null {
 	const env = (globalThis as { process?: { env?: { [name: string]: string | undefined } } }).process?.env;
-	const value = env?.MINERVA_GITHUB_APP_SLUG;
-	return typeof value === "string" ? value : null;
+	return githubAppSlug({ MINERVA_GITHUB_APP_SLUG: env?.MINERVA_GITHUB_APP_SLUG ?? "" });
 }
 
 export interface GitHubOptions {
 	/** The GitHub App's URL name (github.com/apps/<slug>), for the link that installs it; read each time the link is shown. */
-	appSlug?: () => string | null | undefined;
+	appSlug?: () => string | null;
 	baseUrl?: string;
 	/** MAX_PAGE_RESPONSE and MAX_PATCH_CHARS, which tests lower. */
 	maxPageResponse?: number;
@@ -675,8 +675,7 @@ export function githubConnector(options: GitHubOptions = {}): Connector<GitHubCl
 		},
 		manageLink() {
 			const slug = appSlug();
-			if (!slug || !/^[a-z0-9-]{1,100}$/.test(slug)) return null;
-			return ["Choose repositories on GitHub", `https://github.com/apps/${slug}/installations/new`];
+			return slug === null ? null : ["Choose repositories on GitHub", `https://github.com/apps/${slug}/installations/new`];
 		},
 		async account(client) {
 			// The numeric id is stable; the login can change.

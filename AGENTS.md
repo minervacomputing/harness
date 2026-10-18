@@ -32,6 +32,7 @@ An instance's files live outside the checkout, in `~/.config/minerva/instances/<
 | `MINERVA_FILES_*` | 256 MB and 10,000 entries per folder, a run's uploads four times the folder, 50 MB per file, 10 per message | A conversation's folder, also the size of the sandbox's `/workspace` |
 | `MINERVA_ENVIRONMENT`, `MINERVA_ACCESS_ISSUER`, `MINERVA_ACCESS_AUDIENCE`, `MINERVA_ACCESS_CLIENTS` | empty (the internal API is off; the test build turns it on with a fake Laravel) | All four or none: the environment Laravel's commands must name, and the Access application (`https://<team>.cloudflareaccess.com`, its audience tag, the service tokens' client ids, comma separated) whose assertion `/internal/` checks. Account identifiers: only in an instance's `vars.env` |
 | `MINERVA_LARAVEL_URL` | empty | Laravel's origin, https when deployed, for the engine's requests and facts, and the only origin CORS lets read `/stream/v1` |
+| `MINERVA_GITHUB_APP_SLUG` | empty | The GitHub App's URL name (`github.com/apps/<slug>`): lowercase letters, digits and hyphens. A GitHub connection links to installing the App on more repositories; no link while it is empty |
 
 `MINERVA_MODEL_GATEWAY` is not a setting: every build sets it to the instance's name. Nor is `MINERVA_MODEL_PRICES`: the deploy reads the route's prices from models.dev (`cloudflare/scripts/model-prices.ts`) and refuses to deploy without them; the fake model's are in the test build's code.
 

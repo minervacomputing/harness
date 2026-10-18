@@ -96,7 +96,7 @@ Choose per label what agents may read, per address or domain whom they may send 
 
 ## GitHub
 
-Create a GitHub App at <https://github.com/settings/apps> and set `MINERVA_GITHUB_CLIENT_ID` and `MINERVA_GITHUB_CLIENT_SECRET`. The App's URL name (`github.com/apps/<slug>`) is the engine's `MINERVA_GITHUB_APP_SLUG` ([The Web](#the-web) says why it is not set yet). The callback URL is `{app_url}/oauth/github/callback`; keep user authorization tokens expiring. Give it the repository permissions Metadata (read), Contents (read), Issues (read and write) and Pull requests (read and write). Without the client, GitHub is not offered.
+Create a GitHub App at <https://github.com/settings/apps> and set `MINERVA_GITHUB_CLIENT_ID` and `MINERVA_GITHUB_CLIENT_SECRET`. Set the App's URL name (`github.com/apps/<slug>`) as `MINERVA_GITHUB_APP_SLUG` in the engine instance's `vars.env`; without it, the connection card has no link to install the App. The callback URL is `{app_url}/oauth/github/callback`; keep user authorization tokens expiring. Give it the repository permissions Metadata (read), Contents (read), Issues (read and write) and Pull requests (read and write). Without the client, GitHub is not offered.
 
 Click **Connections → Connect GitHub**, install the App on the repositories Minerva may see (the connection card links there), then choose per repository what agents may do.
 
@@ -272,7 +272,7 @@ Click **Connections → Connect Sentry** and pick the organisation on Sentry's c
 
 Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`). Patterns stop at the registrable domain (per the Public Suffix List), so `*.org`, `*.co.uk` and `*.github.io` cannot be granted; only `*` allows every site. A block on a domain wins over access to a wider one. Opening an address sends whatever is in it to that site, so the sites an agent may read are also where it could carry data.
 
-Searching uses Brave Search, with `MINERVA_BRAVE_SEARCH_API_KEY` set to a key from <https://brave.com/search/api/>. Without it, agents can only read pages. The engine's build does not declare that key yet (`cloudflare.config.ts`), so a deploy does not upload it and search stays off unless the key is already on the Worker; the same holds for GitHub's `MINERVA_GITHUB_APP_SLUG`, without which GitHub's link to install the App is not shown.
+Searching uses Brave Search, with `MINERVA_BRAVE_SEARCH_API_KEY` set to a key from <https://brave.com/search/api/>. Without it, agents can only read pages. The engine's build does not declare that key yet (`cloudflare.config.ts`), so a deploy does not upload it and search stays off unless the key is already on the Worker.
 
 **Agents can:** search the web through Brave Search (titles, addresses and snippets only) and read pages as text.
 

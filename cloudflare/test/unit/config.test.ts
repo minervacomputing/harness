@@ -115,6 +115,20 @@ test("Laravel's origin is optional, and https in a deployed build", () => {
 	expect(() => checkBuild(plain, { deployed: true, testBuild: false })).toThrow("MINERVA_LARAVEL_URL must be an https origin in a deployed build's vars file.");
 });
 
+test("GitHub's App slug is optional, its vars file's when deployed, and a GitHub App's URL name", () => {
+	const deployed = { deployed: true, faults: false, offline: false };
+	expect(parse(buildSettings(deployed, {}, "acme")).githubAppSlug).toBeNull();
+	expect(parse(buildSettings(deployed, { MINERVA_GITHUB_APP_SLUG: "acme-minerva" }, "acme")).githubAppSlug).toBe("acme-minerva");
+	expect(parse(settingsEnv({ MINERVA_GITHUB_APP_SLUG: " minerva-dev-2 " })).githubAppSlug).toBe("minerva-dev-2");
+	expect(parse(settingsEnv({ MINERVA_GITHUB_APP_SLUG: "  " })).githubAppSlug).toBeNull();
+	for (const slug of ["Minerva", "minerva_dev", "evil.example/x", "minerva dev", "a".repeat(101)]) {
+		expect(() => parse(buildSettings(deployed, { MINERVA_GITHUB_APP_SLUG: slug }, "acme"))).toThrow(
+			"MINERVA_GITHUB_APP_SLUG must be a GitHub App's URL name (github.com/apps/<slug>): lowercase letters, digits and hyphens, or empty.",
+		);
+	}
+	expect(parse(settingsEnv({ MINERVA_GITHUB_APP_SLUG: "a".repeat(100) })).githubAppSlug).toBe("a".repeat(100));
+});
+
 test("a deployed test build has the internal API and its fake Laravel unless its vars file says otherwise; no other build does", () => {
 	const parsed = (build: SettingsBuild, source: Record<string, string> = {}) => parse(buildSettings(build, source, "acme"));
 	const faults = { deployed: true, faults: true, offline: false };

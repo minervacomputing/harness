@@ -27,6 +27,7 @@ export interface SettingsEnv {
 	MINERVA_ACCESS_AUDIENCE: string;
 	MINERVA_ACCESS_CLIENTS: string;
 	MINERVA_LARAVEL_URL: string;
+	MINERVA_GITHUB_APP_SLUG: string;
 }
 
 /** `fake` is the deterministic model of src/model/fake.ts, for tests and a test deployment. */
@@ -65,6 +66,8 @@ export interface Settings {
 	internal: { environment: string; access: AccessSettings } | null;
 	/** Laravel's origin, which the engine's requests and deliveries go to (laravel/client.ts); null when unset. */
 	laravelUrl: string | null;
+	/** The GitHub App's URL name (github.com/apps/<slug>), for GitHub's link to install it; null when unset, and then no link. */
+	githubAppSlug: string | null;
 }
 
 /** What the Worker checks an Access assertion against (api/internal/access.ts). */
@@ -115,7 +118,16 @@ export function parse(env: SettingsEnv): Settings {
 		},
 		internal: internal(env),
 		laravelUrl: env.MINERVA_LARAVEL_URL.trim() ? origin(env, "MINERVA_LARAVEL_URL") : null,
+		githubAppSlug: githubAppSlug(env),
 	};
+}
+
+/** The GitHub connector reads its binding through this too (connectors/github/connector.ts), so it sees what the build checked. */
+export function githubAppSlug(env: Pick<SettingsEnv, "MINERVA_GITHUB_APP_SLUG">): string | null {
+	const value = env.MINERVA_GITHUB_APP_SLUG.trim();
+	if (!value) return null;
+	if (!/^[a-z0-9-]{1,100}$/.test(value)) throw invalid("MINERVA_GITHUB_APP_SLUG", "a GitHub App's URL name (github.com/apps/<slug>): lowercase letters, digits and hyphens, or empty");
+	return value;
 }
 
 /** The route's prices: none when empty, else the configured route's, as the contract's catalog has them. */

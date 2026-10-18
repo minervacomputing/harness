@@ -271,27 +271,31 @@ describe("the connector and its settings page", () => {
 		expect(await tenancy.tenants(client, REPOSITORY, ["3", "1", "404", "../x"])).toEqual({ "3": "42", "1": "100" });
 	});
 
-	test("the install link needs a valid slug", async () => {
+	test("the install link is the App's, and absent without a slug", async () => {
 		let slug: string | null = null;
 		const gh = githubConnector({ appSlug: () => slug });
 		expect(gh.manageLink?.()).toBeNull();
+		expect((await catalogEntry(gh)).manage).toBeNull();
 		slug = "minerva-dev";
 		expect(gh.manageLink?.()).toEqual(["Choose repositories on GitHub", "https://github.com/apps/minerva-dev/installations/new"]);
-		for (slug of ["evil.com/x", "", "Minerva", " minerva-dev", "a".repeat(101)]) expect(gh.manageLink?.()).toBeNull();
 		// As the catalog shows it, with the link where the user chooses repositories on GitHub.
-		slug = "minerva-dev";
 		expect((await catalogEntry(gh)).manage).toEqual({ label: "Choose repositories on GitHub", url: "https://github.com/apps/minerva-dev/installations/new" });
 	});
 
-	test("without a slug given, the link reads MINERVA_GITHUB_APP_SLUG from the Worker's bindings", () => {
+	test("without a slug given, the link reads MINERVA_GITHUB_APP_SLUG from the Worker's bindings, parsed as the build parses it", () => {
 		const env = (globalThis as unknown as { process: { env: { [name: string]: string | undefined } } }).process.env;
 		const before = env.MINERVA_GITHUB_APP_SLUG;
 		try {
-			delete env.MINERVA_GITHUB_APP_SLUG;
 			const gh = githubConnector();
+			delete env.MINERVA_GITHUB_APP_SLUG;
 			expect(gh.manageLink?.()).toBeNull();
-			env.MINERVA_GITHUB_APP_SLUG = "minerva-dev";
-			expect(gh.manageLink?.()?.[1]).toBe("https://github.com/apps/minerva-dev/installations/new");
+			env.MINERVA_GITHUB_APP_SLUG = "";
+			expect(gh.manageLink?.()).toBeNull();
+			env.MINERVA_GITHUB_APP_SLUG = " minerva-dev ";
+			expect(gh.manageLink?.()).toEqual(["Choose repositories on GitHub", "https://github.com/apps/minerva-dev/installations/new"]);
+			// A build refuses it; a binding set some other way fails closed rather than linking elsewhere.
+			env.MINERVA_GITHUB_APP_SLUG = "evil.example/x";
+			expect(() => gh.manageLink?.()).toThrow("MINERVA_GITHUB_APP_SLUG must be a GitHub App's URL name (github.com/apps/<slug>): lowercase letters, digits and hyphens, or empty.");
 		} finally {
 			if (before === undefined) delete env.MINERVA_GITHUB_APP_SLUG;
 			else env.MINERVA_GITHUB_APP_SLUG = before;

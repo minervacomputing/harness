@@ -18,6 +18,8 @@ process.env.MINERVA_ACCESS_ISSUER ??= "https://test.cloudflareaccess.example";
 process.env.MINERVA_ACCESS_AUDIENCE ??= "test-audience";
 process.env.MINERVA_ACCESS_CLIENTS ??= "laravel-old.access,laravel.access";
 process.env.MINERVA_LARAVEL_URL ??= FAULTS_SETTINGS.MINERVA_LARAVEL_URL;
+// GitHub's link to install the App, which test/platform/internal.test.ts reads back from the catalog.
+process.env.MINERVA_GITHUB_APP_SLUG ??= "acme-minerva";
 
 export default defineConfig(async () => {
 	const migrations = await readD1Migrations("migrations");

@@ -30,6 +30,7 @@ const DEFAULTS: Defaults = {
 	MINERVA_ACCESS_AUDIENCE: "",
 	MINERVA_ACCESS_CLIENTS: "",
 	MINERVA_LARAVEL_URL: "",
+	MINERVA_GITHUB_APP_SLUG: "",
 };
 
 /** Every setting a vars file can set. */
