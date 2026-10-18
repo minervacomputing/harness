@@ -178,7 +178,7 @@ Done 2026-10-16 (`85618f6` to `7e91275`). The design, its amendments and the ver
 
 ## Make usage exact (chunk 14a)
 
-Built 2026-10-16 (`1494b29` to `4b81bdd` in the engine, then these docs; `4f1d034` and `858f785` in the app). The design, its amendments and what each unit built are in [chunk-14a-design.md](chunk-14a-design.md). test:faults went from 32 cases to 33 (a crash mid-stream) and passed at `4b81bdd` on `minerva-cf-test`, and the perf probe found no cost it could resolve. The live boxes that need staging wait for the engine's deploy to `minerva-cf-staging` and the owner's turns; production gets the app first, then the engine, with the owner's approval.
+Built 2026-10-16 (`1494b29` to `4b81bdd` in the engine, then these docs; `4f1d034` and `858f785` in the app). The design, its amendments and what each unit built are in [chunk-14a-design.md](chunk-14a-design.md). test:faults went from 32 cases to 33 (a crash mid-stream) and passed at `4b81bdd` on `minerva-cf-test`, and the perf probe found no cost it could resolve. The engine was then deployed to `minerva-cf-staging`, and the live boxes were checked there with ten turns on 2026-10-17 (`569f1cc`); production gets the app first, then the engine, with the owner's approval.
 
 **Depends on.** Chunk 13c.
 
@@ -230,7 +230,7 @@ A budget is only as good as the usage it settles from. Today a model call's usag
 
 ## Give each run a budget (chunk 14b)
 
-Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a` and these docs; `b5c1faa` and `ef6429f` in the app, on its `chunk-14b` branch until the engine is deployed to `minerva-cf-staging`). The design, its amendments and what each unit built are in [chunk-14b-design.md](chunk-14b-design.md). test:faults went from 33 cases to 34 (a run stopped at its budget) and passed at `98d4f15` on `minerva-cf-test`, and the perf rule is met by the Node benchmark the owner accepted. The live boxes wait for the engine's deploy to `minerva-cf-staging` (the owner approves it), then the app's push and the owner's go for a staging turn; production gets the engine first, then the app, with the owner's approval.
+Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a` and these docs; `b5c1faa` and `ef6429f` in the app, held on its `chunk-14b` branch until the engine was deployed to `minerva-cf-staging`, then merged). The design, its amendments and what each unit built are in [chunk-14b-design.md](chunk-14b-design.md). test:faults went from 33 cases to 34 (a run stopped at its budget) and passed at `98d4f15` on `minerva-cf-test`, and the perf rule is met by the Node benchmark the owner accepted. The engine was deployed to `minerva-cf-staging` with the owner's approval, the app pushed, and the live boxes checked on staging on 2026-10-16 (`97444cd`); production gets the engine first, then the app, with the owner's approval.
 
 **Depends on.** Chunk 14a.
 
@@ -242,7 +242,7 @@ Built 2026-10-16 (`55bcd78` to `98d4f15` in the engine, then `8ad74ee`, `9f9929a
 **Build.**
 
 - [x] Contract. `StartRun` gains an optional `allowance` (the unit chosen above). The engine deploys first. `55bcd78`, with the money fields on the facts and the catalog's `prices`, all optional; the app synced it in `b5c1faa`, which stays off its main until the engine is on staging.
-- [x] Laravel. A limit per organization, and its spend, the sum of its runs' settled charges. A start is refused before it is registered when the spend has reached the limit, with a message the chat shows; otherwise it passes what is left as the run's allowance. No new lock: under this rule a lock would not bound more, since spend changes only when a run settles (chunk-14b-design.md, Laravel). The app's `ef6429f`, on its `chunk-14b` branch: a limit per calendar month in UTC (owner, 2026-10-16), $5 by default, set with `minerva:budget`; "Your organization has used its budget." at or over it.
+- [x] Laravel. A limit per organization, and its spend, the sum of its runs' settled charges. A start is refused before it is registered when the spend has reached the limit, with a message the chat shows; otherwise it passes what is left as the run's allowance. No new lock: under this rule a lock would not bound more, since spend changes only when a run settles (chunk-14b-design.md, Laravel). The app's `ef6429f`, held on its `chunk-14b` branch until the engine's deploy: a limit per calendar month in UTC (owner, 2026-10-16), $5 by default, set with `minerva:budget`; "Your organization has used its budget." at or over it.
 - [x] The engine checks each model call at its record (14a's admission point, `recordModelCall`): when what the run has spent so far has reached its allowance, the call is refused, and the run ends with a new terminal reason the chat shows ("This conversation reached its budget"). Each call is charged from its reported usage, a refused one nothing, an unmetered one the tokens 14a records for it. Charges in `ce1449e` (prices from models.dev at deploy, migration 12, money on the facts); the check and `budget_reached` in `98d4f15`, which also settles a gone instance's open records before it counts.
 - [x] Container and script time draw on the same allowance at a rate from the price table, counted so far at each check and settled from 14a's spans and script records. Rates and charges in `ce1449e`; counted so far at the check (open scripts, and container time from `container_since`, set before the Sandbox is asked for a container) in `98d4f15`.
 - [x] Laravel adds a run's spend only from `run.settled` (14a), never from `run.finished` or a terminal status alone. The app's `ef6429f`: spend is the sum of `run_settlements.charged_micros` this month; a settlement without money for a run given an allowance counts at the allowance.
@@ -501,7 +501,7 @@ Re-scoped by the owner on 2026-10-18 for a closed beta of paying pilot businesse
 
 **Depends on.** Chunk 13c.
 
-Laravel already stores the account's tenant (`connections.account_tenant`, from `describeAccount`). The design is [chunk-17-design.md](chunk-17-design.md): 17a, the engine's half, is built on `main`; 17b, Laravel's, waits on the app's `chunk-17` branch until the engine's staging deploy, since an engine before 17a drops the policy.
+Laravel already stores the account's tenant (`connections.account_tenant`, from `describeAccount`). The design is [chunk-17-design.md](chunk-17-design.md): 17a, the engine's half, is built on `main` and on `minerva-cf-staging` since 2026-10-18; 17b, Laravel's, waited for that deploy, since an engine before 17a drops the policy, then went straight to the app's `main` (2026-10-18).
 
 **Build.**
 
