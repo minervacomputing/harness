@@ -25,7 +25,7 @@ Not EU-only:
 - **The edge.** Cloudflare decrypts every request at the data center nearest the caller, worldwide, both for Laravel Cloud's edge and for the engine's Worker.
 - **Operational data.** Workers Logs, container logs, Laravel Cloud's logs and AI Gateway's processing have no documented location. Durable Object ids are logged outside the jurisdiction. Resend stores mail metadata in the US. The recovery index in D1 has a location hint, not the EU jurisdiction.
 
-Not in use on 2026-10-17 (measured): Nightwatch (no token on either environment), social sign-in (no provider clients), Workers AI and Anthropic (staging and production run OpenAI), Brave Search (no key declared), container snapshots (only a spike so far), and Stripe (chunk 16). Production's Laravel has no engine or R2 settings yet, so only staging sends conversations to an engine.
+Not in use on 2026-10-17 (measured): Nightwatch (no token on either environment), social sign-in (no provider clients), Workers AI and Anthropic (staging and production run OpenAI), Brave Search (no key declared), and container snapshots (only a spike so far). Stripe (chunk 16) runs only on staging since 2026-10-18, in a sandbox in test mode, so no real payment; production has no Stripe keys yet. Production's Laravel has no engine or R2 settings yet, so only staging sends conversations to an engine.
 
 ## Laravel on Laravel Cloud
 
@@ -43,6 +43,9 @@ The application `minerva` runs in `eu-central-1` (measured: `cloud environment:l
 | Monitoring | Laravel Nightwatch | When on: requests, queries, jobs, exceptions, and by default each user's id, name and email. Payloads only if `NIGHTWATCH_CAPTURE_REQUEST_PAYLOAD` is set. Minerva redacts credential URLs and API keys (`AppServiceProvider`) | Not documented | US, EU or Australia, chosen when the Nightwatch application is created. 90 days | EU region exists. Off: neither environment has `NIGHTWATCH_TOKEN` (measured) | [Nightwatch FAQ](https://nightwatch.laravel.com/docs/guides/faqs.md), [User details](https://nightwatch.laravel.com/docs/user) |
 | Social sign-in | Google, GitHub, Microsoft through Socialite | The user's address and profile from their own account | The provider's | The provider's | Not applicable. Off: no client ids on either environment (measured) | `config/services.php` |
 | Leaked-password check | Have I Been Pwned (Pwned Passwords) | In production, `Password::uncompromised()` sends the first five characters of the password's SHA-1 hash, never the password | The service's | Not documented | Not applicable. Used in production | [Validating passwords](https://laravel.com/docs/validation#validating-passwords) |
+| Billing (staging only, a sandbox in test mode, since 2026-10-18) | Stripe: Stripe Payments Europe, Limited (Ireland), contracting for accounts outside the US, with Stripe, Inc. and Stripe, LLC (US) | A team's name and id, the billing email the buyer enters in Checkout (or sets in the portal), the legal business name, billing address and VAT number the buyer enters, card details entered on Stripe's pages only, invoices, payments and the subscription's seats. No transcript, file or usage | Stripe's infrastructure, in the US among other places | Stripe's infrastructure, in the US among other places | None | Stripe's [Data Processing Agreement](https://stripe.com/legal/dpa) and its [service providers](https://stripe.com/legal/service-providers), the app's `docs/plans/billing.md` |
+
+Stripe is a processor for its payment and billing services, and an independent controller for fraud prevention and its legal duties. Transfers to Stripe, LLC rely on Stripe's Data Transfer Addendum and the Data Privacy Framework, the Swiss-US one included. The app sends Stripe no conversation data. Laravel's database keeps the billing email on the organization, for its Billing page, until the organization's row is purged. A member's account deletion does not reach the billing email at Stripe: it is the business's billing contact, which its admins change in the portal, and it is on invoices kept 10 years. The contracting entity is confirmed when production is set up (the app's billing.md, Owner steps, step 8).
 
 ## The engine on Cloudflare
 
@@ -79,10 +82,11 @@ These vendors process Minerva's customer data on Minerva's behalf today:
 | Cloudflare | The engine (Workers, Durable Objects, D1, R2, Containers, AI Gateway, Images, Access, Workers Logs) and Laravel Cloud's edge | Transcripts, files, run state, leased credentials in memory, logs | EU for Durable Objects and R2. Worldwide or not documented for the rest |
 | OpenAI | The model | Each turn's prompts and outputs | Not constrained. Abuse-monitoring logs up to 30 days |
 | Resend | Account mail | Addresses, names, messages with links | Sent from Ireland. Metadata and logs stored in the US |
+| Stripe (staging's sandbox only, until production's keys are set) | Payments, invoices and subscriptions for teams' seats | Teams' names and ids, billing emails, business names, billing addresses, VAT numbers, card details on Stripe's pages, invoices and payments | The US among other places |
 
-Each vendor names its own subprocessors: Laravel in its [Trust Center](https://trust.laravel.com/?product=cloud), Cloudflare on its [subprocessor page](https://www.cloudflare.com/gdpr/subprocessors/cloudflare-services/) (which lists Google and Oracle for the Developer Platform, with US locations among others, without naming which products), [Neon](https://neon.com/subprocessors), OpenAI and Resend on theirs.
+Each vendor names its own subprocessors: Laravel in its [Trust Center](https://trust.laravel.com/?product=cloud), Cloudflare on its [subprocessor page](https://www.cloudflare.com/gdpr/subprocessors/cloudflare-services/) (which lists Google and Oracle for the Developer Platform, with US locations among others, without naming which products), [Neon](https://neon.com/subprocessors), OpenAI, Resend and Stripe ([service providers](https://stripe.com/legal/service-providers)) on theirs.
 
-Not in use, and added to the list when turned on: Laravel Nightwatch (choose the EU region), Anthropic, Workers AI, Brave Search, and Stripe (chunk 16).
+Not in use, and added to the list when turned on: Laravel Nightwatch (choose the EU region), Anthropic, Workers AI, and Brave Search.
 
 Not Minerva's subprocessors, in my reading: the connectors' providers and the sign-in providers, which are the user's own accounts that the user directs Minerva to use, and Have I Been Pwned, which receives no personal data. This is an inference for the owner or counsel to confirm.
 
@@ -94,7 +98,7 @@ Decision 11 promises EU processing only when every component allows it. Today th
 
 Minerva must not say "EU data residency", "processed only in the EU" or "your data never leaves the EU".
 
-Two checks belong to the owner before the wording is published: that a data processing agreement is in place with each subprocessor above, and that it covers transfers outside the EU (Cloudflare's, OpenAI's, Laravel's and Resend's). I have not read those agreements.
+Two checks belong to the owner before the wording is published: that a data processing agreement is in place with each subprocessor above, and that it covers transfers outside the EU (Cloudflare's, OpenAI's, Laravel's, Resend's and, before production's keys, Stripe's). I have not read those agreements.
 
 ## What blocks a stronger promise
 
