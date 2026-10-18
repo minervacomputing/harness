@@ -433,6 +433,4 @@ The restriction write's time was measured on staging with unit 2 (On staging, 20
 
 C7's deletion was then sent and acknowledged (06:51:57), so staging and the engine agree.
 
-**Left for the owner:**
-- delete the original cluster `minerva-staging` and the unused `minerva-staging-restored-2`, once Laravel Cloud says how to delete only those. Staging now runs on `minerva-staging-restored`, with 7 days of history from its creation (05:48:53Z);
-- ask Laravel Cloud how a restored cluster is restored again.
+**Afterwards.** The owner deleted the unused `minerva-staging-restored-2` and then the original `minerva-staging` (2026-10-18). Staging's database was read back after each deletion, with nothing lost. Staging runs on `minerva-staging-restored`, with 7 days of history from its creation (05:48:53Z). How a restored cluster is restored again is still a question for Laravel Cloud.
