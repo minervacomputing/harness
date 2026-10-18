@@ -20,9 +20,10 @@
 //   turn's container; a detached writer, a FIFO and a symlink at the checkpoint; five attachments of 50 MiB
 //   (the folder's limit) copied, hydrated and kept in the version; crashes between a checkpoint's upload,
 //   record, release and pi's commit; the container destroyed at the run's end;
-// - a kill between a cancel and the next start, while the cancelled run's command is past its checkpoint: the next
-//   instance marks the cancelled run's work before pi resumes, pi resumes none of it, and the next run waits for it to
-//   end, then runs in its first attempt (docs/plans/chunk-19a-design.md, F1).
+// - a kill between a cancel and the next start, while the cancelled run's command is past its checkpoint: the
+//   cancelled run's tasks end abort-marked, it enters one model call and one tool call in all and has no tool_call
+//   event, its command ran once, the provider got only the next run's read, and the next run completes in its first
+//   attempt (docs/plans/chunk-19a-design.md, F1).
 //
 // The memory-limit resets are resets.test.ts's, the sandbox itself sandbox.test.ts's and
 // sandbox-faults.test.ts's. Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
