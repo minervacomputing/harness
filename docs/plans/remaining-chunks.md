@@ -495,7 +495,7 @@ Laravel already stores the account's tenant (`connections.account_tenant`, from 
 - [x] `describeAccount` returns the tenant where the connector knows one. `2956579`: `tenant` for a connector with one per account (none for a personal Google or Microsoft account), and `tenants`, the ones the account reaches now, for any known tenancy.
 - [ ] Laravel stores an organization's policy (the connectors it offers, the tenants it allows) and checks it at the OAuth callback.
 - [x] The policy is a raw authority input in `startRun`, `listResources` and `checkGrantEdit`, compiled by the engine with the layers (Decision 3), so the engine checks tenants in resource discovery, in the grant editor, before each call and on the call's results. The contract `f2539f7` (optional `policy` and connections' `tenant`, the refusal `CONNECTION_NOT_ALLOWED`), the compile and the checks `476e5ee` (`COMPILER_VERSION` 2; the grants' refusal before the tenant's; tenancy in every operation's fingerprint).
-- [ ] The engine deploys first. Ready at `3afa33a`; the deploy to `minerva-cf-staging` awaits the owner's approval, and 17b's merge to the app's `main` waits for it.
+- [ ] The engine deploys first. Ready at `c499f76` (`main.yml` and `account.yml` green); the deploy to `minerva-cf-staging` awaits the owner's approval, and 17b's merge to the app's `main` waits for it.
 - [ ] A grant edit commits only while the policy's revision is the one checked, as it does for the layer's revision (chunk 11).
 - [ ] A policy that narrows cancels the runs holding an affected connection, as a revocation does.
 
@@ -505,7 +505,7 @@ Laravel already stores the account's tenant (`connections.account_tenant`, from 
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [x] Regression against `main`. `test:faults` passes with no policy. On `minerva-cf-test` at `3afa33a`: `test:faults` 36 tests in 6 files, `test:deployed` 6, and `pnpm check --instance minerva-cf-test`. A start without a policy compiles to the snapshot digest it had before 17a (`internal-runs.test.ts`).
+- [x] Regression against `main`. `test:faults` passes with no policy. On `minerva-cf-test` at `3afa33a`: `test:faults` 36 tests in 6 files, `test:deployed` 6, and `pnpm check --instance minerva-cf-test`. `account.yml` green at `c499f76` (36 in 6 files, and 6), after a failure at `5d5ab1d` in `retention.test.ts`, which measured a deleted conversation's minute from after the delete call and read 59,941 ms; `c499f76` measures it from before the call. A start without a policy compiles to the snapshot digest it had before 17a (`internal-runs.test.ts`).
 - [ ] On staging, an organization that allows one GitHub owner sees a repository of another owner refused in the grant editor and in a turn.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
