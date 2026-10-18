@@ -224,7 +224,7 @@ Every box of the chunk, with the test that checks it. U are unit tests, P platfo
 
 **P3, the wait** (`test/platform/local-tools.test.ts`, whose memory sandbox runs local tools). Run A's `bash` call is held at `local:released`, after `runGated`, where pi's abort does not end it. Once the hold at `local:released` has fired, A is cancelled and run B started at once. The test anchors on B's "Starting the agent" phase event, which the section emits inside the lane before its wait (`conversation.ts:570`). For 1 s after that event, while the hold lasts, B makes no model call (entered.model 0) and has no `run:B` submission. The hold is released, A's tool task ends, and B completes in attempt 1. Then B's first model mark's `begin` is at or after the `endedAt` of A's `bash` task (pi-durable `session/transaction.js:705` to `:718`). Both come from `Date.now()` on the object's clock. The log has `run <A>'s call bash answered after the run ended; its result is refused (run <B> acts now)`. Fails on `main`, where B runs while A's task is live.
 
-**P4, the bound** (the same file). As P3 with `pi_settle_ms` at 2,000 and the hold never released. The object resets about 2 s after B's wait began. Expected: the bound's line appears exactly once; A's tool task and generation are terminal and abort-marked (`RunInternals`' pi tasks); A's entered counts equal those at the cancel, `{ model: 1, tool: 1 }`; B completes with `[{ attempt: 1, ended: "completed" }]` and no restart marker. Fails on `main`. No test covers the watch pushed before the reset, since the platform tests' own calls wake the object.
+**P4, the bound** (the same file). As P3 with `pi_settle_ms` at 2,000 and the hold never released. The object resets about 2 s after B's wait began. Expected: the bound's line appears exactly once; A's tool task and generation are terminal and abort-marked (`RunInternals`' pi tasks); A's entered counts equal those at the cancel, `{ model: 1, tool: 1 }`; B completes with `[{ attempt: 1, ended: "completed" }]` and no restart marker. Fails on `main`. P4 also covers the watch pushed before the reset. A build whose push throws, or that pushes nothing, fails it, since B then waits for its earlier watch (As built).
 
 **P5, deletion waits** (`test/platform/conversation.test.ts:1102`, the deletion test). It reads the live tasks at `deleteConversation`'s answer, before its hold is released, and finds none.
 
@@ -328,3 +328,35 @@ The interrogation's other findings were rejected:
 - R9 (tests), a gate on M2 and a probe variant that calls tools, adds what no box asks for, since the perf box names one metric, M2 is already reported beside S, and tool admission adds one indexed read in the isolate per call.
 - F1 (refuted), that the wait uses up the run's deadline and resets are unbounded, was refuted by both verifiers, since the wait's signal includes the deadline, the gate ends a run `timed_out` whose deadline passed during a reset (`gate.ts:55` to `:58`), deadlines are empty by default, one reset ends the held work, and P4 expects the bound's line exactly once.
 - R5 (refuted), on which tests fail on `main`, was refuted by both verifiers, since `main`'s deletion waits until tasks are terminal (`scheduler.js:242` to `:262`) and the connector tool returns on pi's abort (`tools.ts:112`), so P5 holds on `main`, and its real parts are covered by amendments 16 and 25.
+
+## As built
+
+Built on 2026-10-18 on the branch `chunk-19a`, rebased onto `main` at `ecfc70d`. The design's commits are `86229f0`, `3b0c97b` and `0025e97`.
+
+| Unit | Commit | Review commits |
+|---|---|---|
+| 1. The probe | `b8c2e70` | none |
+| 2. What pi holds, by operation | `917f07d` | `eb12d7b` |
+| 3. Admission by run | `36df510` | none |
+| 4. Stops by the rule | `40aadce` | `767cb25`, `531a7ff`, `0d47839`, `86ecb05`, `f581334` |
+| 5. The start's wait | `b68d583` | `318587c`, `8740d61` |
+| 6. Docs | `4301ee5` and the commit that adds this section | none |
+
+Each unit follows the design except for what its commit messages record, below.
+
+- **Unit 1.** The fake-remote test in `protocols.test.ts` also checks that each call's pi generation starts before the call begins and ends after its answer, so pi's stamps and the marks share one clock. Unit 5 added the run's session to `faultRun`'s row.
+- **Unit 2.** Its review found that three mutants passed every test: an ascending scan, a scan without `background: false`, and a scan for a `done` submission only. `eb12d7b` adds a run's own live task between an older live task and a newer background one, and an `unanswered` submission with a live task of its own. Each mutant now fails, and `pi-work.ts` did not change.
+- **Unit 3.** `admitModel` also refuses an active run that has no session.
+- **Unit 4.** It adds one platform test the Tests table lacks. `protocols.test.ts` resets the object at a cancelled run's `pi:stop`, and the next instance marks both of the run's tasks before pi resumes, with no tool or model call of the run after the reset. That test, not `conversation.test.ts:874`, shows the cleanup at open in workerd. The inert conversation's end also runs `#afterFinish`, whose mark ends the same work after pi resumes, so that test passes without the cleanup (`40aadce`). The reviews changed tests only.
+  - `767cb25`. The platform helpers that made a job due also called `runDurableObjectAlarm`, which ran a second retention pass beside the platform's own alarm. The race predates unit 4, traced at `cccac1c` and `19b7e58`. The helpers now only set the alarm.
+  - `531a7ff`. `retain()` returned between two passes when a pass spent its budget. It now waits until no pass is due.
+  - `0d47839`. P5 and P2 passed with what they guard broken. P5's connector tool returns at once on pi's abort, and P2's next run had no live task when the held stop read pi. `local-tools.test.ts` now deletes while a `bash` call is held at `local:released` and sees the deletion answer only after the command ended. P2 now releases the stop while B's second model call is held.
+  - `86ecb05`. No test failed with the marks of `#afterFinish` or of retention's abort removed. A cancel test now holds a `bash` call past its checkpoint and reads the marks. The retention test makes its live tasks through pi, since `pi.inspect()` does not see a task made live in SQL. `#reconcile`'s mark has no test, since none can fail with that mark alone removed.
+  - `f581334` adds a test that a mark reads pi before the operation. It failed with the two reads swapped, when A's end took B's new generation for an orphan.
+- **Unit 5.** `section(fn, expired)` takes the reset at the bound as a callback, and the section's settle answers whether the start may go on. P3 and P6 assert that the waiting run has no pi session at all, not only no submission. F1 checks that A's command ran once by the file it appends to. P3, P4 and P6 failed against a local build whose section skipped the wait, recorded in `b68d583`.
+  - `318587c`. U5 (f) gains a section held past its bound after its settle answered, which resets nothing, and a section queued behind it, which resets from the lane and never runs.
+  - `8740d61` hardens the reset at the bound (`#startTimedOut`). It read `isActive` once, awaited the push and the sync, and then reset even if a cancel had committed meanwhile. It pushed the watch where an open pi transaction could take the job row and the alarm with it. A push or a sync that rejected skipped the reset, so the run waited for its next watch. It now pushes `watch:<run>` through `store.outside`, syncs, logs a failure of either, and resets only if the run still acts after those awaits. Lifecycle sets the alarm a few microtasks after the push, so a pi transaction opened in between can still take the alarm. The run's earlier watch then opens the next instance within `WATCH_MS` (20 s), as on the folder-limit path. A new test in `local-tools.test.ts` cancels a start queued in the lane behind a held section, and no bound line appears.
+
+**P4 covers the watch pushed before the reset.** P4's paragraph said that no test covered it, and is corrected in place. In a scratch build whose push threw, P4 logged the push's failure, the object still reset, and P4 failed, since B waited for its earlier watch. A build that pushes nothing fails it too (`8740d61`). The check after the awaits has no test of its own, since a cancel would have to land between the log and the reset, where no fault point is.
+
+**Still to run.** The regression of `test:faults` with F1, and the perf runs of S, both on `minerva-cf-test-19` (Live checks, Perf probe and rule). They fill after-the-plan.md's live and perf boxes.

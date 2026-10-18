@@ -1,6 +1,6 @@
 # Long conversations, a lasting sandbox and memory
 
-Status: proposed, 2026-10-15. Nothing here is built or decided beyond the owner's decisions below. It picks up where [product-and-engine.md](product-and-engine.md) ends (chunk 18). opencode reviewed the first draft and the snapshot chunk; their findings are folded in (Appendix A).
+Status: proposed, 2026-10-15. Chunk 19a is built (2026-10-18), with its live and perf boxes pending. Nothing else here is built or decided beyond the owner's decisions below. It picks up where [product-and-engine.md](product-and-engine.md) ends (chunk 18). opencode reviewed the first draft and the snapshot chunk; their findings are folded in (Appendix A).
 
 A long conversation should feel like one session with a computer that stays put, and Minerva should learn from conversations over time. Today each turn starts a new pi session from the latest 20 messages and rebuilds the sandbox from R2. This plan keeps one pi conversation per Minerva conversation (chunks 19a to 19c), keeps the sandbox parked between turns (20), restores a cold sandbox from a container snapshot (21), and adds memory held in Laravel (22 to 24). Throughout, a run is still one turn with its grants compiled when it starts, so strict revocation is unchanged.
 
@@ -28,6 +28,12 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 - [ ] The owner accepts the Decisions above. Record the date here.
 - [ ] Re-establish the account suites for the engine after chunk 13, through the internal API (the frontend and `test:browser` leave with chunk 13). The end-to-end turns in `test:faults` (`cloudflare/test/account/turns.test.ts`) must fail, not skip, when a required tool is not called.
 
+**The owner's exception** (2026-10-18). Chunk 19a started before the program was armed and before chunks 16 and 18 were done (its design, `86229f0`, on 2026-10-18). It lands on `main` once chunk 17a is on staging, and 17a's engine has run on staging since 2026-10-18 (remaining-chunks.md, chunk 17). When the exception was recorded, the three boxes above stood as follows:
+
+- Chunks 0 to 18 are not all done. At `8740d61`, remaining-chunks.md lists chunks 13 to 18 as built, with these boxes open under its Close the program: the owner's staging checks from chunks 3 and 10 to 12, the name of Laravel Cloud's plan for the backups, 15b's live box (its first purging pass is due from 2026-10-22), 15c's key (made when production is set up for the current app), and the boxes that wait on those two (the order of chunk 15 and of the gate, and the gate's first box). Its last box, that product-and-engine.md's status line and ARCHITECTURE.md describe the engine as built, is read again when that program closes.
+- The Decisions above are not accepted. The changes to Decision 2, Decision 7 and Retention are still proposed, and none of the five boxes is checked. Chunk 19a depends on none of them, since it changes no decision. Each run still gets its own pi session.
+- The third box's last sentence is already true. In `turns.test.ts` at `8740d61`, the Workers AI turn throws when the model has not called `bash` and `run_script` in two attempts. `4f436aa` (2026-10-16) replaced its `ctx.skip` with that error, and the fake model's turn asserts both calls. The same commit sends the account suites' starts and cancels as Laravel's commands, through oRPC's client of the contract at the fault driver's `/api/faults/internal/`. The box stays unchecked until the program is armed.
+
 ### Order and dependencies
 
 - [ ] 19a, 19b and 19c run in order. 20 depends on 19a only. 21 depends on 20. Memory (22 to 24) depends on chunks 14 and 15 of product-and-engine.md, not on 19 to 21, and can run beside them. 24 also needs 19b.
@@ -36,33 +42,35 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 **Depends on.** Chunk 13 of product-and-engine.md.
 
+The design is [chunk-19a-design.md](chunk-19a-design.md), with its Tests table and, at its end, As built. The test names below are that table's. U are unit tests, P platform tests, and F1 the account fault test.
+
 **Files.**
 
-- [ ] Edit `cloudflare/src/conversation/conversation.ts` (`#stopPi`, `#stopEnded`, `piWork`, and the tool and model admission by session).
-- [ ] Edit `cloudflare/src/conversation/gate.ts` and `cloudflare/src/conversation/store.ts` (`runBySession`, `runByProviderSession`, `sessions`).
+- [x] Edit `cloudflare/src/conversation/conversation.ts` (`#stopPi`, `#stopEnded`, `piWork`, and the tool and model admission by session). `piWork` moved to `conversation/pi-work.ts` and reads the run's submission first (`917f07d`). The tool and model hosts call `admitTool` and `admitModel` there (`36df510`). `#stopPi` and `#abortSession` are deleted, and `#stopEnded` marks through `PiStops` (`40aadce`). `#startLoop` runs its section in `PiStops`'s lane (`b68d583`, `8740d61`).
+- [x] Edit `cloudflare/src/conversation/gate.ts` and `cloudflare/src/conversation/store.ts` (`runBySession`, `runByProviderSession`, `sessions`). `classifyWork` checks the submission first (`917f07d`). `runBySession` and `runByProviderSession` are deleted (`36df510`), and so is `sessions` (`40aadce`).
 
 **Build.**
 
-- [ ] Admit tool calls and model calls by the run their submission belongs to (`operationId: run:<id>`), not by the pi session, so work left from run A can never act under run B's grants.
-- [ ] Make the restart gate read the run's own submission first. No submission means `not_submitted`. Count only that submission's tasks, with filtered or fully paged scans (`piWork` reads one task per status today).
-- [ ] Stop a run with an abort for its own operation, and never fall back to aborting the whole conversation.
-- [ ] Before a run is configured or submitted, wait until the previous run's submission has settled and it has no live tasks that are not background ones. Clean up orphaned tasks before `Harness.open` resumes the scheduler.
+- [x] Admit tool calls and model calls by the run their submission belongs to (`operationId: run:<id>`), not by the pi session, so work left from run A can never act under run B's grants. `admitTool` and `admitModel` admit them (`36df510`). U3 and U4 in `test/unit/pi-work.test.ts` run them over a `RunStore` and pi on one session two runs share, and P1 in `test/platform/protocols.test.ts` refuses a late result. Workerd evidence on a shared session comes with chunk 19b, since `runs_session` keeps one run per session here.
+- [x] Make the restart gate read the run's own submission first. No submission means `not_submitted`. Count only that submission's tasks, with filtered or fully paged scans (`piWork` reads one task per status today). `piWork` scans, for a settled submission only, the newest live non-background task of each status (`917f07d`). U1 and U2 in `pi-work.test.ts` check it, and since `eb12d7b` a change to the scan's order or to its filter fails a test. `test/unit/conversation-gate.test.ts`'s row with live tasks and no submission is `not_submitted`.
+- [x] Stop a run with an abort for its own operation, and never fall back to aborting the whole conversation. `PiStops.mark` marks each task no acting run owns with `abortTask`, nothing calls `conversation.abort` or withdraws a submission, and `#abortSession` is deleted (`40aadce`). The tests are U5 (c) and (d) and the mark's read order (`f581334`) in `test/unit/pi-stops.test.ts`, P2 in `protocols.test.ts`, and P5 in `test/platform/conversation.test.ts` with the deletion that waits for a held command in `test/platform/local-tools.test.ts` (`0d47839`).
+- [x] Before a run is configured or submitted, wait until the previous run's submission has settled and it has no live tasks that are not background ones. Clean up orphaned tasks before `Harness.open` resumes the scheduler. The start's section runs in `PiStops`'s lane, with its 30 s bound (`b68d583`, `318587c`, `8740d61`). The tests are U5 (a), (e) and (f) in `pi-stops.test.ts`, and P3, P4 and P6 in `local-tools.test.ts`, which each failed against a build whose section skipped the wait (recorded in `b68d583`). `Harness.open` resumes nothing, so the cleanup runs after it and before the factory returns, which is before PiHarness resumes pi. `protocols.test.ts` resets the object at a cancelled run's stop and finds the run's work marked by the next instance and none of it run (`40aadce`). F1 checks the same on the account with the live boxes.
 
 This chunk still creates one pi session per run. It only makes sharing one safe.
 
 **You see.**
 
-- [ ] A run cancelled while a tool call is in flight, followed at once by a new run, logs the old call's result as refused for the new run.
+- [x] A run cancelled while a tool call is in flight, followed at once by a new run, logs the old call's result as refused for the new run. P1 holds a write at `provider:write:applied` across a cancel and the next run's start, and the log has `run <A>'s call notes_file_note answered after the run ended; its result is refused (run <B> acts now)` and no line with the note's title (`36df510`). P3 has the same line for a local `bash` call (`b68d583`).
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Gate cases for each submission state (`queued`, `placed`, `done`, `unanswered`), a leftover background task, and two runs on one session. Run `pnpm test:unit`.
-- [ ] Platform tests for a delayed abort overlapping the next run's admission. Run `pnpm test:platform`.
+- [x] Gate cases for each submission state (`queued`, `placed`, `done`, `unanswered`), a leftover background task, and two runs on one session. Run `pnpm test:unit`. U1 and U2 are in `pi-work.test.ts` (`917f07d`, `eb12d7b`). `pnpm test:unit` passed at `8740d61`, 102 files and 2,791 tests (its commit message).
+- [x] Platform tests for a delayed abort overlapping the next run's admission. Run `pnpm test:platform`. P2 is in `protocols.test.ts` (`40aadce`, `0d47839`), and U5 (c) runs the same case on one shared session in `pi-stops.test.ts`. `pnpm test:platform` passed three times at `8740d61`, 28 files and 381 tests each (its commit message).
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
 - [ ] Regression against `main`. The end-to-end turns of `test:faults` pass at the chunk's head as on `main`.
-- [ ] A fault test kills the object between a cancel and the next start. The next run admits no call from the cancelled one.
+- [ ] A fault test kills the object between a cancel and the next start. The next run admits no call from the cancelled one. This is F1 in `cloudflare/test/account/faults.test.ts`, run with `test:faults` on `minerva-cf-test-19`. It holds run A's `bash` call at `local:released`, where neither the run's controller nor pi's abort ends it, and resets the object at A's end's `pi:stop`, before its mark. It proves that the work a cancelled run left is marked before pi resumes, never resumed, and acts on nothing after the kill. It expects A's tasks terminal and abort-marked, A's entered counts `{ model: 1, tool: 1 }` as at the cancel, no `tool_call` of A's, only B's one read at the provider, and B completed in its first attempt. Without the cleanup at open, A's model count and its abort marks fail. F1 cannot tell admission by run from admission by session, since while each run has its own pi session a call from A's session finds A's ended run either way. U4 is 19a's evidence for admission by run, and chunk 19b's platform tests carry it in workerd on a shared session.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
@@ -71,6 +79,8 @@ This chunk still creates one pi session per run. It only makes sharing one safe.
 **Review.**
 
 - [ ] opencode reviewed the design and the diff.
+  - [x] opencode reviewed the design twice on 2026-10-18, against `abeced2` and again after its revision. Its 13 accepted findings are chunk-19a-design.md's Amendments after opencode's review (`86229f0`). A multi-model interrogation then reviewed the revised design (Amendments after the interrogation, `3b0c97b`).
+  - [ ] opencode reviewed the diff.
 
 ## Continue one pi conversation per conversation (chunk 19b)
 
