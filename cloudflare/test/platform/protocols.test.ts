@@ -441,6 +441,30 @@ describe("attempts", () => {
 		]);
 		// Each attempt's read reached the provider and is recorded, the first one before its instance died.
 		expect(toolCalls(events)).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" }), expect.objectContaining({ tool: LIST, decision: "allowed" })]);
+		const [first, second] = internals.calls;
+		expect(internals.calls).toEqual([
+			{ attempt: 1, instance: expect.any(String) },
+			{ attempt: 2, instance: expect.any(String) },
+		]);
+		expect(second?.instance).not.toBe(first?.instance);
+		expect((await w.stub.faultView(runId, 0, 0)).aborts).toEqual([{ at: expect.any(Number), reason: "fault: tool:after" }]);
+	});
+
+	test("the platform's own reset mid-tool asks for none: attempt 2's calls come from a new instance, and no reset is recorded", async () => {
+		const w = await world({ faults: [{ point: "tool:before", mode: "hold", tool: LIST }] });
+		const runId = await post(w, [LIST_INBOX, { text: "Two notes." }]);
+		await reached(() => w.stub.faultFired(), "tool:before");
+		await abortAllDurableObjects();
+		expect((await settled(w, runId)).status).toBe("completed");
+		expect(restarts(await eventsOf(w, runId))).toEqual([2]);
+		const { internals, aborts } = await w.stub.faultView(runId, 0, 0);
+		const [first, second] = internals.calls;
+		expect(internals.calls).toEqual([
+			{ attempt: 1, instance: expect.any(String) },
+			{ attempt: 2, instance: expect.any(String) },
+		]);
+		expect(second?.instance).not.toBe(first?.instance);
+		expect(aborts).toEqual([]);
 	});
 
 	test("a crash in an unsafe tool after its write settled: never replayed; the model's retry is answered from the ledger", async () => {

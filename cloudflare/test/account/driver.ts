@@ -66,6 +66,8 @@ export interface RunView {
 	internals: {
 		run: { [column: string]: unknown } | null;
 		attempts: { attempt: number; ended: string | null }[];
+		/** Each model call's attempt and the object instance that made it. */
+		calls: { attempt: number; instance: string }[];
 		writes: { key: string; status: string; attempt: number }[];
 		executions: { call_id: string; executions: number }[];
 		entered: { model: number; tool: number };
@@ -73,6 +75,8 @@ export interface RunView {
 		marks: { begin: number; answered: number | null; last: number | null }[];
 	};
 	fired: { point: string; mode: string; at: number }[];
+	/** The resets (`ctx.abort()`) the conversation's object asked for, as the isolate that answered saw them (src/faults/index.ts). */
+	aborts: { at: number; reason: string }[];
 }
 
 export interface ProviderState {
@@ -448,6 +452,19 @@ export function outcome(view: RunView): string {
 
 export function restarts(events: RunEvent[]): number[] {
 	return events.filter((event) => event.type === "status" && typeof event.data.attempt === "number").map((event) => event.data.attempt as number);
+}
+
+/**
+ * Whether the platform itself replaced the conversation's instance during the run, as it rarely does: the run restarted once,
+ * attempt 2's model calls came from an instance that made none of attempt 1's, and no instance asked for a reset, as the
+ * engine's resets and the faults' all do.
+ */
+export function replacedByPlatform(view: RunView): boolean {
+	const madeIn = (attempt: number) => view.internals.calls.filter((call) => call.attempt === attempt).map((call) => call.instance);
+	const first = madeIn(1);
+	const second = madeIn(2);
+	const restarted = restarts(view.events);
+	return restarted.length === 1 && restarted[0] === 2 && view.aborts.length === 0 && first.length > 0 && second.length > 0 && second.every((instance) => !first.includes(instance));
 }
 
 export function toolCalls(events: RunEvent[]) {

@@ -39,10 +39,24 @@ ACCESS_KEYS.of = (issuer) => (issuer === FAULTS_SETTINGS.MINERVA_ACCESS_ISSUER ?
 LARAVEL_NETWORK.fetch = laravelFetch;
 LARAVEL_NETWORK.token = hostedToken;
 
+/** A reset the object asked for (`ctx.abort()`): the engine's or a fault's. */
+export interface Abort {
+	at: number;
+	reason: string;
+}
+
+/**
+ * Each object's resets asked for by its instances in this isolate, by the object's id. Kept in the isolate, which a reset
+ * leaves, as plan.ts keeps its unsynced counts; the platform's own replacement of an instance asks for none.
+ */
+const aborts = new Map<string, Abort[]>();
+
 /** What a test reads of a run besides its API view: attempts, the ledger and pi's executions. */
 export interface RunInternals {
 	run: { [column: string]: SqlStorageValue } | null;
 	attempts: { attempt: number; ended: string | null }[];
+	/** Each counted model call's attempt and the instance that made it (store.ts `RunStore.instance`), in the order they were made. */
+	calls: { attempt: number; instance: string }[];
 	writes: { key: string; status: string; attempt: number }[];
 	executions: { call_id: string; executions: number }[];
 	/** The tools the run's snapshot offers. */
@@ -54,14 +68,15 @@ export interface RunInternals {
 }
 
 /**
- * A run as a test reads it: its head (null before it is stored), its internals, the points that fired, and one page of its
- * events, bounded as RunStore's pages are, so no answer nears Workers RPC's limit.
+ * A run as a test reads it: its head (null before it is stored), its internals, the points that fired, the resets its object
+ * asked for, and one page of its events, bounded as RunStore's pages are, so no answer nears Workers RPC's limit.
  */
 export interface RunView {
 	head: RunHead | null;
 	events: RunEvent[];
 	internals: RunInternals;
 	fired: Fired[];
+	aborts: Abort[];
 }
 
 /** An object's storage: its size, each table's rows and the bytes of its TEXT and BLOB columns, and its alarm. */
@@ -82,8 +97,18 @@ function checkPeriods(periods: Partial<RetentionPeriods>): void {
 	if (periods.rowsPerStep !== undefined && (!Number.isInteger(periods.rowsPerStep) || periods.rowsPerStep < 2)) throw new Error("fault: retention's rowsPerStep is a whole number, at least 2.");
 }
 
-/** The Conversation with a fault plan and a view of its tables for the tests. */
+/** The Conversation with a fault plan, a record of the resets it asks for and a view of its tables for the tests. */
 export class Conversation extends BaseConversation {
+	constructor(ctx: DurableObjectState, env: Env) {
+		super(ctx, env);
+		const abort = ctx.abort.bind(ctx);
+		ctx.abort = (reason?: string) => {
+			const id = ctx.id.toString();
+			aborts.set(id, [...(aborts.get(id) ?? []), { at: Date.now(), reason: reason ?? "" }]);
+			abort(reason);
+		};
+	}
+
 	faultPlan(
 		faults: Fault[],
 		config: { model?: string | null; runTimeoutMs?: number | null; calibrate?: Calibration | null; retention?: Partial<RetentionPeriods> | null } = {},
@@ -176,7 +201,7 @@ export class Conversation extends BaseConversation {
 		const row = store.run(runId);
 		const head = row ? store.runHead(row) : null;
 		const events = head ? store.events(runId, { after, upTo: upTo ?? head.eventSeq, limit: PAGE_LIMIT }) : [];
-		return { head, events, internals: this.faultRun(runId), fired: this.faultFired() };
+		return { head, events, internals: this.faultRun(runId), fired: this.faultFired(), aborts: aborts.get(this.ctx.id.toString()) ?? [] };
 	}
 
 	/**
@@ -225,6 +250,7 @@ export class Conversation extends BaseConversation {
 			marks: marksOf(this.ctx, runId),
 			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance, prune FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
 			attempts: sql.exec<{ attempt: number; ended: string | null }>("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
+			calls: sql.exec<{ attempt: number; instance: string }>("SELECT attempt, instance FROM call_records WHERE run_id = ? ORDER BY attempt, created_at", runId).toArray(),
 			writes: sql.exec<{ key: string; status: string; attempt: number }>("SELECT key, status, attempt FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId).toArray(),
 			executions: sql.exec<{ call_id: string; executions: number }>("SELECT call_id, executions FROM tool_executions WHERE run_id = ? ORDER BY call_id", runId).toArray(),
 		};

@@ -9,7 +9,7 @@
 // - the cap at 3 attempts, and nothing runs after it;
 // - a crash right after the attempt gate, every time and with nothing synced: the gate's own sync still
 //   advances the attempts to the cap;
-// - a long tool across PiHarness's heartbeats, which is no restart;
+// - a long tool across PiHarness's heartbeats, which is no restart (a run the platform itself restarted is run once more);
 // - a revocation during a run: Laravel's cancel, answered once the run has stopped;
 // - a crash while a write is dispatched, after the provider applied it;
 // - a crash mid-stream: every counted model call settles once, and run.settled sums them, their charges and the container's time;
@@ -43,6 +43,7 @@ import {
 	post,
 	provider,
 	reads,
+	replacedByPlatform,
 	restarts,
 	run,
 	SAVE,
@@ -211,12 +212,24 @@ describe.concurrent("attempts on the platform", () => {
 	});
 
 	test("a long tool across PiHarness's heartbeats is no restart", async () => {
-		// 75 s: past two 30 s heartbeats and their alarms, within the fake connector's 300 s timeout.
-		const w = await world({ delays: { "GET /folders/inbox/notes": 75_000 } });
-		const runId = await post(w, script([LIST_INBOX, { text: "Two notes." }]));
-		const view = await settled(w, runId);
+		const longRead = async () => {
+			// 75 s: past two 30 s heartbeats and their alarms, within the fake connector's 300 s timeout.
+			const w = await world({ delays: { "GET /folders/inbox/notes": 75_000 } });
+			return { w, view: await settled(w, await post(w, script([LIST_INBOX, { text: "Two notes." }]))) };
+		};
+		let { w, view } = await longRead();
+		if (replacedByPlatform(view)) {
+			// Seen once in about 15 runs on 2026-10-18: torn down mid-read with no reset asked for, and restarted as designed.
+			expect(view.head?.status, outcome(view)).toBe("completed");
+			expect(view.internals.attempts).toEqual([
+				{ attempt: 1, ended: "restarted" },
+				{ attempt: 2, ended: "completed" },
+			]);
+			console.warn(`long tool: the platform replaced the conversation's instance during the run (${JSON.stringify(view.internals.calls)}); once more in a new conversation`);
+			({ w, view } = await longRead());
+		}
 		expect(view.head?.status, outcome(view)).toBe("completed");
-		expect(restarts(view.events)).toEqual([]);
+		expect(restarts(view.events), JSON.stringify({ calls: view.internals.calls, aborts: view.aborts })).toEqual([]);
 		expect(view.internals.attempts).toEqual([{ attempt: 1, ended: "completed" }]);
 		expect(reads(await provider(w))).toBe(1);
 		console.info(`long tool: ${view.seconds} s`);
