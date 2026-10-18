@@ -72,6 +72,12 @@ export const CatalogOperation = z.object({
   offered: z.boolean(),
 })
 
+/**
+ * How the connector's resources belong to organizations (docs/plans/chunk-17-design.md): one tenant per account, a tenant per
+ * resource, or unknown. `label` names the tenant for people; null for unknown.
+ */
+export const CatalogTenancy = z.object({ kind: z.enum(['account', 'resource', 'unknown']), label: z.string().nullable() })
+
 export const CatalogConnector = z.object({
   slug: z.string(),
   name: z.string(),
@@ -81,6 +87,8 @@ export const CatalogConnector = z.object({
   operations: z.array(CatalogOperation),
   /** Where the user changes what the provider lets Minerva reach. */
   manage: z.object({ label: z.string(), url: z.string() }).nullable(),
+  /** Absent from an engine that predates connection policies. */
+  tenancy: CatalogTenancy.optional(),
 })
 export type CatalogConnector = z.infer<typeof CatalogConnector>
 

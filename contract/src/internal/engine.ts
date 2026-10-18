@@ -35,6 +35,22 @@ export const LayerInput = z.object({
   grants: z.array(GrantInput).max(MAX_GRANTS * MAX_CONNECTIONS),
 })
 
+/** A tenant as `describeAccount` names it: a Google Workspace domain, a Microsoft tenant id, a GitHub owner's numeric id. */
+export const TenantId = z.string().min(1).max(256)
+
+/**
+ * An organization's connection policy as Laravel stores it (docs/plans/chunk-17-design.md): the connectors it offers, each with
+ * the tenants it allows, or null for any. Without one, every connector is offered with any tenant.
+ */
+export const ConnectionPolicy = z.object({
+  revision: z.int().min(1),
+  connectors: z
+    .array(z.object({ provider: Provider, tenants: z.array(TenantId).max(100).nullable() }))
+    .max(100)
+    .refine((connectors) => new Set(connectors.map((connector) => connector.provider)).size === connectors.length, 'Each connector may be named once.'),
+})
+export type ConnectionPolicy = z.infer<typeof ConnectionPolicy>
+
 /** A connection the agent has, as a run start sees it: the engine decides whether the user may use it. */
 const AuthorityConnection = z.object({
   id: Id,
@@ -46,6 +62,8 @@ const AuthorityConnection = z.object({
   /** The scopes its current credentials carry; null when unknown (API keys, built-in services). */
   scopes: z.array(z.string()).nullable(),
   revision: z.int().min(1),
+  /** Its account's tenant as `describeAccount` answered it; null or absent when it has none or was never described. */
+  tenant: TenantId.nullable().optional(),
 })
 
 const HistoryMessage = z.object({
@@ -81,6 +99,8 @@ export const StartRun = InConversation.extend({
       .max(MAX_CONNECTIONS)
       .refine((connections) => new Set(connections.map((connection) => connection.id)).size === connections.length, 'Each connection may be named once.'),
     layers: z.object({ ceiling: LayerInput.nullable(), user: LayerInput.nullable(), agent: LayerInput.nullable() }),
+    /** The organization's connection policy; without it, every connector with any tenant. */
+    policy: ConnectionPolicy.optional(),
   }),
   /** What the run may spend, in µ$: the engine refuses its next model call once it has spent this. Without it, no budget. */
   allowance: z.int().min(0).optional(),
@@ -125,19 +145,38 @@ export type CancelRunResult = z.infer<typeof CancelRunResult>
 /** A credential for one settings call, never stored by the engine; Laravel refreshed it first. */
 const Credential = z.object({ kind: z.enum(['oauth2', 'api_key', 'builtin']), secret: z.string().max(16_384), generation: z.int().min(1) })
 
-const SettingsCall = z.object({ scope: Scope, connection: z.object({ id: Id, provider: Provider }), credential: Credential })
+const SettingsCall = z.object({
+  scope: Scope,
+  /** `tenant`: as for a start's connection. */
+  connection: z.object({ id: Id, provider: Provider, tenant: TenantId.nullable().optional() }),
+  credential: Credential,
+})
 
 /** `describeAccount`: the account behind a credential Laravel holds. */
 export const DescribeAccount = SettingsCall
 export type DescribeAccount = z.infer<typeof DescribeAccount>
 export const DescribeAccountResult = z.discriminatedUnion('outcome', [
-  z.object({ outcome: z.literal('described'), account: z.object({ id: z.string(), label: z.string(), tenant: z.string().nullable() }) }),
+  z.object({
+    outcome: z.literal('described'),
+    account: z.object({
+      id: z.string(),
+      label: z.string(),
+      /** The account's one tenant, for a connector with a tenant per account; null otherwise. */
+      tenant: z.string().nullable(),
+      /**
+       * The tenants the account reaches now, with their names: its one tenant (or none) for a connector with a tenant per account,
+       * those it can list for one with a tenant per resource; absent for unknown tenancy.
+       */
+      tenants: z.array(z.object({ id: TenantId, name: z.string().max(300) })).max(1000).optional(),
+    }),
+  }),
   Refused,
 ])
 export type DescribeAccountResult = z.infer<typeof DescribeAccountResult>
 
 // A settings call's refusals: `CREDENTIAL_REFUSED` (the provider refused the credential, so Laravel marks the connection),
-// `PROVIDER_FAILED`, and for what the user sent, `INVALID_RESOURCE_ID` and `INVALID_CURSOR`.
+// `PROVIDER_FAILED`, for what the user sent, `INVALID_RESOURCE_ID` and `INVALID_CURSOR`, and `CONNECTION_NOT_ALLOWED` (the
+// organization's policy does not offer the connector, or does not allow the connection's tenant).
 
 const ResourcePage = z.object({
   outcome: z.literal('listed'),
@@ -147,6 +186,8 @@ const ResourcePage = z.object({
 
 /** `listResources`: a page of a kind's resources, matching `query`, or inside `parent` for a browsable kind. */
 export const ListResources = SettingsCall.extend({
+  /** The organization's connection policy: items of tenants it does not allow are left out. */
+  policy: ConnectionPolicy.optional(),
   kind: z.string().min(1).max(64),
   query: z.string().max(100).nullable(),
   parent: z.string().min(1).max(200).nullable(),
@@ -158,6 +199,8 @@ export type ListResourcesResult = z.infer<typeof ListResourcesResult>
 
 /** `checkGrantEdit`: an edit of one layer's grants on one connection; an empty `actions` removes the grant. */
 export const CheckGrantEdit = SettingsCall.extend({
+  /** The organization's connection policy, whose revision the answer holds for as it does for the layer's. */
+  policy: ConnectionPolicy.optional(),
   layer: LayerInput.extend({ level: z.enum(['ceiling', 'user', 'agent']), subject: z.string().max(64).nullable() }),
   changes: z.array(z.object({ kind: z.string().min(1).max(64), id: z.string().min(1).max(200), actions: z.array(z.string()).max(10) })).min(1).max(100),
 })

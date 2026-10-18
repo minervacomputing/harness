@@ -10,6 +10,7 @@ export {
   CancelRunResult,
   CheckGrantEdit,
   CheckGrantEditResult,
+  ConnectionPolicy,
   DeleteConversation,
   DeleteConversationResult,
   DescribeAccount,
@@ -28,6 +29,7 @@ export {
   ResolveDownloadResult,
   StartRun,
   StartRunResult,
+  TenantId,
   engine,
 } from './engine.ts'
 export { Fact, FactBatch, MAX_ARGUMENTS, MAX_FACTS } from './facts.ts'

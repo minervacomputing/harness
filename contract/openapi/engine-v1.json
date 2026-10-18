@@ -412,6 +412,33 @@
                       "type": "null"
                     }
                   ]
+                },
+                "tenancy": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "account",
+                        "resource",
+                        "unknown"
+                      ],
+                      "type": "string"
+                    },
+                    "label": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "label"
+                  ]
                 }
               },
               "required": [
@@ -2838,6 +2865,18 @@
                               "type": "integer",
                               "minimum": 1,
                               "maximum": 9007199254740991
+                            },
+                            "tenant": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 256
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -2889,6 +2928,54 @@
                           "ceiling",
                           "user",
                           "agent"
+                        ]
+                      },
+                      "policy": {
+                        "type": "object",
+                        "properties": {
+                          "revision": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "connectors": {
+                            "type": "array",
+                            "maxItems": 100,
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "provider": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 64
+                                },
+                                "tenants": {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "maxItems": 100,
+                                      "items": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 256
+                                      }
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "provider",
+                                "tenants"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "revision",
+                          "connectors"
                         ]
                       }
                     },
@@ -6013,6 +6100,18 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 64
+                      },
+                      "tenant": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "required": [
@@ -6088,6 +6187,28 @@
                                   "type": "null"
                                 }
                               ]
+                            },
+                            "tenants": {
+                              "type": "array",
+                              "maxItems": 1000,
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "id": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 256
+                                  },
+                                  "name": {
+                                    "type": "string",
+                                    "maxLength": 300
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name"
+                                ]
+                              }
                             }
                           },
                           "required": [
@@ -7101,6 +7222,18 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 64
+                      },
+                      "tenant": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "required": [
@@ -7133,6 +7266,54 @@
                       "kind",
                       "secret",
                       "generation"
+                    ]
+                  },
+                  "policy": {
+                    "type": "object",
+                    "properties": {
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "connectors": {
+                        "type": "array",
+                        "maxItems": 100,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "provider": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "tenants": {
+                              "anyOf": [
+                                {
+                                  "type": "array",
+                                  "maxItems": 100,
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 256
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "tenants"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "revision",
+                      "connectors"
                     ]
                   },
                   "kind": {
@@ -8239,6 +8420,18 @@
                         "type": "string",
                         "minLength": 1,
                         "maxLength": 64
+                      },
+                      "tenant": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       }
                     },
                     "required": [
@@ -8271,6 +8464,54 @@
                       "kind",
                       "secret",
                       "generation"
+                    ]
+                  },
+                  "policy": {
+                    "type": "object",
+                    "properties": {
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 9007199254740991
+                      },
+                      "connectors": {
+                        "type": "array",
+                        "maxItems": 100,
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "provider": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            "tenants": {
+                              "anyOf": [
+                                {
+                                  "type": "array",
+                                  "maxItems": 100,
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 256
+                                  }
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "provider",
+                            "tenants"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "revision",
+                      "connectors"
                     ]
                   },
                   "layer": {

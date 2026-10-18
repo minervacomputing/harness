@@ -412,6 +412,33 @@
                       "type": "null"
                     }
                   ]
+                },
+                "tenancy": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "account",
+                        "resource",
+                        "unknown"
+                      ],
+                      "type": "string"
+                    },
+                    "label": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "label"
+                  ]
                 }
               },
               "required": [
