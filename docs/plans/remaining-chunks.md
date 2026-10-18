@@ -537,24 +537,24 @@ The design is the app's `docs/plans/search.md` (`a764be2`, reviewed by opencode)
 
 **Build.**
 
-- [ ] Scout with its database engine on Postgres's full-text search over messages, indexed as facts apply them.
-- [ ] Results only from conversations the user can open, never a deleted one, scoped to the organization and workspace in the query itself, not by filtering afterwards.
+- [x] Scout with its database engine on Postgres's full-text search over messages, indexed as facts apply them. The app's `8f78659`: Scout's database engine, pinned in the model, over `messages.search`, a stored `tsvector` of each message's first 100,000 characters in Postgres's `simple` configuration with a GIN index, written by the statement that inserts the message, from a start or a fact: no queue, no syncing. `eefdd5d` gave the planner the statistics the probe needed: a target of 1,000 on `messages.search`, and extended statistics on the conversations' organization, workspace and user.
+- [x] Results only from conversations the user can open, never a deleted one, scoped to the organization and workspace in the query itself, not by filtering afterwards. `8f78659`: `App\Conversations\Openable`, the conversation page's and the list's rule in one place, every condition in the search's SQL; one result per conversation from `POST /w/{workspace}/search`, the words in the body and never in a URL. `a344245`: the sidebar's Search and Ctrl K open the dialog, and a result opens the chat at the matching message.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Tests that another member's, another workspace's and a deleted conversation's messages never appear.
+- [x] Tests that another member's, another workspace's and a deleted conversation's messages never appear. `SearchTest`'s 34 (Pest 1,061 before, 1,094 after unit 2), 6 Vitest tests and the verify skill's `search` journey: a colleague's 15 newer matches leave the user's one result (the scope is in the query); another workspace's and organization's messages; deletion by conversation, workspace, organization and account, before and after the engine's acknowledgement and once purged; a removed member; a 1.5 MB answer still applied. CI green with its staging deploy at each unit (39123005120, 39126888606, 39127518991, 39128556178).
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] On staging, find a word from an earlier turn, then delete that conversation and see it gone from the results.
+- [x] On staging, find a word from an earlier turn, then delete that conversation and see it gone from the results. 2026-10-18 through Laravel Cloud's console at `6d63e64`: a `minerva:turn` whose message and answer each held a made-up word; `Search::find`, which the route calls, found both as the member (55 ms and 35 ms); `Deletions::delete`, acknowledged by the engine, then left both searches empty. Staging's Postgres is 18.6. The route and the dialog were driven by the verify skill's `search` journey locally, since staging's pages need the owner's sign-in.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Query time on 1,000,000 seeded messages. Rule. Under 200 ms at p95. More fails.
+- [x] Metric. Query time on 1,000,000 seeded messages. Rule. Under 200 ms at p95. More fails. `eefdd5d`, 2026-10-18, locally on Postgres 18.6: 1,000,000 messages in 83,262 conversations of 150 organizations and 1,000 users; nine classes of 200 searches each, three runs after a warm-up. p95 over the mix 20.6, 25.3 and 23.0 ms; the highest class's p95 41.7 ms (a word only another organization uses); 54 answers matched a reference. The machine was loaded by other agents' suites (load 3.0 to 4.9 on 12 cores), so the numbers are if anything high. The first run failed one class at p95 2,664 ms until the statistics migration. Recorded beside it: the messages table and its indexes went from 1.01 GB to 2.90 GB at this size and the WAL per insert from 3 KB to 13.5 KB, with no measurable change in insert time; the jump to a 1,000-turn chat's first turn took 122 ms and 2.9 MB, so no window around the match is needed.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [ ] opencode reviewed the design and the diff. The design (search.md, Amendments after opencode's review); the dialog's diff, two findings fixed (input-method composition, focus not returned); the server's diff (units 2 and 3), no verified finding. An adversarial review of the chunk is running.
 
 ## Close the program
 
