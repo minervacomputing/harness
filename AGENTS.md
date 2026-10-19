@@ -84,8 +84,21 @@ opencode run --agent plan --auto -f plan.md "Critique this plan: what is wrong, 
 
 - Input can be piped on stdin or attached with `-f`.
 - Add `-c` to ask a follow-up in the same session.
-- Its output is advice. Verify each finding before acting on it.
+- Its output is advice. Verify each finding before acting on it, and fix only those that can happen (below).
 - Run `git status` afterwards. The `plan` agent should not change anything, but `--auto` approves any shell command that is not explicitly denied.
+
+## Fix only the review findings that can happen
+
+Reviews report more than is worth fixing. opencode, review subagents, and adversarial or multi-model passes all find races and failures that need improbable timing. Fix a finding only if it can happen in real use. Real use means ordinary traffic, retries, deploys and restarts, a user who clicks twice, and someone who repeats a request to make it happen on purpose. Leave the rest unfixed, and add no test for them. They include:
+
+- a race between two events that must land within milliseconds of each other;
+- a crash, a reset or a deploy at one exact instruction;
+- a clock, a platform service or a database misbehaving in a way it is not known to;
+- two or more unlikely failures at once.
+
+A fix for one of these adds code to read, a test to keep and another review to pass, and no user notices it. Record each finding you leave under "Accepted, not fixed" in the design or plan you work from, in one line that says why it is unlikely and what happens if it occurs. A reviewer still reports such a finding, marked improbable, so that it is recorded. Wrong docs and a flaky test that has actually failed are still fixed.
+
+For example, chunk 19a's review found that the bound's reset could hit a run that had just submitted. That needed an orphan to end within milliseconds of the 30 s bound and an alarm to run inside one storage sync, and the run still completed in its second attempt. It is the first item under "Accepted, not fixed" in [docs/plans/chunk-19a-design.md](docs/plans/chunk-19a-design.md), not a fix.
 
 ## Checks
 
