@@ -126,7 +126,7 @@ Arm the program asks whether Laravel Cloud's point-in-time backups can be kept 7
 
 **Both clusters keep 7 days.** `cloud database-cluster:list` reported a retention of 0 days for staging's and production's clusters on 2026-10-17. The owner set 7 days on staging's on 2026-10-17 and on production's on 2026-10-18, and both read back as 7 on 2026-10-18 (remaining-chunks.md, Arm the program).
 
-**The plan is not confirmed.** The CLI does not report the plan. The organization's usage shows $5 of monthly credits, which the Starter plan includes, so the organization is probably on Starter (inference). The owner checks the plan in the dashboard's billing page.
+**The plan is Starter.** The CLI does not report the plan, so the owner read it in the dashboard on 2026-10-19.
 
 The owner's steps:
 
@@ -134,7 +134,7 @@ The owner's steps:
 2. Set each cluster's backup retention to 7 days, in the dashboard or with `cloud database-cluster:update <cluster> --retention-days=7`. Staging is needed for chunk 15c's rehearsal, and production before the gate.
 3. Read the retention back with `cloud database-cluster:list` and record it in remaining-chunks.md.
 
-Steps 2 and 3 are done. Step 1 is still the owner's.
+All three steps are done.
 
 The engine's own history is separate, and none of it replaces Laravel's backups:
 
