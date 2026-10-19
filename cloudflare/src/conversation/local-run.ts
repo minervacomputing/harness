@@ -2,7 +2,9 @@
 // Sandbox prepared for the attempt, either the container the conversation's previous run parked, acquired
 // when it holds the version the attempt starts from, or one started, hardened, verified and hydrated from
 // the run's last checkpoint, else its base version; the checkpoint barrier (local.ts `LocalCalls`) whose
-// checkpoints run against it; and the ExecutionEnv each local call gets.
+// checkpoints run against it; and the ExecutionEnv each local call gets. A started container may be restored
+// from the conversation's snapshot of that version, its folder seeded from the snapshot instead of R2; when
+// that hydration fails in any way, the attempt prepares a container from the image and hydrates it from R2.
 //
 // A checkpoint: kill the agent's processes and check the cgroup is empty, scan the folder as the agent's
 // user, validate the scan and record the keys of the contents the run may not read yet, let the Sandbox
@@ -23,17 +25,20 @@ import type { ExecOutputSink } from "../sandbox/commands.ts";
 import type { SandboxSpec } from "../sandbox/constants.ts";
 import type { Refused, SandboxApi, SandboxFence } from "../sandbox/core.ts";
 import { SandboxExecutionEnv } from "../sandbox/env.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "../sandbox/folder.ts";
 import type { Delivered } from "../sandbox/output.ts";
-import { prepareSandbox } from "../sandbox/session.ts";
+import { type Prepared, prepareSandbox } from "../sandbox/session.ts";
 import type { AttemptFence, EpochMs, VersionId } from "../shared/rpc.ts";
 import { FolderOverLimit, FolderUnavailable, LocalCalls, type LocalToolEvent, LocalToolStuck, SandboxRefused } from "./local.ts";
 import type { FolderPort } from "./ports.ts";
 
-/** The Sandbox calls a conversation makes: an attempt's, `status` for the clean-up at a run's end, and `seal` for its settlement. */
+/**
+ * The Sandbox calls a conversation makes: an attempt's, `status` for the clean-up at a run's end, `seal` for its
+ * settlement, and `forget` for its deletion.
+ */
 export type SandboxPort = Pick<
 	SandboxApi,
-	"start" | "harden" | "verify" | "acquire" | "exec" | "cancel" | "fs" | "hydrate" | "scan" | "checkpoint" | "killStrays" | "park" | "destroy" | "status" | "seal"
+	"start" | "harden" | "verify" | "acquire" | "exec" | "cancel" | "fs" | "hydrate" | "scan" | "checkpoint" | "killStrays" | "park" | "destroy" | "status" | "seal" | "forget"
 >;
 
 export interface LocalRunDeps {
@@ -57,6 +62,9 @@ export interface LocalRunDeps {
 	log(message: string): void;
 }
 
+/** A container prepared for the attempt, not yet hydrated. */
+type Ready = Extract<Prepared, { ok: true }>;
+
 function refused(value: unknown): value is Refused {
 	return typeof value === "object" && value !== null && "refused" in value;
 }
@@ -65,6 +73,8 @@ function refused(value: unknown): value is Refused {
 export interface Preparation {
 	/** A parked container was acquired: no start, hardening or hydration. */
 	acquired: boolean;
+	/** The container was restored from the conversation's snapshot: how long the hydration's seed and check took. */
+	restored: { seedMs: number; checkMs: number } | null;
 	startMs: number;
 	hardenMs: number;
 	verifyMs: number;
@@ -117,8 +127,9 @@ export class LocalRun {
 
 	/**
 	 * Acquires the container the conversation's previous run parked, else starts, hardens and verifies one and
-	 * hydrates the folder; once per attempt. A container that failed its hardening or its checks fails the turn at
-	 * once (ARCHITECTURE.md: The sandbox lifecycle); any other failure surfaces when a local call needs the container.
+	 * hydrates the folder; once per attempt. A container from the image that failed its hardening or its checks fails
+	 * the turn at once (ARCHITECTURE.md: The sandbox lifecycle); any other failure surfaces when a local call needs the
+	 * container.
 	 */
 	prepare(): Promise<SandboxFence> {
 		if (!this.#preparing) {
@@ -147,8 +158,27 @@ export class LocalRun {
 		await this.#deps.containerStarting();
 		const acquired = await this.#acquire(plan);
 		if (acquired) return acquired;
-		const sandbox = this.#deps.sandbox();
-		const prepared = await prepareSandbox(sandbox, this.fence, this.#deps.spec);
+		let prepared = await this.#started(plan.versionId);
+		let hydrated = await this.#hydrated(prepared, plan);
+		if (!hydrated.ok && prepared.restored) {
+			this.#deps.log(`the sandbox's snapshot was not used: ${hydrated.message}`);
+			prepared = await this.#started(null);
+			hydrated = await this.#hydrated(prepared, plan);
+		}
+		if (!hydrated.ok) throw new FolderUnavailable(hydrated.message);
+		const { ms } = prepared;
+		this.preparation = { acquired: false, restored: hydrated.restored, startMs: ms.start, hardenMs: ms.harden, verifyMs: ms.verify, hydrateMs: hydrated.ms, files: plan.files.length };
+		const folder = hydrated.restored ? `seed ${hydrated.restored.seedMs} ms, check ${hydrated.restored.checkMs} ms` : `hydrate ${hydrated.ms} ms`;
+		this.#deps.log(`sandbox ready${hydrated.restored ? " from its snapshot" : ""}: start ${ms.start} ms, harden ${ms.harden} ms, verify ${ms.verify} ms, ${folder} (${plan.files.length} files)`);
+		this.#parent = plan.versionId;
+		this.#prepared = prepared.fence;
+		await this.#deps.point?.("local:prepared");
+		return prepared.fence;
+	}
+
+	/** A container started, hardened and verified for the attempt, restored from the conversation's snapshot when it holds `restore`. */
+	async #started(restore: VersionId | null): Promise<Ready> {
+		const prepared = await prepareSandbox(this.#deps.sandbox(), this.fence, this.#deps.spec, restore);
 		if (!prepared.ok) {
 			// A container that did not start may start next time; one that failed its hardening or checks fails the turn.
 			if (prepared.stage === "start") throw new FolderUnavailable(`The sandbox did not start: ${prepared.message}`);
@@ -158,18 +188,25 @@ export class LocalRun {
 			await this.#destroy(prepared.fence, "The run ended while its sandbox was prepared.");
 			throw new FolderUnavailable("The run ended.");
 		}
+		return prepared;
+	}
+
+	/**
+	 * The plan's folder in the prepared container, and how long that took. A restored container's hydration that throws
+	 * answers a failure too, so that the attempt can prepare from the image instead.
+	 */
+	async #hydrated(prepared: Ready, plan: HydratePlan): Promise<{ ok: true; ms: number; restored: Preparation["restored"] } | { ok: false; message: string }> {
 		const started = Date.now();
-		const hydrated = await this.#deps.sandbox().hydrate(prepared.fence, plan);
-		if (refused(hydrated)) throw new FolderUnavailable(`The folder could not be prepared: ${hydrated.message}`);
-		if (!hydrated.ok) throw new FolderUnavailable(`The folder could not be prepared (${hydrated.reason}): ${hydrated.message}`);
-		this.preparation = { acquired: false, startMs: prepared.ms.start, hardenMs: prepared.ms.harden, verifyMs: prepared.ms.verify, hydrateMs: Date.now() - started, files: plan.files.length };
-		this.#deps.log(
-			`sandbox ready: start ${prepared.ms.start} ms, harden ${prepared.ms.harden} ms, verify ${prepared.ms.verify} ms, hydrate ${this.preparation.hydrateMs} ms (${plan.files.length} files)`,
-		);
-		this.#parent = plan.versionId;
-		this.#prepared = prepared.fence;
-		await this.#deps.point?.("local:prepared");
-		return prepared.fence;
+		let hydrated: HydrateResult | Refused;
+		try {
+			hydrated = await this.#deps.sandbox().hydrate(prepared.fence, plan);
+		} catch (error) {
+			if (!prepared.restored) throw error;
+			return { ok: false, message: `The folder could not be prepared: ${error instanceof Error ? error.message : String(error)}` };
+		}
+		if (refused(hydrated)) return { ok: false, message: `The folder could not be prepared: ${hydrated.message}` };
+		if (!hydrated.ok) return { ok: false, message: `The folder could not be prepared (${hydrated.reason}): ${hydrated.message}` };
+		return { ok: true, ms: Date.now() - started, restored: hydrated.restored ?? null };
 	}
 
 	/**
@@ -195,7 +232,7 @@ export class LocalRun {
 			await this.#destroy(fence, "The run ended while its sandbox was prepared.");
 			throw new FolderUnavailable("The run ended.");
 		}
-		this.preparation = { acquired: true, startMs: 0, hardenMs: 0, verifyMs: answer.verifyMs, hydrateMs: 0, files: plan.files.length };
+		this.preparation = { acquired: true, restored: null, startMs: 0, hardenMs: 0, verifyMs: answer.verifyMs, hydrateMs: 0, files: plan.files.length };
 		this.#deps.log(`sandbox acquired: verify ${answer.verifyMs} ms`);
 		this.#parent = plan.versionId;
 		this.#prepared = fence;
@@ -302,13 +339,14 @@ export class LocalRun {
 /**
  * Destroys the conversation's container when `whose` says its run's is to go (a run id: that run's; a
  * function: whichever run it accepts; null: whatever runs, for the conversation's deletion), whichever attempt
- * or instance prepared it. A parked container is the conversation's, not its run's, so only the deletion
- * destroys it. The destroy names the container's own incarnation, so it can never reach a later run's.
+ * or instance prepared it. A parked container, and one retiring from parked, is the conversation's, not its
+ * run's, so only the deletion destroys it. The destroy names the container's own incarnation, so it can never
+ * reach a later run's.
  */
 export async function destroyRunSandbox(sandbox: Pick<SandboxApi, "status" | "destroy">, whose: string | null | ((runId: string) => boolean), reason: string): Promise<boolean> {
 	const status = await sandbox.status();
 	if (status.incarnation === null || status.runId === null || status.attempt === null || status.state === "none") return false;
-	if (status.state === "parked" && whose !== null) return false;
+	if ((status.state === "parked" || status.state === "retiring") && whose !== null) return false;
 	if (typeof whose === "string" && status.runId !== whose) return false;
 	if (typeof whose === "function" && !whose(status.runId)) return false;
 	const answer = await sandbox.destroy({ runId: status.runId, attempt: status.attempt, incarnation: status.incarnation }, reason);

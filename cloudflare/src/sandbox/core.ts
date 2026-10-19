@@ -117,6 +117,8 @@ export type Lost = { lost: string };
 
 /** A container started for an attempt; `restored` when it came from the conversation's snapshot rather than the image. */
 export type Started = { incarnation: string; restored: boolean };
+/** A start that gave no container; `restored` when the start that failed was a restore. */
+export type NotStarted = { failed: string; restored?: boolean };
 
 /** A parked container taken for a new attempt, under a new incarnation, and how long its verification took. */
 export type Acquired = { incarnation: string; verifyMs: number };
@@ -133,7 +135,7 @@ export interface SandboxApi {
 	 * the conversation's snapshot when it holds `restore`, the version the attempt hydrates, and was taken from what
 	 * `spec` and the image give now; else from the image.
 	 */
-	start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | { failed: string }>;
+	start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | NotStarted>;
 	harden(fence: SandboxFence): Promise<HardeningReport | Refused | Lost>;
 	verify(fence: SandboxFence): Promise<VerificationReport | Refused | Lost>;
 	exec(fence: SandboxFence, request: ExecRequest, sink: ExecOutputSink | null): Promise<ExecResult | Refused>;
@@ -498,7 +500,7 @@ export class SandboxCore {
 		return matches ? record.snapshotId : null;
 	}
 
-	start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | { failed: string }> {
+	start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | NotStarted> {
 		return this.#serial(async () => {
 			if (isSealed(this.#ports.sql, fence.runId)) return SEALED;
 			const container = this.#ports.container;
@@ -537,12 +539,12 @@ export class SandboxCore {
 			} catch (error) {
 				this.#restoreFailed();
 				await this.#destroyNow(`The container did not start: ${String(error)}`);
-				return { failed: "The container did not start." };
+				return { failed: "The container did not start.", restored: snapshot !== null };
 			}
 			if (!(await this.#ready())) {
 				this.#restoreFailed();
 				await this.#destroyNow("The container did not become ready.");
-				return { failed: "The container did not become ready." };
+				return { failed: "The container did not become ready.", restored: snapshot !== null };
 			}
 			await this.#keepAlive();
 			await this.#schedule();

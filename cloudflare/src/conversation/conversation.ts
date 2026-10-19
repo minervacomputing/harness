@@ -401,11 +401,16 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return { ok: true, value: { outcome: "deleted" } };
 	}
 
-	/** A deleted conversation's scripts and sandbox destroyed; it fails while the sandbox is still being destroyed. */
+	/**
+	 * A deleted conversation's scripts and sandbox destroyed, and its snapshot forgotten so nothing restores its folder; it
+	 * fails while the sandbox is still being destroyed. The container goes first: a Sandbox still on the previous version
+	 * has no `forget`, and the deletion's retries must not leave the container running meanwhile.
+	 */
 	async #cleanUp(): Promise<void> {
 		await this.#destroyScripts();
 		const sandbox = this.#sandbox();
 		await destroyRunSandbox(sandbox, null, "The conversation was deleted.");
+		await sandbox.forget();
 		if ((await sandbox.status()).cleanupPending) throw new Error("The conversation's sandbox is still being destroyed.");
 	}
 
@@ -1230,7 +1235,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/**
 	 * Destroys a container a run that ended left running (its end's destroy failed, or a reset lost it), but not one it
-	 * parked, which waits for the conversation's next run; retried until done.
+	 * parked, which waits for the conversation's next run or retires; retried until done.
 	 */
 	async #cleanSandbox(): Promise<{ rescheduleAt: number } | undefined> {
 		if (!this.#store.conversation()) return undefined;

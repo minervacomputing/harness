@@ -1,7 +1,8 @@
 // A stand-in for a conversation's Sandbox in local workerd, which has no containers (ConversationPorts.sandbox):
 // a folder in memory with the Sandbox's fences, hydration from and checkpoints into the workspace's bucket
 // (with the SHA-256 R2 checks), a scan that reports limits, each start's span for a run's seal, parking for the next
-// run and acquiring a parked folder of the run's version, and a tiny command language for the bash tool.
+// run and acquiring a parked folder of the run's version, a parked folder retired into the conversation's snapshot
+// and restored by a start for its version, and a tiny command language for the bash tool.
 // It lives in the tests' isolate, so it survives the conversation's resets as a container would; a start
 // for a new attempt replaces the folder, as a new container does. The real container is the unit tests'
 // (Docker) and the account's.
@@ -16,7 +17,7 @@ import { hex } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "../../src/sandbox/commands.ts";
 import type { SandboxSpec } from "../../src/sandbox/constants.ts";
-import type { Acquired, NotAcquired, Refused, SandboxFence, SandboxStatus, Started } from "../../src/sandbox/core.ts";
+import type { Acquired, NotAcquired, NotStarted, Refused, SandboxFence, SandboxStatus, Started } from "../../src/sandbox/core.ts";
 import type { FsRequest, FsResponse } from "../../src/sandbox/files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "../../src/sandbox/folder.ts";
 import type { ScanResult } from "../../src/sandbox/scan.ts";
@@ -49,6 +50,15 @@ export interface MemoryFaults {
 	upload?: boolean;
 	/** Killing strays fails: processes that would not die. */
 	strays?: boolean;
+	/** A restored container's folder fails its check against the plan, or its hydration call throws, as a reset object's does. */
+	seed?: "differs" | "throws";
+}
+
+/** The conversation's snapshot: the folder of the parked container that retired, and its version. */
+interface MemorySnapshot {
+	versionId: VersionId;
+	files: Map<string, MemoryFile>;
+	dirs: Set<string>;
 }
 
 async function sha256(data: Uint8Array): Promise<string> {
@@ -75,6 +85,11 @@ export class MemorySandbox implements SandboxPort {
 	#state: SandboxStatus["state"] = "none";
 	#startedAt: number | null = null;
 	#parkedVersion: VersionId | null = null;
+	#snapshot: MemorySnapshot | null = null;
+	/** The started container was restored, and its folder is not checked yet. */
+	#restoring = false;
+	/** The version each start was asked to restore. */
+	readonly restores: (VersionId | null)[] = [];
 	/** Each start's span, by run: open while its folder is the one in use. */
 	readonly #spans: { runId: string; span: ContainerSpan }[] = [];
 	readonly #holds = new Map<string, (cancelled: boolean) => void>();
@@ -99,15 +114,20 @@ export class MemorySandbox implements SandboxPort {
 		return own !== null && own.incarnation === fence.incarnation && own.runId === fence.runId && own.attempt === fence.attempt && this.#state !== "none";
 	}
 
-	/** As the Sandbox refuses a call: another fence's is stale, and a parked container admits nothing. */
-	#refusal(fence: SandboxFence): Refused | null {
+	/**
+	 * As the Sandbox refuses a call: another fence's is stale, a parked or retiring container admits nothing, and a restored
+	 * one only its hardening, verification and hydration (`checking`) until its folder passed the check.
+	 */
+	#refusal(fence: SandboxFence, checking = false): Refused | null {
 		if (!this.#owns(fence)) return STALE;
-		return this.#state === "parked" ? NOT_VERIFIED : null;
+		return this.#state === "parked" || this.#state === "retiring" || (this.#restoring && !checking) ? NOT_VERIFIED : null;
 	}
 
-	async start(fence: AttemptFence, spec: SandboxSpec): Promise<Started | Refused | { failed: string }> {
-		this.log.push(`start ${fence.attempt}`);
-		if (this.faults.start) return { failed: "The container did not become ready." };
+	async start(fence: AttemptFence, spec: SandboxSpec, restore: VersionId | null = null): Promise<Started | Refused | NotStarted> {
+		const restored = restore !== null && this.#snapshot?.versionId === restore;
+		this.log.push(restored ? `start ${fence.attempt} restored` : `start ${fence.attempt}`);
+		this.restores.push(restore);
+		if (this.faults.start) return { failed: "The container did not become ready.", restored };
 		this.release();
 		this.files.clear();
 		this.dirs.clear();
@@ -116,13 +136,14 @@ export class MemorySandbox implements SandboxPort {
 		this.#fence = { ...fence, incarnation };
 		this.#spec = spec;
 		this.#state = "starting";
+		this.#restoring = restored;
 		this.#startedAt = Date.now();
 		this.#spans.push({ runId: fence.runId, span: { startedAt: this.#startedAt, leaseUntil: this.#startedAt + 3_600_000, endedAt: null, ended: null } });
-		return { incarnation, restored: false };
+		return { incarnation, restored };
 	}
 
 	async harden(fence: SandboxFence): Promise<HardeningReport | Refused> {
-		const refusal = this.#refusal(fence);
+		const refusal = this.#refusal(fence, true);
 		if (refusal) return refusal;
 		if (this.faults.harden) {
 			this.#state = "none";
@@ -133,7 +154,7 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async verify(fence: SandboxFence): Promise<VerificationReport | Refused> {
-		const refusal = this.#refusal(fence);
+		const refusal = this.#refusal(fence, true);
 		if (refusal) return refusal;
 		this.#state = "verified";
 		return { ok: true, checks: [] };
@@ -250,8 +271,9 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async hydrate(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused> {
-		const refusal = this.#refusal(fence);
+		const refusal = this.#refusal(fence, true);
 		if (refusal) return refusal;
+		if (this.#restoring) return this.#seed(plan);
 		this.log.push(`hydrate ${plan.files.length}`);
 		if (this.files.size || this.dirs.size) return { ok: false, reason: "not_empty", message: "/workspace is not empty." };
 		for (const file of plan.files) {
@@ -263,6 +285,26 @@ export class MemorySandbox implements SandboxPort {
 		}
 		for (const dir of plan.dirs) this.dirs.add(dir);
 		return { ok: true };
+	}
+
+	/** A restored container's folder from the snapshot; one that fails its check is destroyed, and the snapshot dropped. */
+	#seed(plan: HydratePlan): HydrateResult {
+		this.log.push(`seed ${plan.files.length}`);
+		if (this.faults.seed === "throws") throw new Error("The Sandbox was reset.");
+		const snapshot = this.#snapshot;
+		if (this.faults.seed === "differs" || snapshot?.versionId !== plan.versionId) {
+			const message = 'The restored folder differs from the plan at "stray.txt" (extra file).';
+			this.#snapshot = null;
+			this.#restoring = false;
+			this.#end();
+			this.#state = "none";
+			this.log.push(`destroy ${message}`);
+			return { ok: false, reason: "restore_failed", message };
+		}
+		for (const [path, file] of snapshot.files) this.files.set(path, file);
+		for (const dir of snapshot.dirs) this.dirs.add(dir);
+		this.#restoring = false;
+		return { ok: true, restored: { seedMs: 0, checkMs: 0 } };
 	}
 
 	async scan(fence: SandboxFence, options: { rehashAll: boolean }): Promise<ScanResult | Refused> {
@@ -323,10 +365,10 @@ export class MemorySandbox implements SandboxPort {
 		return { destroyed: true };
 	}
 
-	/** The run's spans, its folder destroyed first if it is the one in use and not parked. Later starts are not refused. */
+	/** The run's spans, its folder destroyed first if it is the one in use and not parked or retiring. Later starts are not refused. */
 	async seal(runId: RunId): Promise<SealedSpans> {
 		this.log.push("seal");
-		if (this.#fence?.runId === runId && this.#state !== "none" && this.#state !== "parked") {
+		if (this.#fence?.runId === runId && this.#state !== "none" && this.#state !== "parked" && this.#state !== "retiring") {
 			this.release();
 			this.#end();
 			this.#state = "none";
@@ -369,6 +411,32 @@ export class MemorySandbox implements SandboxPort {
 		return { incarnation, verifyMs: 0 };
 	}
 
+	/** The parked folder becomes the conversation's snapshot and the container goes, as a retire that took one. */
+	retire(): void {
+		if ((this.#state !== "parked" && this.#state !== "retiring") || this.#parkedVersion === null) throw new Error("Nothing parked holds a version.");
+		this.#snapshot = { versionId: this.#parkedVersion, files: new Map(this.files), dirs: new Set(this.dirs) };
+		this.log.push("retire");
+		this.files.clear();
+		this.dirs.clear();
+		this.#state = "none";
+	}
+
+	/** The parked container is on its way to a snapshot: the conversation's still, as a parked one is. */
+	retiring(): void {
+		if (this.#state !== "parked") throw new Error("Nothing is parked.");
+		this.#state = "retiring";
+	}
+
+	/** Drops the snapshot, and destroys a retiring container. */
+	async forget(): Promise<void> {
+		this.log.push("forget");
+		this.#snapshot = null;
+		if (this.#state === "retiring") {
+			this.#state = "none";
+			this.log.push("destroy The conversation's snapshot was forgotten.");
+		}
+	}
+
 	/** The open span, if any, ends now. */
 	#end(ended: "destroyed" | "parked" = "destroyed"): void {
 		const open = this.#spans.at(-1);
@@ -385,7 +453,7 @@ export class MemorySandbox implements SandboxPort {
 			attempt: live ? (own?.attempt ?? null) : null,
 			cleanupPending: false,
 			startedAt: this.#startedAt,
-			snapshot: null,
+			snapshot: this.#snapshot && { versionId: this.#snapshot.versionId, takenAt: 0 },
 		};
 	}
 

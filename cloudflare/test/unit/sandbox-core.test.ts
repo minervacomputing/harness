@@ -1,10 +1,12 @@
 // The Sandbox's lifecycle (src/sandbox/core.ts) over a scripted container and node:sqlite, without Docker:
 // the states and what each admits, fences, a failed start, hardening and destroy, the alarm's retries and
 // leases, a restart in each state, an admission failure and a container lost under a call, each
-// incarnation's span and a run's seal, and parking a container for the conversation's next run. The same
-// paths against the real image are in sandbox-local.test.ts.
+// incarnation's span and a run's seal, parking a container for the conversation's next run, and retiring it
+// with a snapshot that a later start restores, with prepareSandbox's (session.ts) fall back to the image. The
+// same paths against the real image are in sandbox-local.test.ts.
 
 import { describe, expect, test, vi } from "vitest";
+import { destroyRunSandbox, type SandboxPort } from "../../src/conversation/local-run.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
 import { DEADLINE_GRACE_MS, IDLE_MS, PARKED_MS, sandboxSpec, type SandboxSpec, SNAPSHOT_AGE_MS, WORKSPACE } from "../../src/sandbox/constants.ts";
@@ -120,6 +122,8 @@ class ScriptedContainer implements ContainerPort {
 	seedGate: Promise<void> | null = null;
 	/** A verification whose report says nothing it can read. */
 	failVerification = false;
+	/** The step at which a container restored from a snapshot fails; one from the image does not. */
+	failRestored: "ready" | "hardening" | "verification" | null = null;
 	readonly destroyReasons: string[] = [];
 	/** Ends the hung processes, as a destroy does. */
 	#hung: (() => void)[] = [];
@@ -131,11 +135,17 @@ class ScriptedContainer implements ContainerPort {
 	mostKillsRunning = 0;
 	readonly log: string[] = [];
 	#spec: SandboxSpec | null = null;
+	#restored = false;
 
 	start(options: { restore?: string }): void {
 		this.starts++;
 		this.restores.push(options.restore ?? null);
+		this.#restored = options.restore !== undefined;
 		this.running = true;
+	}
+
+	#fails(step: "ready" | "hardening" | "verification"): boolean {
+		return this.#restored && this.failRestored === step;
 	}
 
 	async snapshot(name: string): Promise<{ id: string; size: number }> {
@@ -152,7 +162,7 @@ class ScriptedContainer implements ContainerPort {
 	async exec(argv: string[]): Promise<ExecProcess> {
 		if (!this.running || this.lostOnExec) throw new Error("exec() cannot be called on a container that is not running");
 		const script = argv[2] ?? "";
-		if (argv[0] === "/bin/true") return process("", this.ready ? 0 : 1);
+		if (argv[0] === "/bin/true") return process("", this.ready && !this.#fails("ready") ? 0 : 1);
 		if (script === RETIRE_SCRIPT) {
 			this.log.push("retire");
 			if (this.retireGate) await this.retireGate;
@@ -172,16 +182,17 @@ class ScriptedContainer implements ContainerPort {
 			const [size, inodes, tmp, pids, memory] = argv.slice(3).map(Number) as number[];
 			this.#spec = { ...SPEC, folderBytes: size as number, folderEntries: (inodes as number) - 1, tmpBytes: tmp as number, pidsMax: pids as number, memoryBytes: memory as number };
 			const steps = ["workspace", "tmp", "home_dirs", "cgroup", "readonly_root"];
-			const until = this.failHardeningAt ? steps.indexOf(this.failHardeningAt) + 1 : steps.length;
-			const out = steps.slice(0, until).map((step) => `step ${step}\n`).join("") + (this.failHardeningAt ? "" : "step done\n");
-			return process(out, this.failHardeningAt ? 1 : 0);
+			const failAt = this.failHardeningAt ?? (this.#fails("hardening") ? "cgroup" : null);
+			const until = failAt ? steps.indexOf(failAt) + 1 : steps.length;
+			const out = steps.slice(0, until).map((step) => `step ${step}\n`).join("") + (failAt ? "" : "step done\n");
+			return process(out, failAt ? 1 : 0);
 		}
 		if (argv[3] === "-c" && argv[4]?.includes("mountinfo")) {
 			this.verifications++;
 			this.log.push("verify");
 			if (this.hangVerification === "exec") return await new Promise<never>(() => {});
 			if (this.hangVerification === "process") return hung("", (end) => this.#hung.push(end));
-			return process(this.failVerification ? "{}" : facts(this.#spec ?? SPEC), 0);
+			return process(this.failVerification || this.#fails("verification") ? "{}" : facts(this.#spec ?? SPEC), 0);
 		}
 		if (script.includes("-links +1")) {
 			this.log.push("park");
@@ -365,7 +376,7 @@ describe("the lifecycle", () => {
 		const clock = made.clock;
 		const advancing = setInterval(() => (clock.now += 60_000), 50);
 		try {
-			expect(await made.core.start({ runId: uuid7(), attempt: 1 }, SPEC)).toEqual({ failed: "The container did not become ready." });
+			expect(await made.core.start({ runId: uuid7(), attempt: 1 }, SPEC)).toEqual({ failed: "The container did not become ready.", restored: false });
 		} finally {
 			clearInterval(advancing);
 		}
@@ -1346,7 +1357,7 @@ describe("retiring and restoring", () => {
 		const clock = notReady.clock;
 		const advancing = setInterval(() => (clock.now += MINUTE), 50);
 		try {
-			expect(await notReady.core.start({ runId: uuid7(), attempt: 1 }, SPEC, V1)).toEqual({ failed: "The container did not become ready." });
+			expect(await notReady.core.start({ runId: uuid7(), attempt: 1 }, SPEC, V1)).toEqual({ failed: "The container did not become ready.", restored: true });
 		} finally {
 			clearInterval(advancing);
 		}
@@ -1410,6 +1421,88 @@ describe("retiring and restoring", () => {
 		expect(made.core.status()).toMatchObject({ state: "starting", incarnation: (second as { incarnation: string }).incarnation, attempt: 2 });
 	});
 
+	test("prepareSandbox restores the version it is given, and a restore that is not ready or fails its hardening or verification gives way to the image", async () => {
+		const made = await retired();
+		expect(await prepareSandbox(made.core, { runId: uuid7(), attempt: 1 }, SPEC, V1)).toMatchObject({ ok: true, restored: true });
+		expect(made.container.restores).toEqual([null, "snapshot-1"]);
+
+		for (const step of ["ready", "hardening", "verification"] as const) {
+			const failing = await retired();
+			failing.container.failRestored = step;
+			const clock = failing.clock;
+			const advancing = step === "ready" ? setInterval(() => (clock.now += MINUTE), 50) : null;
+			try {
+				expect(await prepareSandbox(failing.core, { runId: uuid7(), attempt: 1 }, SPEC, V1), step).toMatchObject({ ok: true, restored: false });
+			} finally {
+				if (advancing) clearInterval(advancing);
+			}
+			expect(failing.container.restores, step).toEqual([null, "snapshot-1", null]);
+			expect(failing.core.status(), step).toMatchObject({ state: "verified", snapshot: null });
+		}
+	});
+
+	test("after a restore that did not become ready or stopped answering both tries from the image follow, and a start that restored nothing gets only its retry", async () => {
+		const notReady = await retired();
+		const restored = await retired();
+		const exhausted = await retired();
+		const image = await retired();
+		vi.useFakeTimers();
+		const clock = notReady.clock;
+		const advancing = setInterval(() => (clock.now += MINUTE), 50);
+		try {
+			// The first container from the image stops answering too, so only a second one makes the attempt.
+			notReady.container.failRestored = "ready";
+			notReady.container.hangHardenings = 1;
+			expect(await outwait(prepareSandbox(notReady.core, { runId: uuid7(), attempt: 1 }, SPEC, V1))).toMatchObject({ ok: true, restored: false });
+			expect(notReady.container.restores).toEqual([null, "snapshot-1", null, null]);
+
+			restored.container.hangHardenings = 2;
+			expect(await outwait(prepareSandbox(restored.core, { runId: uuid7(), attempt: 1 }, SPEC, V1))).toMatchObject({ ok: true, restored: false });
+			expect(restored.container.restores).toEqual([null, "snapshot-1", null, null]);
+
+			exhausted.container.hangHardenings = 3;
+			expect(await outwait(prepareSandbox(exhausted.core, { runId: uuid7(), attempt: 1 }, SPEC, V1))).toEqual({ ok: false, stage: "start", message: "The container did not answer its hardening." });
+			expect(exhausted.container.restores).toEqual([null, "snapshot-1", null, null]);
+
+			// The record holds V1, so a start for V2 is from the image.
+			image.container.hangHardenings = 2;
+			expect(await outwait(prepareSandbox(image.core, { runId: uuid7(), attempt: 1 }, SPEC, V2))).toEqual({ ok: false, stage: "start", message: "The container did not answer its hardening." });
+			expect(image.container.restores).toEqual([null, null, null]);
+		} finally {
+			clearInterval(advancing);
+			vi.useRealTimers();
+		}
+	});
+
+	test("a container from the image that fails its hardening fails the preparation, and a sealed or stale refusal of a restore is never tried again", async () => {
+		const image = await retired();
+		image.container.failHardeningAt = "cgroup";
+		expect(await prepareSandbox(image.core, { runId: uuid7(), attempt: 1 }, SPEC, V2)).toEqual({ ok: false, stage: "harden", message: "The sandbox could not be hardened (cgroup)." });
+		expect(image.container.restores).toEqual([null, null]);
+
+		const sealed = await retired();
+		const ended = uuid7();
+		await sealed.core.seal(ended);
+		expect(await prepareSandbox(sealed.core, { runId: ended, attempt: 1 }, SPEC, V1)).toEqual({ ok: false, stage: "start", message: "This run has ended." });
+		expect(sealed.container.restores).toEqual([null]);
+
+		// The run's next attempt starts while the restored container of the attempt it replaces waits for its hardening.
+		const replaced = await retired();
+		const runId = uuid7();
+		const core = replaced.core;
+		const sandbox = {
+			start: core.start.bind(core),
+			verify: core.verify.bind(core),
+			destroy: core.destroy.bind(core),
+			harden: async (fence: SandboxFence) => {
+				await core.start({ runId, attempt: 2 }, SPEC, null);
+				return await core.harden(fence);
+			},
+		};
+		expect(await prepareSandbox(sandbox, { runId, attempt: 1 }, SPEC, V1)).toEqual({ ok: false, stage: "harden", message: "This sandbox belongs to another incarnation, run or attempt." });
+		expect(replaced.container.restores).toEqual([null, "snapshot-1", null]);
+	});
+
 	test("an object restarted before a restored folder was checked destroys the container and keeps the record", async () => {
 		const made = await retired();
 		await started(made);
@@ -1437,6 +1530,26 @@ describe("retiring and restoring", () => {
 		expect(made.container.snapshots).toHaveLength(1);
 		expect(made.core.status()).toMatchObject({ state: "none", snapshot: null });
 		await made.core.forget();
+		expect(made.core.status()).toMatchObject({ state: "none", snapshot: null });
+	});
+
+	test("a run's end leaves a retiring container to its Sandbox, as it leaves a parked one, and the conversation's deletion destroys it", async () => {
+		const made = rig();
+		made.container.retireExit = 0;
+		let release = () => {};
+		made.container.retireGate = new Promise<void>((resolve) => (release = resolve));
+		const fence = await parkedUntil(made);
+		const alarm = made.core.alarm();
+		await tick();
+		expect(made.core.status().state).toBe("retiring");
+		const sandbox = made.core as unknown as SandboxPort;
+		expect(await destroyRunSandbox(sandbox, fence.runId, "The run ended.")).toBe(false);
+		expect(await destroyRunSandbox(sandbox, () => true, "The run ended.")).toBe(false);
+		expect(made.core.status().state).toBe("retiring");
+		expect(await destroyRunSandbox(sandbox, null, "The conversation was deleted.")).toBe(true);
+		expect(made.container.destroyReasons).toEqual(["The conversation was deleted."]);
+		release();
+		await alarm;
 		expect(made.core.status()).toMatchObject({ state: "none", snapshot: null });
 	});
 

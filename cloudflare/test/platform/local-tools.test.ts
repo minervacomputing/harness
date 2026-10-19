@@ -4,13 +4,14 @@
 // EU bucket, and a conversation's container played by test/platform/sandbox-memory.ts (local workerd has no containers).
 // Covered: results held until a checkpoint saved them and their cards after, phases, the final rehash, the folder version
 // published with the run's changes and warnings, a turn that only reads, the run's container parked at its end for the next
-// run, which acquires it, a container started only when a turn needs one, deleting a conversation with a parked container, a cancelled
-// run's end marking the work of a command pi's abort does not end, a deletion that waits for such a command, the next start
-// waiting for it (and its bound, a start cancelled while it waits, and one cancelled in the lane, whose bound resets
-// nothing), a folder over its limits (folder_limit and its message), a container that fails its hardening (worker_failed)
-// or never starts (attempts until worker_exited), and crashes between a checkpoint's upload and its record, its record and
-// the release, and the release and pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from
-// the last checkpoint.
+// run, which acquires it, a container started only when a turn needs one, a cold start restored from the conversation's
+// snapshot and one whose restore fails falling back to the image within the attempt, deleting a conversation with a parked or
+// retiring container or a snapshot, a cancelled run's end marking the work of a command pi's abort does not end, a deletion
+// that waits for such a command, the next start waiting for it (and its bound, a start cancelled while it waits, and one
+// cancelled in the lane, whose bound resets nothing), a folder over its limits (folder_limit and its message), a container
+// that fails its hardening (worker_failed) or never starts (attempts until worker_exited), and crashes between a checkpoint's
+// upload and its record, its record and the release, and the release and pi's commit (the Checkpoints row of
+// ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
 
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -486,7 +487,7 @@ describe("the local tools in the conversation", () => {
 });
 
 describe("the container between turns", () => {
-	const lifecycle = (log: string[]) => log.filter((line) => /^(acquire|start|hydrate|park|destroy)/.test(line));
+	const lifecycle = (log: string[]) => log.filter((line) => /^(acquire|start|hydrate|seed|park|destroy|retire|forget)/.test(line));
 
 	test("a turn on an empty folder that only answers starts no container", async () => {
 		const w = await world();
@@ -523,13 +524,57 @@ describe("the container between turns", () => {
 		expect(cards(await eventsOf(w, runId))).toEqual([{ tool: "bash", summary: "cat a.txt", ok: true, excerpt: "a" }]);
 	});
 
-	test("deleting the conversation destroys its parked container", async () => {
+	test("a cold start for the version the conversation's snapshot holds restores it, and its hydration seeds the folder", async () => {
 		const w = await world();
-		expect((await settled(w, await post(w, [bash("put a.txt a"), DONE]))).status).toBe("completed");
-		expect((await w.sandbox.status()).state).toBe("parked");
-		expect(await commands.deleteConversation({ scope: w.within, conversation: w.conversationId })).toEqual({ outcome: "deleted" });
-		expect((await w.sandbox.status()).state).toBe("none");
-		expect(w.sandbox.log.at(-1)).toBe("destroy The conversation was deleted.");
+		const first = await settled(w, await post(w, [bash("put a.txt a"), DONE]));
+		expect(first.status).toBe("completed");
+		w.sandbox.retire();
+		const before = w.sandbox.log.length;
+		await warnings(async (lines) => {
+			const runId = await post(w, [bash("cat a.txt"), DONE]);
+			expect((await settled(w, runId)).status).toBe("completed");
+			expect(cards(await eventsOf(w, runId))).toEqual([{ tool: "bash", summary: "cat a.txt", ok: true, excerpt: "a" }]);
+			expect(lines()).toContainEqual(expect.stringMatching(/sandbox ready from its snapshot: start \d+ ms, harden \d+ ms, verify \d+ ms, seed 0 ms, check 0 ms \(1 files\)$/));
+		});
+		expect(lifecycle(w.sandbox.log.slice(before))).toEqual(["acquire 1", "start 1 restored", "seed 1", "park version"]);
+		expect(w.sandbox.restores).toEqual([null, first.resultVersionId]);
+	});
+
+	test("a restored container whose hydration fails or throws gives way, in the same attempt, to one from the image hydrated from R2", async () => {
+		const failed = 'destroy The restored folder differs from the plan at "stray.txt" (extra file).';
+		for (const seed of ["differs", "throws"] as const) {
+			const w = await world();
+			const first = await settled(w, await post(w, [bash("put a.txt a"), DONE]));
+			w.sandbox.retire();
+			w.sandbox.faults.seed = seed;
+			const before = w.sandbox.log.length;
+			const runId = await post(w, [bash("cat a.txt"), DONE]);
+			const run = await settled(w, runId);
+			expect(run.status, seed).toBe("completed");
+			expect(restarts(await eventsOf(w, runId)), seed).toEqual([]);
+			expect(cards(await eventsOf(w, runId)), seed).toEqual([{ tool: "bash", summary: "cat a.txt", ok: true, excerpt: "a" }]);
+			const seeded = seed === "differs" ? ["seed 1", failed] : ["seed 1"];
+			expect(lifecycle(w.sandbox.log.slice(before)), seed).toEqual(["acquire 1", "start 1 restored", ...seeded, "start 1", "hydrate 1", "park version"]);
+			expect(w.sandbox.restores, seed).toEqual([null, first.resultVersionId, null]);
+		}
+	});
+
+	test("deleting the conversation destroys its parked or retiring container, then forgets its snapshot", async () => {
+		const deleted = "destroy The conversation was deleted.";
+		const cases = [
+			{ name: "parked", change: () => {}, last: [deleted, "forget"] },
+			{ name: "retiring", change: (sandbox: MemorySandbox) => sandbox.retiring(), last: [deleted, "forget"] },
+			{ name: "retired", change: (sandbox: MemorySandbox) => sandbox.retire(), last: ["retire", "forget"] },
+		];
+		for (const entry of cases) {
+			const w = await world();
+			expect((await settled(w, await post(w, [bash("put a.txt a"), DONE]))).status, entry.name).toBe("completed");
+			expect((await w.sandbox.status()).state, entry.name).toBe("parked");
+			entry.change(w.sandbox);
+			expect(await commands.deleteConversation({ scope: w.within, conversation: w.conversationId }), entry.name).toEqual({ outcome: "deleted" });
+			expect(await w.sandbox.status(), entry.name).toMatchObject({ state: "none", snapshot: null });
+			expect(lifecycle(w.sandbox.log).slice(-2), entry.name).toEqual(entry.last);
+		}
 	});
 });
 

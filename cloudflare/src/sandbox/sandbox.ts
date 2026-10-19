@@ -13,7 +13,7 @@ import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import type { AttemptFence, RunId, VersionId } from "../shared/rpc.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "./commands.ts";
 import type { SandboxSpec } from "./constants.ts";
-import { type Acquired, type Lost, type NotAcquired, type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus, type Started } from "./core.ts";
+import { type Acquired, type Lost, type NotAcquired, type NotStarted, type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus, type Started } from "./core.ts";
 import type { FsRequest, FsResponse } from "./files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "./folder.ts";
 import type { HardeningReport, VerificationReport } from "./hardening.ts";
@@ -81,7 +81,7 @@ export class Sandbox extends DurableObject<Env> implements SandboxApi {
 		return { kind: "sandbox", ...identity(this.ctx), migrations: appliedMigrations(this.ctx.storage) };
 	}
 
-	async start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | { failed: string }> {
+	async start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | NotStarted> {
 		return this.core.start(fence, spec, restore);
 	}
 
