@@ -1,6 +1,6 @@
 # Long conversations, a lasting sandbox and memory
 
-Status: proposed, 2026-10-15. Chunk 19a was built and verified on 2026-10-18 and is on `main`. Staging has run it since 2026-10-19 (deployed from `acc893a` with the owner's approval, and again from `6f3cec9`, whose engine differs only by a removed unit test); production gets it with a later deploy the owner approves. Nothing else here is built. The owner accepted the changes to Decision 7 and Retention on 2026-10-19, and the change to Decision 2 is still proposed. It picks up where [product-and-engine.md](product-and-engine.md) ends (chunk 18). opencode reviewed the first draft and the snapshot chunk; their findings are folded in (Appendix A).
+Status: proposed, 2026-10-15. Chunk 19a was built and verified on 2026-10-18 and is on `main`. Staging has run it since 2026-10-19 (deployed from `acc893a` with the owner's approval, and again from `6f3cec9`, whose engine differs only by a removed unit test); production gets it with a later deploy the owner approves. Nothing else here is built. On 2026-10-19 the owner accepted the changes to Decisions 2 and 7 and to Retention, and armed the program without waiting for 15b's live box. It picks up where [product-and-engine.md](product-and-engine.md) ends (chunk 18). opencode reviewed the first draft and the snapshot chunk; their findings are folded in (Appendix A).
 
 A long conversation should feel like one session with a computer that stays put, and Minerva should learn from conversations over time. Today each turn starts a new pi session from the latest 20 messages and rebuilds the sandbox from R2. This plan keeps one pi conversation per Minerva conversation (chunks 19a to 19c), keeps the sandbox parked between turns (20), restores a cold sandbox from a container snapshot (21), and adds memory held in Laravel (22 to 24). Throughout, a run is still one turn with its grants compiled when it starts, so strict revocation is unchanged.
 
@@ -16,7 +16,7 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 - [x] **No single continuous chat** (owner, 2026-10-15). Users start new conversations. A conversation may last a long time. Memory reaches across conversations, never through one shared thread.
 - [x] **Container snapshots as a cache** (owner, 2026-10-15, from [sandbox-snapshots.md](sandbox-snapshots.md)). A cold sandbox is restored from a snapshot when one matches, and the folder in R2 stays the record. The owner accepts that a snapshot cannot be deleted and lives up to 30 days after its last restore, so a deleted conversation's files can outlive it by up to 30 days in Cloudflare's storage. Nothing restores them after the deletion. Their price and where they are stored are not published yet. The owner accepts the unknown location for now, EU workspaces included, and it is listed in open question 6.
-- [ ] **Decision 2 changes** (proposed). A container may outlive its run, parked between turns and snapshotted and destroyed after an idle window. The folder in R2 stays the record, and a container can always be rebuilt from it.
+- [x] **Decision 2 changes** (owner, 2026-10-19). A container may outlive its run, parked between turns and snapshotted and destroyed after an idle window. The folder in R2 stays the record, and a container can always be rebuilt from it.
 - [x] **Decision 7 changes** (owner, 2026-10-19). Each conversation has one pi conversation, continued by every run and compacted by pi. `startRun` carries the turn. Its `history` is read only for a conversation's first run.
 - [x] **Retention changes** (owner, 2026-10-19). The pi conversation is kept as long as the Minerva conversation, and deleted with it. This replaces "pi's session kept 30 days after the run" in the answer to product-and-engine.md's open question 9, which chunk 19b updates.
 
@@ -24,8 +24,8 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 ### Arm the program
 
-- [ ] Chunks 0 to 18 of product-and-engine.md are done, with chunk 13's old paths gone.
-- [ ] The owner accepts the Decisions above. Record the date here. Decisions 1 and 2 on 2026-10-15, and the changes to Decision 7 and Retention on 2026-10-19. Left: the change to Decision 2.
+- [x] Chunks 0 to 18 of product-and-engine.md are done, with chunk 13's old paths gone. Waived by the owner on 2026-10-19: the program does not wait for 15b's live box (its first purging pass on staging, due from 2026-10-22), and 15b is assumed to work. That box stays open in remaining-chunks.md until the pass runs.
+- [x] The owner accepts the Decisions above. Record the date here. Decisions 1 and 2 on 2026-10-15, and the changes to Decisions 2 and 7 and to Retention on 2026-10-19.
 - [x] Re-establish the account suites for the engine after chunk 13, through the internal API (the frontend and `test:browser` leave with chunk 13). The end-to-end turns in `test:faults` (`cloudflare/test/account/turns.test.ts`) must fail, not skip, when a required tool is not called. Done by `4f436aa` (2026-10-16): the account suites send Laravel's commands through the contract's client, and the Workers AI turn throws when the model has not called `bash` and `run_script` in two attempts. `account.yml` passed at `6f3cec9` on 2026-10-19 (run 39220659269).
 
 **The owner's exception** (2026-10-18). Chunk 19a started before the program was armed and before chunks 16 and 18 were done (its design, `86229f0`, on 2026-10-18). It may land on `main` only once chunk 17a is on staging, which it has been since 2026-10-18 (remaining-chunks.md, chunk 17), and once its live and perf boxes pass. When the exception was recorded, the three boxes above stood as follows:
@@ -87,6 +87,8 @@ This chunk still creates one pi session per run. It only makes sharing one safe.
 ## Continue one pi conversation per conversation (chunk 19b)
 
 **Depends on.** Chunk 19a.
+
+**The owner's scope** (2026-10-19). Staging and production run OpenAI `gpt-6.1-sol` on the Responses API, so the prompt cache work targets that route: instructions that stay the same from run to run, and a stable cache key. The Anthropic system split and the 1-hour cache writes move to Appendix E. Compaction is pi's automatic one, with no added instruction to its summarizer; the live injection test below still runs, and a summary that turns the injection into an instruction goes back to the owner. The perf box measures `gpt-6.1-sol` and Workers AI GLM on the test instance, with an OpenAI key the owner adds to its AI Gateway. Staging may be deployed without asking once `main.yml` and `account.yml` are green, for the pi 1.3.0 upgrade and for this chunk.
 
 **From 19a.** What chunk 19a left for this chunk (lines at `f888e7d`):
 
@@ -454,3 +456,4 @@ This chunk still creates one pi session per run. It only makes sharing one safe.
 - **Reading files without a container** from the Durable Object, for turns that only search or read.
 - **Reusing a token for the rest of a turn** instead of one `leaseToken` per call, if measurement on staging shows the calls matter.
 - **Skills** proposed from conversations and approved by an admin, through chunk 24's path.
+- **The Anthropic system split and 1-hour cache writes**, from chunk 19b, deferred by the owner on 2026-10-19 while no instance runs Anthropic. pi gives every cache breakpoint the same lifetime, so the split is a rewrite in `onPayload` that moves pi's system breakpoint to the end of the text every conversation shares, with a 1-hour lifetime there. pi-ai reports `cacheWrite1h` only for Anthropic, and models.dev has no 1-hour price.
