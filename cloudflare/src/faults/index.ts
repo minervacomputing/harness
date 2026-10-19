@@ -58,7 +58,7 @@ export interface RunInternals {
 	attempts: { attempt: number; ended: string | null }[];
 	/**
 	 * Each counted model call in the order they were made: its attempt, the instance that made it (store.ts `RunStore.instance`),
-	 * its tokens, whether it made a summary, and when it was recorded and settled.
+	 * its tokens (output includes reasoning), whether it made a summary, and when it was recorded and settled.
 	 */
 	calls: {
 		attempt: number;
@@ -67,6 +67,7 @@ export interface RunInternals {
 		cached_tokens: number | null;
 		cache_write_tokens: number | null;
 		output_tokens: number | null;
+		reasoning_tokens: number | null;
 		summary: boolean;
 		created_at: number;
 		settled_at: number | null;
@@ -278,7 +279,7 @@ export class Conversation extends BaseConversation {
 			attempts: sql.exec<{ attempt: number; ended: string | null }>("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
 			calls: sql
 				.exec<Omit<RunInternals["calls"][number], "summary"> & { summary: number }>(
-					"SELECT attempt, instance, input_tokens, cached_tokens, cache_write_tokens, output_tokens, summary, created_at, settled_at FROM call_records WHERE run_id = ? ORDER BY attempt, created_at",
+					"SELECT attempt, instance, input_tokens, cached_tokens, cache_write_tokens, output_tokens, reasoning_tokens, summary, created_at, settled_at FROM call_records WHERE run_id = ? ORDER BY attempt, created_at",
 					runId,
 				)
 				.toArray()

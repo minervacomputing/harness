@@ -72,7 +72,7 @@ import {
 	WORKER_FAILED,
 } from "./events.ts";
 import { decideGate, type PiWork } from "./gate.ts";
-import { sessionInstructions } from "./history.ts";
+import { HISTORY_LIMIT, sessionInstructions, turnNote, type UnseenTurn } from "./history.ts";
 import { cloudflareImages } from "./images.ts";
 import { FolderOverLimit, LOCAL_TOOLS, type LocalTool, type LocalToolEvent, localToolSpecs, runGated, SandboxRefused } from "./local.ts";
 import { FactDelivery } from "./delivery.ts";
@@ -609,10 +609,29 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (session === null) return;
 		// A later run's instructions replace the earlier run's in pi's next request; equal ones record nothing.
 		await (await pi.conversation(Number(session) as PiConversationId, BG))?.configure(agent, BG);
+		const note = await this.#turnNote(run, session);
 		if (!this.#store.isCurrent(fence)) return;
 		this.#prepareLocal(run);
 		this.#showPhase(fence);
-		await this.harness.submit(turn.prompt, { session, operationId: `run:${runId}` });
+		await this.harness.submit(note ? `${note}\n\n${turn.prompt}` : turn.prompt, { session, operationId: `run:${runId}` });
+	}
+
+	/**
+	 * The note after a turn that did not complete (history.ts `turnNote`), from the runs before `run` back to the newest whose
+	 * `run:<id>` submission pi holds, or to the session's first run, whose seed has the ones before it. Read after the settle,
+	 * so every earlier run has ended.
+	 */
+	async #turnNote(run: RunRow, session: string): Promise<string> {
+		const storage = this.#piStorage;
+		if (!storage) return "";
+		const unseen: UnseenTurn[] = [];
+		for (const earlier of this.#store.earlierRuns(run, session, HISTORY_LIMIT)) {
+			const submission = await storage.submissionByRequest(Number(session) as PiConversationId, `run:${earlier.id}`, BG);
+			if (submission) return turnNote({ status: earlier.status, code: earlier.error_code, answered: submission.status === "done" }, unseen.reverse());
+			// A run's snapshot is deleted from its first prune step on.
+			unseen.push({ status: earlier.status, prompt: earlier.prune === null ? this.#store.snapshot(earlier).turn.prompt : null });
+		}
+		return turnNote(null, unseen.reverse());
 	}
 
 	/**

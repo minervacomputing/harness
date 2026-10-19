@@ -187,8 +187,8 @@ test("mode offline (the dev server without an account) is never built or deploye
 
 test("the account suites never skip a whole suite", () => {
 	// A skipped required check looks like a pass: missing settings and misdirected origins fail the run
-	// instead. A step may still skip itself after an earlier one failed, or the Workers AI turn when the
-	// model never calls the tools (ctx.skip, reported).
+	// instead. A step may still skip itself after an earlier one failed, the Workers AI turn when the
+	// model never calls the tools, or a row on the instance's route without MINERVA_LIVE_ROUTE=1 (ctx.skip, reported).
 	const offenders: string[] = [];
 	for (const path of sources("test/account")) {
 		if (!path.endsWith(".test.ts")) continue;

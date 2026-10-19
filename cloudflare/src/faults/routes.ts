@@ -21,6 +21,7 @@ import type { FakeRun } from "./laravel.ts";
 import { SandboxLab } from "./lab.ts";
 import type { Fault } from "./plan.ts";
 import { type Calibration, providerOf } from "./ports.ts";
+import type { ProviderSetup } from "./provider.ts";
 import type { FaultSandbox } from "./sandbox.ts";
 import { FAULTS_HEADER, faultsToken } from "./token.ts";
 import { notesLease } from "./world.ts";
@@ -81,9 +82,9 @@ async function laravelOperation(op: string, body: Body, env: Env, exports: Cloud
 	const conversationId = String(body.conversationId);
 	switch (op) {
 		case "setup": {
-			// The fake provider starts over (the fake Laravel with it), and Laravel holds a Notes connection that lends the
-			// provider's seeded token.
-			await provider.reset({ delays: (body.delays ?? {}) as { [prefix: string]: number } });
+			// The fake provider starts over (the fake Laravel with it), with the folders asked for or its own, and Laravel holds a
+			// Notes connection that lends the provider's seeded token.
+			await provider.reset({ delays: (body.delays ?? {}) as { [prefix: string]: number }, ...(body.folders ? { folders: body.folders as unknown as ProviderSetup["folders"] } : {}) });
 			const connectionId = uuid7();
 			await provider.laravelConnection(connectionId, notesLease());
 			return { connectionId };

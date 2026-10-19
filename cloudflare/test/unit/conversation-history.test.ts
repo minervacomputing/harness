@@ -1,4 +1,4 @@
-// History replay: the turns, their files and what they changed, `clip` and `recentHistory`.
+// History replay: the turns, their files and what they changed, `clip` and `recentHistory`, and the note after a stopped turn.
 
 import { describe, expect, test } from "vitest";
 import {
@@ -9,9 +9,12 @@ import {
 	historyOf,
 	MESSAGE_LIMIT,
 	notePaths,
+	QUOTE_END,
 	recentHistory,
+	type ReceivedTurn,
 	sessionInstructions,
 	type StoredMessage,
+	turnNote,
 	withFiles,
 } from "../../src/conversation/history.ts";
 import type { FolderChanges } from "@minerva/contract";
@@ -141,5 +144,61 @@ describe("clipping and the budget", () => {
 		];
 		expect(recentHistory(history)).toHaveLength(5);
 		expect(recentHistory([{ role: "user", content: "c" }, ...history])).toHaveLength(5);
+	});
+});
+
+describe("the note after a stopped turn", () => {
+	const received = (status: ReceivedTurn["status"], code: string, answered = false): ReceivedTurn => ({ status, code, answered });
+
+	test("the end of the newest turn pi received, by how its run ended and whether pi had answered", () => {
+		const cases: [ReceivedTurn, string][] = [
+			[received("cancelled", "cancelled"), "[The user stopped your previous turn before you answered it. Do not carry on with it unless the user asks you to.]"],
+			[received("cancelled", "emergency_stop"), "[The user stopped your previous turn before you answered it. Do not carry on with it unless the user asks you to.]"],
+			[received("cancelled", "connection_removed"), "[Your previous turn was stopped before you answered it, because the user's permissions changed. Do not carry on with it unless the user asks you to.]"],
+			[received("cancelled", "permissions_changed"), "[Your previous turn was stopped before you answered it, because the user's permissions changed. Do not carry on with it unless the user asks you to.]"],
+			[received("timed_out", "timed_out"), "[Your previous turn ran out of time before you answered it. Do not carry on with it unless the user asks you to.]"],
+			[received("failed", "compaction_failed"), "[Your previous turn failed before you answered it. Do not carry on with it unless the user asks you to.]"],
+			[received("cancelled", "permissions_changed", true), "[Your previous turn was stopped after you answered it, and your answer did not reach the user.]"],
+			[received("failed", "worker_failed", true), "[Your previous answer did not reach the user, who saw an error instead.]"],
+			[received("timed_out", "timed_out", true), "[Your previous answer did not reach the user, who saw an error instead.]"],
+		];
+		for (const [turn, note] of cases) expect(turnNote(turn, [])).toBe(note);
+		expect(turnNote(received("completed", "", true), [])).toBe("");
+		expect(turnNote(null, [])).toBe("");
+	});
+
+	test("then each message pi never received, oldest first, closed by its end, and none whose snapshot is gone", () => {
+		const note = turnNote(received("cancelled", "cancelled"), [
+			{ status: "cancelled", prompt: "First." },
+			{ status: "failed", prompt: null },
+			{ status: "failed", prompt: "Second." },
+		]);
+		expect(note).toBe(
+			[
+				"[The user stopped your previous turn before you answered it. Do not carry on with it unless the user asks you to.]",
+				"[The user sent a message that was stopped before you saw it. It said:]",
+				"First.",
+				QUOTE_END,
+				"[The user sent a message that did not reach you, because its turn failed before it started. It said:]",
+				"Second.",
+				QUOTE_END,
+			].join("\n\n"),
+		);
+		// The walk stopped at the conversation's first run, or the turn pi received completed: the quotes alone.
+		expect(turnNote(null, [{ status: "timed_out", prompt: "Only." }])).toBe(`[The user sent a message that did not reach you, because its turn failed before it started. It said:]\n\nOnly.\n\n${QUOTE_END}`);
+		expect(turnNote(received("completed", "", true), [{ status: "cancelled", prompt: "Only." }])).toBe(`[The user sent a message that was stopped before you saw it. It said:]\n\nOnly.\n\n${QUOTE_END}`);
+	});
+
+	test("each quote clipped to 30,000, the newest kept within 120,000", () => {
+		const unseen = [
+			{ status: "cancelled" as const, prompt: "old" },
+			...Array.from({ length: 4 }, (_, i) => ({ status: "cancelled" as const, prompt: String(i).repeat(40_000) })),
+		];
+		const note = turnNote(null, unseen);
+		// Three clipped quotes fit (as in recentHistory's test); the fourth would pass the budget, and the walk stops there.
+		expect(note.split(QUOTE_END)).toHaveLength(4);
+		for (const digit of ["1", "2", "3"]) expect(note).toContain(`${digit.repeat(MESSAGE_LIMIT)}${CLIPPED}\n\n${QUOTE_END}`);
+		expect(note).not.toContain("0000");
+		expect(note).not.toContain("old");
 	});
 });

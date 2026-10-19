@@ -66,7 +66,7 @@ export interface RunView {
 	internals: {
 		run: { [column: string]: unknown } | null;
 		attempts: { attempt: number; ended: string | null }[];
-		/** Each model call's attempt, the object instance that made it, its tokens, whether it made a summary, and when it was recorded and settled. */
+		/** Each model call's attempt, the object instance that made it, its tokens (output includes reasoning), whether it made a summary, and when it was recorded and settled. */
 		calls: {
 			attempt: number;
 			instance: string;
@@ -74,12 +74,15 @@ export interface RunView {
 			cached_tokens: number | null;
 			cache_write_tokens: number | null;
 			output_tokens: number | null;
+			reasoning_tokens: number | null;
 			summary: boolean;
 			created_at: number;
 			settled_at: number | null;
 		}[];
 		writes: { key: string; status: string; attempt: number }[];
 		executions: { call_id: string; executions: number }[];
+		/** The connector tools the run's snapshot offers. */
+		tools: string[];
 		entered: { model: number; tool: number };
 		/** Each model call's marks, in the object's Date.now() milliseconds (src/faults/ports.ts, `CallMarks`). */
 		marks: { begin: number; answered: number | null; last: number | null }[];
@@ -156,14 +159,22 @@ const worlds = new Set<World>();
 const runs: { w: World; runId: string }[] = [];
 
 /**
- * A workspace with the fake Notes connection Laravel holds, and a conversation with the faults asked for, its model
- * (`workers-ai`, `fake-remote`, `route`, or the fake by default) and the perf probe's calibration (src/faults/ports.ts).
+ * A workspace with the fake Notes connection Laravel holds, its provider's folders (`folders`, or inbox and archive with three
+ * notes), and a conversation with the faults asked for, its model (`workers-ai`, `fake-remote`, `route`, or the fake by
+ * default) and the perf probe's calibration (src/faults/ports.ts).
  */
 export async function world(
-	options: { faults?: Fault[]; delays?: { [prefix: string]: number }; model?: string; calibrate?: { bytes: number; write: boolean }; retention?: Retention } = {},
+	options: {
+		faults?: Fault[];
+		delays?: { [prefix: string]: number };
+		model?: string;
+		calibrate?: { bytes: number; write: boolean };
+		retention?: Retention;
+		folders?: { id: string; name: string; notes: string[] }[];
+	} = {},
 ): Promise<World> {
 	const scope: Scope = { environment: FAULTS_SETTINGS.MINERVA_ENVIRONMENT, organization: uuid7(), workspace: uuid7() };
-	const { connectionId } = await driver<{ connectionId: string }>("setup", { scope, delays: options.delays ?? {} });
+	const { connectionId } = await driver<{ connectionId: string }>("setup", { scope, delays: options.delays ?? {}, ...(options.folders ? { folders: options.folders } : {}) });
 	const conversationId = uuid7();
 	await driver("conversation", {
 		scope,
@@ -194,17 +205,20 @@ let starts = 0;
 
 export type HistoryMessage = StartRun["history"][number];
 
+/** A start's authority once the user's connection was removed: no connection, and no grant. */
+export const NO_CONNECTIONS: StartRun["authority"] = { connections: [], layers: { ceiling: null, user: { restricted: true, revision: 1, grants: [] }, agent: null } };
+
 /**
  * Sends a message as Laravel does: the fake Laravel holds the run, then `startRun` names the agent's Notes connection, which the
- * user may use in every folder, to read and create, and gives it `allowance` (µ$; none when null; by default, LARGE_ALLOWANCE
- * with every other start), and the conversation's earlier messages as Laravel sends them (`history`, none by default).
- * Answers the run's id; a refusal throws.
+ * user may use in every folder, to read and create (unless `authority` says otherwise), and gives it `allowance` (µ$; none when
+ * null; by default, LARGE_ALLOWANCE with every other start), and the conversation's earlier messages as Laravel sends them
+ * (`history`, none by default). Answers the run's id; a refusal throws.
  */
 export async function post(
 	w: World,
 	content: string,
 	attachments: Attachment[] = [],
-	options: { allowance?: number | null; history?: HistoryMessage[]; message?: string } = {},
+	options: { allowance?: number | null; history?: HistoryMessage[]; message?: string; authority?: StartRun["authority"] } = {},
 ): Promise<string> {
 	const allowance = options.allowance !== undefined ? options.allowance : starts++ % 2 === 0 ? LARGE_ALLOWANCE : null;
 	const start: StartRun = {
@@ -215,7 +229,7 @@ export async function post(
 		agent: { id: AGENT, instructions: "You are a test agent. Use the tools when asked.", model: "default" },
 		message: { id: options.message ?? uuid7(), content, attachments },
 		history: options.history ?? [],
-		authority: { connections: [notesConnection(w.connectionId)], layers: notesLayers(w.connectionId) },
+		authority: options.authority ?? { connections: [notesConnection(w.connectionId)], layers: notesLayers(w.connectionId) },
 		...(allowance === null ? {} : { allowance }),
 	};
 	await driver("hold", { ...base(w), runId: start.run, run: heldRun(start) });

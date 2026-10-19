@@ -11,12 +11,14 @@
 // the release, and the release and pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from
 // the last checkpoint.
 
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { RunEvent } from "@minerva/contract";
 import type { Fact, Scope } from "@minerva/contract/internal";
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { filesBucket } from "../../src/addressing.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
+import { QUOTE_END } from "../../src/conversation/history.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";
 import type { Conversation, RunInternals } from "../../src/faults/index.ts";
@@ -189,6 +191,18 @@ async function completesAfter(w: World, runId: RunId, held: RunId): Promise<void
 	const bash = earlier.piTasks.find((task) => task.kind === "pi.tool");
 	expect(run.marks[0]?.begin).toBeGreaterThanOrEqual(bash?.endedAt ?? Number.POSITIVE_INFINITY);
 	sharesSession(run, earlier);
+}
+
+/** The run's own input as pi placed it in the conversation's pi conversation. */
+function inputOf(w: World, runId: RunId): Promise<string> {
+	return runInDurableObject(w.conversation, (_instance, state) =>
+		state.storage.sql
+			.exec<{ text: string }>(
+				"SELECT json_extract(entry.record, '$.model[0].content') AS text FROM pi_submissions AS submission JOIN pi_entries AS entry ON entry.id = json_extract(submission.record, '$.entry') WHERE submission.request_id = json_quote(?)",
+				`run:${runId}`,
+			)
+			.one().text,
+	);
 }
 
 /** Two runs of one conversation in one pi session, each with only its own tasks. */
@@ -438,7 +452,7 @@ describe("the local tools in the conversation", () => {
 		});
 	});
 
-	test("a start cancelled while it waits configures nothing, and the next start waits for the same command", async () => {
+	test("a start cancelled while it waits configures nothing, the next start waits for the same command, and its input says the first was stopped and quotes the second", async () => {
 		const w = await world({ faults: [{ point: "local:released", mode: "hold", tool: "bash" }] });
 		const a = await post(w, [bash("echo hi"), DONE]);
 		await reached(w, "local:released");
@@ -452,6 +466,18 @@ describe("the local tools in the conversation", () => {
 		await completesAfter(w, c, a);
 		const cancelled = await w.conversation.faultRun(b);
 		expect([cancelled.run?.status, cancelled.run?.session, cancelled.entered, cancelled.piTasks]).toEqual(["cancelled", null, { model: 0, tool: 0 }, []]);
+		// pi had a's message but never b's: c's input says a was stopped, then quotes b, then is c's own.
+		const message = JSON.stringify({ fake: { turns: [DONE] } });
+		const sent = expect.stringMatching(/^\[The user sent this message on .+ UTC\.\]$/);
+		expect((await inputOf(w, c)).split("\n\n")).toEqual([
+			"[The user stopped your previous turn before you answered it. Do not carry on with it unless the user asks you to.]",
+			"[The user sent a message that was stopped before you saw it. It said:]",
+			message,
+			sent,
+			QUOTE_END,
+			message,
+			sent,
+		]);
 	});
 });
 

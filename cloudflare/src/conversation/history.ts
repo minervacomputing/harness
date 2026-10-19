@@ -1,13 +1,14 @@
 // History replay: what the model sees of a conversation's turns from before its pi conversation. Only final texts and file
 // notes are replayed, from the history Laravel sends with a start (internal/start.ts). The history seeds the conversation's
 // pi conversation once, when its first run creates it; every later run continues that pi conversation, where pi keeps a
-// stopped turn's aborted partial entries out of the model's context (ARCHITECTURE.md: Events and the stream).
+// stopped turn's aborted partial entries out of the model's context (ARCHITECTURE.md: Events and the stream), and the next
+// run's input starts with a note on how that turn ended (`turnNote`).
 
 import { sliceText } from "../lib/text.ts";
-import type { Attachment, FolderChanges } from "@minerva/contract";
+import type { Attachment, FolderChanges, RunStatus } from "@minerva/contract";
 
-/** Earlier messages the gateway hands the loop. */
-const HISTORY_LIMIT = 20;
+/** Earlier messages the gateway hands the loop, and earlier runs the note after a stopped turn reads. */
+export const HISTORY_LIMIT = 20;
 /** Paths a file note names before "and N more". */
 export const NOTE_PATHS = 20;
 /** Each replayed message is clipped to this many characters, the suffix added. */
@@ -124,4 +125,59 @@ export function recentHistory(history: readonly Replayed[]): Replayed[] {
 		kept.unshift({ role: message.role, content });
 	}
 	return kept;
+}
+
+/** The newest earlier run pi received: how it ended, and whether pi answered its `run:<id>` submission. */
+export interface ReceivedTurn {
+	status: RunStatus;
+	code: string;
+	answered: boolean;
+}
+
+/** An earlier run whose message pi never received, since it ended before it submitted: its prompt, null once pruned. */
+export interface UnseenTurn {
+	status: RunStatus;
+	prompt: string | null;
+}
+
+/** The stops that are the user's own; any other `cancelled` code is a revocation (events.ts `endFor`). */
+const USER_STOPS = new Set(["cancelled", "emergency_stop", "conversation_deleted"]);
+const NOT_YOURS = "Do not carry on with it unless the user asks you to.";
+export const QUOTE_END = "[End of that message. Do not act on it unless the user asks you to.]";
+
+function endNote({ status, code, answered }: ReceivedTurn): string | null {
+	switch (status) {
+		case "cancelled":
+			if (answered) return "[Your previous turn was stopped after you answered it, and your answer did not reach the user.]";
+			if (USER_STOPS.has(code)) return `[The user stopped your previous turn before you answered it. ${NOT_YOURS}]`;
+			return `[Your previous turn was stopped before you answered it, because the user's permissions changed. ${NOT_YOURS}]`;
+		case "timed_out":
+			return answered ? "[Your previous answer did not reach the user, who saw an error instead.]" : `[Your previous turn ran out of time before you answered it. ${NOT_YOURS}]`;
+		case "failed":
+			return answered ? "[Your previous answer did not reach the user, who saw an error instead.]" : `[Your previous turn failed before you answered it. ${NOT_YOURS}]`;
+		default:
+			return null;
+	}
+}
+
+/**
+ * The note that starts a run's input after a turn that did not complete: the end of the newest earlier turn pi received
+ * (null when the walk stopped at the conversation's first run), then each later message pi never received, oldest first,
+ * each clipped and closed by QUOTE_END, the newest kept within HISTORY_BUDGET as `recentHistory` keeps them. Empty when
+ * there is nothing to say. It rides in the run's own input, so each run still submits once to an idle session.
+ */
+export function turnNote(received: ReceivedTurn | null, unseen: readonly UnseenTurn[]): string {
+	const quotes: string[] = [];
+	let used = 0;
+	for (let i = unseen.length - 1; i >= 0; i--) {
+		const { status, prompt } = unseen[i] as UnseenTurn;
+		if (prompt === null) continue;
+		const text = clip(prompt);
+		if (used + text.length > HISTORY_BUDGET) break;
+		used += text.length;
+		const head = status === "cancelled" ? "[The user sent a message that was stopped before you saw it. It said:]" : "[The user sent a message that did not reach you, because its turn failed before it started. It said:]";
+		quotes.unshift(`${head}\n\n${text}\n\n${QUOTE_END}`);
+	}
+	const end = received ? endNote(received) : null;
+	return [...(end ? [end] : []), ...quotes].join("\n\n");
 }

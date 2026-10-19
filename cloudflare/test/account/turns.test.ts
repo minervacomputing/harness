@@ -9,10 +9,38 @@
 //
 // The two turns run at once, started by Laravel's commands through the driver of driver.ts. Run with
 // `pnpm test:faults` after `pnpm run deploy:test`. Timings are written to MINERVA_TURN_TIMINGS when set.
+//
+// Then one pi conversation per conversation: twelve turns with the fake model, the twelfth recalling the first after
+// Laravel's history dropped it, and a connection removed between two runs, whose second still has the first's call in
+// its history, on Workers AI and, with MINERVA_LIVE_ROUTE=1, on the instance's own route (staging's `gpt-6.1-sol`, through
+// the OpenAI key on the instance's AI Gateway).
 
 import { writeFileSync } from "node:fs";
+import { MAX_HISTORY } from "@minerva/contract/internal";
 import { afterAll, describe, expect, test } from "vitest";
-import { delivered, destroyed, file, finish, finished, folder, type Head, LIST, type LocalCard, modelDeadline, outcome, post, type RunEvent, type RunView, settled, type World, world } from "./driver.ts";
+import {
+	delivered,
+	destroyed,
+	file,
+	finish,
+	finished,
+	folder,
+	type Head,
+	type HistoryMessage,
+	LIST,
+	type LocalCard,
+	modelDeadline,
+	NO_CONNECTIONS,
+	outcome,
+	post,
+	type RunEvent,
+	type RunView,
+	settled,
+	toolCalls,
+	uuid7,
+	type World,
+	world,
+} from "./driver.ts";
 
 const timings: Record<string, unknown> = {};
 
@@ -127,4 +155,69 @@ describe.concurrent("an end-to-end turn: Python through bash, a script calling a
 		record("Workers AI turn, tools not called", attempts);
 		throw new Error(`@cf/zai-org/glm-5.3-flash did not call bash and run_script in two attempts, so the protocol was not exercised; each attempt called: ${JSON.stringify(attempts)}`);
 	}, 2 * DEADLINE + 120_000);
+});
+
+/** The run's answer: its last `message` event's text. */
+const answerOf = (view: RunView) => String(view.events.findLast((event) => event.type === "message")?.data.content ?? "");
+
+/** The model calls one turn of a real model may make, and the turns a revocation's test needs. */
+const LIVE = modelDeadline(4);
+
+/**
+ * Run A of a conversation on `model` lists the inbox with the Notes tool; then the connection is removed, so Laravel's next
+ * start names none, and run B, a question about it, completes in the same pi conversation with A's call in its history.
+ * A model that did not call the tool in two tries fails with what each try called.
+ */
+async function revokedBetweenRuns(model: string): Promise<void> {
+	const tries: { status: string | undefined; tools: unknown[] }[] = [];
+	for (let attempt = 1; attempt <= 2; attempt++) {
+		const w = await world({ model });
+		const a = await settled(w, await post(w, "Use the notes_list_notes tool to list the notes in the folder inbox, then tell me how many there are."), LIVE);
+		tries.push({ status: a.head?.status, tools: toolCalls(a.events).map((call) => call.tool) });
+		if (a.head?.status !== "completed" || !toolCalls(a.events).some((call) => call.tool === LIST && call.decision === "allowed")) continue;
+		const b = await settled(w, await post(w, "Thanks. In one sentence, what did you just look up?", [], { authority: NO_CONNECTIONS }), LIVE);
+		expect(b.head?.status, outcome(b)).toBe("completed");
+		expect(answerOf(b)).toMatch(/\S/);
+		expect(b.internals.tools).toEqual([]);
+		expect(b.internals.run?.session).toBe(a.internals.run?.session);
+		return;
+	}
+	throw new Error(`The model (${model}) did not list the inbox with the Notes tool in two tries, so the revocation was not exercised; each try: ${JSON.stringify(tries)}`);
+}
+
+describe.concurrent("one pi conversation per conversation", () => {
+	test("twelve turns with the fake model: the twelfth recalls what the first said after Laravel's history dropped it", async () => {
+		const w = await world();
+		const history: HistoryMessage[] = [];
+		const sessions: unknown[] = [];
+		let last = "";
+		for (let turn = 1; turn <= 12; turn++) {
+			const content = turn === 1 ? "Remember the code word HERON-42." : turn === 12 ? JSON.stringify({ fake: { turns: [{ recall: "code word" }] } }) : `Turn ${turn}.`;
+			const message = uuid7();
+			const runId = await post(w, content, [], { history: history.slice(-MAX_HISTORY), message });
+			const view = await settled(w, runId, 120_000);
+			expect(view.head?.status, outcome(view)).toBe("completed");
+			last = answerOf(view);
+			const at = Date.now();
+			history.push(
+				{ id: message, role: "user", content, attachments: [], run: runId, createdAt: new Date(at).toISOString(), changes: null },
+				{ id: uuid7(), role: "assistant", content: last, attachments: [], run: runId, createdAt: new Date(at + 1).toISOString(), changes: null },
+			);
+			sessions.push(view.internals.run?.session);
+		}
+		expect(JSON.stringify(history.slice(-MAX_HISTORY - 2, -2))).not.toContain("HERON-42");
+		expect(last).toBe("Remember the code word HERON-42.");
+		expect(new Set(sessions).size).toBe(1);
+	});
+
+	test("a connection removed between two runs on Workers AI: the second completes with the first's call in its history", () => revokedBetweenRuns("workers-ai"), 4 * LIVE + 120_000);
+
+	test(
+		"the same on the instance's route",
+		async ({ skip }) => {
+			skip(process.env.MINERVA_LIVE_ROUTE !== "1", "the route's row needs MINERVA_LIVE_ROUTE=1 and the instance's route set to staging's model");
+			await revokedBetweenRuns("route");
+		},
+		4 * LIVE + 120_000,
+	);
 });

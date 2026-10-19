@@ -979,6 +979,33 @@ describe("one pi conversation per conversation", () => {
 		expect(await systemEntries()).toBe(entries);
 	});
 
+	test("after a stopped turn the next run's input starts with a note that says so, which Laravel never gets, and after a completed one with none", async () => {
+		let release = () => {};
+		const hold = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const { start, stub, fakes } = await started(WAIT, waiting(hold));
+		await until(() => fakes.invocations.length, (calls) => calls === 1);
+		expect(await cancelOf(start, "cancelled")).toEqual({ state: "cancelled" });
+		release();
+		/** The run's own input, as the model got it: the newest user message. */
+		const input = () => {
+			const content = (fakes.contexts.at(-1) as TranscriptContext).messages.findLast((item) => item.role === "user")?.content ?? "";
+			return typeof content === "string" ? content : content.map((part) => (part.type === "text" ? part.text : "")).join("");
+		};
+		const stopped = "[The user stopped your previous turn before you answered it. Do not carry on with it unless the user asks you to.]";
+		const after = next(start, { message: message("Where were we?") });
+		await accepted(after);
+		expect(await settled(stub, after.run)).toMatchObject({ status: "completed" });
+		const sent = expect.stringMatching(/^\[The user sent this message on .+ UTC\.\]$/);
+		expect(input().split("\n\n")).toEqual([stopped, "Where were we?", sent]);
+		expect(JSON.stringify(await delivered(after))).not.toContain("previous turn");
+		const later = next(start, { message: message("And now?") });
+		await accepted(later);
+		expect(await settled(stub, later.run)).toMatchObject({ status: "completed" });
+		expect(input().split("\n\n")).toEqual(["And now?", sent]);
+	});
+
 	test("every call of a conversation, across a reset, sends its provider session as the cache key and affinity, the same instructions and tools, and a growing input", async () => {
 		const route = (provider: ModelRoute["provider"]): ModelRoute => ({ provider, name: provider === "workers-ai" ? "@cf/zai-org/glm-5.3-flash" : "gpt-test", gateway: "acme", api: "responses", cap: 1000, reasoningEffort: "", reasoningSummary: "" });
 		// A 401 for every request, so each run fails, and its failed answer stays out of the next run's context.

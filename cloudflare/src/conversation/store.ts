@@ -560,6 +560,21 @@ export class RunStore {
 		return this.#sql.exec<RunRow>(`SELECT ${RUN_COLUMNS} FROM runs ORDER BY created_at, id`).toArray();
 	}
 
+	/** At most `limit` runs created before `run`, newest first, back to the first run that names `session`; none when no run does. */
+	earlierRuns(run: Pick<RunRow, "id" | "created_at">, session: string, limit: number): RunRow[] {
+		return this.#sql
+			.exec<RunRow>(
+				`SELECT ${RUN_COLUMNS} FROM runs WHERE (created_at, id) < (?, ?)
+					AND (created_at, id) >= (SELECT created_at, id FROM runs WHERE session = ? ORDER BY created_at, id LIMIT 1)
+				ORDER BY created_at DESC, id DESC LIMIT ?`,
+				run.created_at,
+				run.id,
+				session,
+				limit,
+			)
+			.toArray();
+	}
+
 	/** Throws once the run's prune started: its inputs are deleted, and only an active run reads them. */
 	snapshot(run: Pick<RunRow, "id">): RunSnapshot {
 		const row = this.#sql.exec<{ snapshot: string; prune: RunPrune | null }>("SELECT snapshot, prune FROM runs WHERE id = ?", run.id).toArray()[0];
