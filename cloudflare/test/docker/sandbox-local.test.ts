@@ -584,6 +584,7 @@ describe.skipIf(!READY)("parking", () => {
 
 describe.skipIf(!READY)("retiring and restoring", () => {
 	const VERSION = "0199b000-0000-7000-8000-0000000000b1";
+	const NEXT = "0199b000-0000-7000-8000-0000000000b2";
 	/** Enough entries for the 300 files that make a folder worth a snapshot. */
 	const LIMITS = { folderBytes: 64 * MiB, folderEntries: 1000 };
 	/** Every extended attribute under `root`, ACLs included, as `path name` lines. */
@@ -602,10 +603,10 @@ describe.skipIf(!READY)("retiring and restoring", () => {
 		return { versionId, files, dirs: scanned.manifest.dirs };
 	}
 
-	/** A run's sandbox restored from the snapshot, hardened and verified; `change` runs as root on the restored archive first. */
-	async function restore(sandbox: SandboxCore, limits = LIMITS, change?: string): Promise<SandboxFence> {
+	/** A run's sandbox restored from the snapshot of `versionId`, hardened and verified; `change` runs as root on the restored archive first. */
+	async function restore(sandbox: SandboxCore, { limits = LIMITS, change, versionId = VERSION }: { limits?: typeof LIMITS; change?: string; versionId?: string } = {}): Promise<SandboxFence> {
 		const attempt = { runId: uuid7(), attempt: 1 };
-		const started = await sandbox.start(attempt, spec(limits), VERSION);
+		const started = await sandbox.start(attempt, spec(limits), versionId);
 		if (!("incarnation" in started)) throw new Error(JSON.stringify(started));
 		expect(started.restored).toBe(true);
 		if (change) expect(made.container.shell(change)).toMatchObject({ status: 0 });
@@ -666,12 +667,45 @@ describe.skipIf(!READY)("retiring and restoring", () => {
 	] as const) {
 		test(`an archive with ${name} fails the check, destroys the container and drops the record`, { timeout: 180_000 }, async () => {
 			writeSnapshot(made.sql, record);
-			const fence = await restore(core, LIMITS, change);
+			const fence = await restore(core, { change });
 			expect(await core.hydrate(fence, plan)).toEqual({ ok: false, reason: "restore_failed", message: `The restored folder differs from the plan at ${difference}.` });
 			expect(core.status()).toMatchObject({ state: "none", snapshot: null });
 			expect(made.container.running).toBe(false);
 		});
 	}
+
+	test("a restored folder its run changed retires into a snapshot of the new version, whose archive holds that version alone, and restores again", { timeout: 300_000 }, async () => {
+		writeSnapshot(made.sql, record);
+		const fence = await restore(core);
+		expect(await core.hydrate(fence, plan)).toMatchObject({ ok: true, restored: expect.any(Object) });
+		expect((await run(core, fence, "rm secret.txt && echo changed > café.txt && echo new > added.txt && rmdir empty && echo ok")).stdout).toBe("ok\n");
+		const next = planOf(await core.scan(fence, { rehashAll: true }), NEXT);
+		expect(await core.park(fence, NEXT)).toEqual({ parked: true });
+		await core.alarm();
+		expect(core.status()).toMatchObject({ state: "none", snapshot: { versionId: NEXT } });
+
+		const again = await restore(core, { versionId: NEXT });
+		expect(await core.hydrate(again, next)).toMatchObject({ ok: true, restored: expect.any(Object) });
+		const listed = made.container.shell(`tar --quoting-style=literal -tf ${ARCHIVE} | sort`).stdout.trim().split("\n");
+		const inMany = (entry: string) => /^\.\/many\/./.test(entry);
+		expect(listed.filter((entry) => !inMany(entry))).toEqual(["./", "./.git/", "./.git/config", "./added.txt", "./café.txt", "./many/"]);
+		expect(listed.filter(inMany)).toHaveLength(300);
+		expect((await run(core, again, "cat café.txt added.txt")).stdout).toBe("changed\nnew\n");
+		expect(await core.destroy(again, "turn over")).toEqual({ destroyed: true });
+	});
+
+	test("a folder of three files retires with no snapshot", { timeout: 120_000 }, async () => {
+		const small = track(rig());
+		const sandbox = new SandboxCore({ ...small.ports(), parkedMs: 0 });
+		const fence = await ready({ ...small, core: sandbox });
+		expect((await run(sandbox, fence, "echo a > a && echo b > b && echo c > c && echo ok")).stdout).toBe("ok\n");
+		expect(await sandbox.scan(fence, { rehashAll: true })).toMatchObject({ ok: true });
+		expect(await sandbox.park(fence, VERSION)).toEqual({ parked: true });
+		await sandbox.alarm();
+		expect(sandbox.status()).toMatchObject({ state: "none", snapshot: null });
+		expect(small.container.snapshots).toEqual([]);
+		expect(small.container.running).toBe(false);
+	});
 
 	test("timings: the seed and the check of a 200 MB file", { timeout: 300_000 }, async () => {
 		const big = track(rig());
@@ -686,7 +720,7 @@ describe.skipIf(!READY)("retiring and restoring", () => {
 		const retireMs = Math.round(performance.now() - retiring);
 		expect(sandbox.status().snapshot).toMatchObject({ versionId: VERSION });
 		const restoring = performance.now();
-		const restored = await restore(sandbox, limits);
+		const restored = await restore(sandbox, { limits });
 		const restoreMs = Math.round(performance.now() - restoring);
 		const seeded = await sandbox.hydrate(restored, bigPlan);
 		if (!("ok" in seeded) || !seeded.ok || !seeded.restored) throw new Error(JSON.stringify(seeded));

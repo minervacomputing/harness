@@ -28,6 +28,7 @@ import type { AttemptFence, RunId, VersionId } from "../../src/shared/rpc.ts";
 const ROOT = "/workspace/";
 const STALE: Refused = { refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." };
 const NOT_VERIFIED: Refused = { refused: "not_verified", message: "The sandbox is not ready." };
+const STOPPED: Refused = { refused: "not_verified", message: "The sandbox stopped." };
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -50,8 +51,11 @@ export interface MemoryFaults {
 	upload?: boolean;
 	/** Killing strays fails: processes that would not die. */
 	strays?: boolean;
-	/** A restored container's folder fails its check against the plan, or its hydration call throws, as a reset object's does. */
-	seed?: "differs" | "throws";
+	/**
+	 * A restored container's folder fails its check against the plan, or its hydration call throws, as a reset object's
+	 * does, or waits as `hold` does until a release, a destroy or a seal.
+	 */
+	seed?: "differs" | "throws" | "holds";
 }
 
 /** The conversation's snapshot: the folder of the parked container that retired, and its version. */
@@ -273,7 +277,7 @@ export class MemorySandbox implements SandboxPort {
 	async hydrate(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused> {
 		const refusal = this.#refusal(fence, true);
 		if (refusal) return refusal;
-		if (this.#restoring) return this.#seed(plan);
+		if (this.#restoring) return await this.#seed(fence, plan);
 		this.log.push(`hydrate ${plan.files.length}`);
 		if (this.files.size || this.dirs.size) return { ok: false, reason: "not_empty", message: "/workspace is not empty." };
 		for (const file of plan.files) {
@@ -287,10 +291,17 @@ export class MemorySandbox implements SandboxPort {
 		return { ok: true };
 	}
 
-	/** A restored container's folder from the snapshot; one that fails its check is destroyed, and the snapshot dropped. */
-	#seed(plan: HydratePlan): HydrateResult {
+	/**
+	 * A restored container's folder from the snapshot; one that fails its check is destroyed, and the snapshot dropped. A
+	 * container destroyed while it seeds answers that it stopped.
+	 */
+	async #seed(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused> {
 		this.log.push(`seed ${plan.files.length}`);
 		if (this.faults.seed === "throws") throw new Error("The Sandbox was reset.");
+		if (this.faults.seed === "holds") {
+			await new Promise<boolean>((resolve) => this.#holds.set(`seed ${fence.incarnation}`, resolve));
+			if (!this.#owns(fence)) return STOPPED;
+		}
 		const snapshot = this.#snapshot;
 		if (this.faults.seed === "differs" || snapshot?.versionId !== plan.versionId) {
 			const message = 'The restored folder differs from the plan at "stray.txt" (extra file).';

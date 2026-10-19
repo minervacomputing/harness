@@ -22,8 +22,9 @@
 // - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
 //   its transaction, and after the transaction and its sync (detail: the decision);
-// - `local:prepared`: an attempt's container started, hardened, verified and hydrated; `local:acquired`: instead, the
-//   container the conversation's previous run parked acquired for the attempt;
+// - `local:prepared`: an attempt's container started, hardened, verified and hydrated (detail: its `Preparation` as JSON,
+//   whose `restored` says it came from the conversation's snapshot); `local:acquired`: instead, the container the
+//   conversation's previous run parked acquired for the attempt;
 // - `local:finishing`: pi settled the turn, before its final checkpoint; `local:parking`: that checkpoint saved, before
 //   the container is parked for the conversation's next run (detail: the run's id, both only in an instance that has
 //   the attempt's container);

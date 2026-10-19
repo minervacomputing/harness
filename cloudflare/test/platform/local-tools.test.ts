@@ -5,13 +5,13 @@
 // Covered: results held until a checkpoint saved them and their cards after, phases, the final rehash, the folder version
 // published with the run's changes and warnings, a turn that only reads, the run's container parked at its end for the next
 // run, which acquires it, a container started only when a turn needs one, a cold start restored from the conversation's
-// snapshot and one whose restore fails falling back to the image within the attempt, deleting a conversation with a parked or
-// retiring container or a snapshot, a cancelled run's end marking the work of a command pi's abort does not end, a deletion
-// that waits for such a command, the next start waiting for it (and its bound, a start cancelled while it waits, and one
-// cancelled in the lane, whose bound resets nothing), a folder over its limits (folder_limit and its message), a container
-// that fails its hardening (worker_failed) or never starts (attempts until worker_exited), and crashes between a checkpoint's
-// upload and its record, its record and the release, and the release and pi's commit (the Checkpoints row of
-// ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
+// snapshot and one whose restore fails falling back to the image within the attempt unless the run ended meanwhile,
+// deleting a conversation with a parked or retiring container or a snapshot, a cancelled run's end marking the work of a
+// command pi's abort does not end, a deletion that waits for such a command, the next start waiting for it (and its
+// bound, a start cancelled while it waits, and one cancelled in the lane, whose bound resets nothing), a folder over its
+// limits (folder_limit and its message), a container that fails its hardening (worker_failed) or never starts (attempts
+// until worker_exited), and crashes between a checkpoint's upload and its record, its record and the release, and the
+// release and pi's commit (the Checkpoints row of ARCHITECTURE.md's Testing table), each resumed from the last checkpoint.
 
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -557,6 +557,23 @@ describe("the container between turns", () => {
 			expect(lifecycle(w.sandbox.log.slice(before)), seed).toEqual(["acquire 1", "start 1 restored", ...seeded, "start 1", "hydrate 1", "park version"]);
 			expect(w.sandbox.restores, seed).toEqual([null, first.resultVersionId, null]);
 		}
+	});
+
+	test("a run that ends while its restored container seeds the folder starts no container from the image", async () => {
+		const w = await world();
+		expect((await settled(w, await post(w, [bash("put a.txt a"), DONE]))).status).toBe("completed");
+		w.sandbox.retire();
+		w.sandbox.faults.seed = "holds";
+		const before = w.sandbox.log.length;
+		await warnings(async (lines) => {
+			const runId = await post(w, [bash("cat a.txt"), DONE]);
+			await until(async () => w.sandbox.holding, (holding) => holding === 1);
+			expect(await cancel(w, runId)).toEqual({ state: "cancelled" });
+			expect((await settled(w, runId)).status).toBe("cancelled");
+			const unused = await until(async () => lines().filter((line) => line.includes("the sandbox's snapshot was not used")), (found) => found.length > 0);
+			expect(lifecycle(w.sandbox.log.slice(before))).toEqual(["acquire 1", "start 1 restored", "seed 1", "destroy The run ended."]);
+			expect(unused).toEqual([expect.stringMatching(/the sandbox's snapshot was not used after \d+ ms: The folder could not be prepared: The sandbox stopped\.$/)]);
+		});
 	});
 
 	test("deleting the conversation destroys its parked or retiring container, then forgets its snapshot", async () => {

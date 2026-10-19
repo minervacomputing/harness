@@ -3,7 +3,8 @@
 // (lab.ts, and routes.ts for a conversation's Sandbox): faults in its container port (a hardening step that fails,
 // destroys that fail, a restored container's seed that leaves a stray file), a shorter limit for file operations
 // and a shorter parked window, a reset of the object that leaves its container running, a root shell for the tests'
-// checks, and whether the container runs. Never part of the production Worker.
+// checks, whether the container runs, the image it starts and how long each snapshot took. Never part of the
+// production Worker.
 
 import { parseJson } from "../lib/json.ts";
 import { AGENT_CGROUP, WORKSPACE } from "../sandbox/constants.ts";
@@ -26,6 +27,7 @@ export interface SandboxFaults {
 }
 
 const TABLE = "CREATE TABLE IF NOT EXISTS fault_sandbox (id INTEGER PRIMARY KEY, value TEXT NOT NULL)";
+const TAKEN = "CREATE TABLE IF NOT EXISTS fault_snapshot_taken (at INTEGER NOT NULL, size INTEGER NOT NULL, ms INTEGER NOT NULL)";
 
 export class FaultSandbox extends Sandbox {
 	#faults(): SandboxFaults {
@@ -39,6 +41,7 @@ export class FaultSandbox extends Sandbox {
 
 	protected override ports(): SandboxPorts {
 		this.ctx.storage.sql.exec(TABLE);
+		this.ctx.storage.sql.exec(TAKEN);
 		const base = objectPorts(this.ctx, this.env);
 		const real = base.container;
 		if (!real) return base;
@@ -72,7 +75,12 @@ export class FaultSandbox extends Sandbox {
 				await real.destroy(reason);
 			},
 			setInactivityTimeout: (ms) => real.setInactivityTimeout(ms),
-			snapshot: (name) => real.snapshot(name),
+			snapshot: async (name) => {
+				const started = Date.now();
+				const taken = await real.snapshot(name);
+				this.ctx.storage.sql.exec("INSERT INTO fault_snapshot_taken (at, size, ms) VALUES (?, ?, ?)", started, taken.size, Date.now() - started);
+				return taken;
+			},
 		};
 		const faults = () => this.#faults();
 		return {
@@ -105,5 +113,16 @@ export class FaultSandbox extends Sandbox {
 
 	async faultRunning(): Promise<boolean> {
 		return this.ctx.container?.running ?? false;
+	}
+
+	/** The image a start from it runs, which a snapshot's record names. */
+	async faultImage(): Promise<string> {
+		return objectPorts(this.ctx, this.env).container?.image ?? "";
+	}
+
+	/** Each snapshot taken: when, its size in bytes and how long the call took. */
+	async faultSnapshots(): Promise<{ at: number; size: number; ms: number }[]> {
+		this.ctx.storage.sql.exec(TAKEN);
+		return this.ctx.storage.sql.exec<{ at: number; size: number; ms: number }>("SELECT at, size, ms FROM fault_snapshot_taken ORDER BY at").toArray();
 	}
 }

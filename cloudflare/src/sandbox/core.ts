@@ -186,7 +186,10 @@ const KEEP_ALIVE_MS = 10_000;
 
 const STALE: Refused = { refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." };
 const PARKED_REASON = `The parked sandbox was not used for ${PARKED_MS / 60_000} minutes.`;
-/** The seed's own limit; the root exec around it gets a little longer, so a slow seed fails rather than losing the container. */
+/**
+ * How much longer than the seed's own limit (FOLDER_SECONDS, the agent tar's timeout) the root exec around it gets, so
+ * a slow seed fails with tar's exit rather than losing the container.
+ */
 const SEED_GRACE_MS = 30_000;
 const NOT_VERIFIED: Refused = { refused: "not_verified", message: "The sandbox is not ready." };
 const STOPPED: Refused = { refused: "not_verified", message: "The sandbox stopped." };
@@ -1022,8 +1025,8 @@ export class SandboxCore {
 					await this.#ports.alarm(Math.min(now + 60_000, state.leaseUntil + HARD_GRACE_MS));
 					return null;
 				}
-				const retiring = state.state === "parked" ? await this.#retiring(now) : null;
-				if (retiring) return retiring;
+				const next = state.state === "parked" ? await this.#retiring(now) : null;
+				if (next) return next;
 				const reason = state.state === "parked" || state.state === "retiring" ? PARKED_REASON : state.spec?.deadline ? "The run's deadline passed." : "The sandbox was not used for an hour.";
 				await this.#destroyNow(reason);
 				return null;

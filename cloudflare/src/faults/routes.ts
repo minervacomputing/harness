@@ -160,6 +160,14 @@ async function laravelOperation(op: string, body: Body, env: Env, exports: Cloud
 			await sandbox.faultSet((body.faults ?? {}) as unknown as SandboxFaults);
 			return { ok: true };
 		}
+		case "conversation-sandbox-snapshots": {
+			// The image the conversation's Sandbox starts, and each snapshot it took.
+			const sandbox = sandboxObject(env, exports, euRef(scope), conversationId) as unknown as DurableObjectStub<FaultSandbox>;
+			return { image: await sandbox.faultImage(), taken: await sandbox.faultSnapshots() };
+		}
+		case "conversation-sandbox-root":
+			// A root shell in the conversation's running container, outside the agent's cgroup.
+			return (sandboxObject(env, exports, euRef(scope), conversationId) as unknown as DurableObjectStub<FaultSandbox>).faultRoot(String(body.script));
 		default:
 			return null;
 	}

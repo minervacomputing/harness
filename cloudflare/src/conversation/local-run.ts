@@ -158,10 +158,12 @@ export class LocalRun {
 		await this.#deps.containerStarting();
 		const acquired = await this.#acquire(plan);
 		if (acquired) return acquired;
+		const began = Date.now();
 		let prepared = await this.#started(plan.versionId);
 		let hydrated = await this.#hydrated(prepared, plan);
 		if (!hydrated.ok && prepared.restored) {
-			this.#deps.log(`the sandbox's snapshot was not used: ${hydrated.message}`);
+			this.#deps.log(`the sandbox's snapshot was not used after ${Date.now() - began} ms: ${hydrated.message}`);
+			if (this.#ended) throw new FolderUnavailable("The run ended.");
 			prepared = await this.#started(null);
 			hydrated = await this.#hydrated(prepared, plan);
 		}
@@ -172,7 +174,7 @@ export class LocalRun {
 		this.#deps.log(`sandbox ready${hydrated.restored ? " from its snapshot" : ""}: start ${ms.start} ms, harden ${ms.harden} ms, verify ${ms.verify} ms, ${folder} (${plan.files.length} files)`);
 		this.#parent = plan.versionId;
 		this.#prepared = prepared.fence;
-		await this.#deps.point?.("local:prepared");
+		await this.#deps.point?.("local:prepared", JSON.stringify(this.preparation));
 		return prepared.fence;
 	}
 

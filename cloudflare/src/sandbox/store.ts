@@ -39,7 +39,10 @@ export interface StateRow {
 	cleanupReason: string | null;
 	/** When the container is destroyed if nothing uses it. */
 	leaseUntil: number | null;
-	/** The SHA-256 of the hardening exec's argv, once it succeeded: a run whose spec asks for another never acquires the container. */
+	/**
+	 * Once the hardening succeeded, its digest (hardening.ts `hardeningDigest`, over the image's name and the hardening
+	 * exec's argv): a run whose spec or image gives another never acquires the container, and its retire takes no snapshot.
+	 */
 	hardening: string | null;
 	/** The folder version a parked or retiring container holds; read only in those states. */
 	parkedVersion: VersionId | null;

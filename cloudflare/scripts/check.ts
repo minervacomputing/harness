@@ -21,7 +21,7 @@ interface Step {
 const REPOSITORY = join(ROOT, "..");
 const CONTRACT = join(REPOSITORY, "contract");
 const ACCOUNT = "test/account/";
-const PERF = ["perf.test.ts", "retention-measure.test.ts", "retention-perf.test.ts", "conversation-perf.test.ts", "park-perf.test.ts"];
+const PERF = ["perf.test.ts", "retention-measure.test.ts", "retention-perf.test.ts", "conversation-perf.test.ts", "park-perf.test.ts", "snapshot-perf.test.ts", "snapshot-deploy.test.ts"];
 const TAIL = 80;
 
 type Check = "skip-probe" | "skip-lab" | "deployed" | "faults-file" | "helper";

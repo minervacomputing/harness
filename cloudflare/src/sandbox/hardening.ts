@@ -159,9 +159,9 @@ export const RETIRE_SMALL = 3;
 // thresholds ends it with its own status. Anything parking does not leave fails it, since the archive must hold what
 // hydration would write: an entry neither a regular file nor a directory, a file with more than one link, a
 // directory not 0755 or a file neither 0644 nor 0755. Then root's tar archives the folder into a directory made
-// afresh on the root disk, so nothing deleted rides along, storing no extended attributes, ACLs or links between
-// files and keeping modes and modification times to the nanosecond; the archive is root's alone. `/` is synced and
-// made read-only again so the snapshot finds the disk clean.
+// afresh on the root disk, so the directory holds only the current version, storing no extended attributes, ACLs or
+// links between files and keeping modes and modification times to the nanosecond; the archive is root's alone. `/`
+// is synced and made read-only again so the snapshot finds the disk clean.
 const RETIRE = [
 	"set -eu -o pipefail",
 	"cgroup=$0 workspace=$1 dir=$2 archive=$3 files=$4 bytes=$5 small=$6",
