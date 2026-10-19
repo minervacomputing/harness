@@ -5,6 +5,7 @@
 
 import type { RunEvent, RunStatus, StatusEventData } from "@minerva/contract";
 import { sliceText } from "../lib/text.ts";
+import { CONTEXT_OVERFLOW } from "../model/tap.ts";
 
 // The payloads are the contract's (contract/src/shapes.ts), as the chat reads them.
 export type {
@@ -48,6 +49,10 @@ export type RunEnd =
 	| { status: "failed"; code: "worker_silent"; message: "The worker did not start." }
 	| { status: "failed"; code: "worker_exited"; message: "The worker stopped unexpectedly." }
 	| { status: "failed"; code: "worker_failed"; message: "The agent could not finish this run. Try again." }
+	/** pi could not summarize the conversation's earlier turns to make room (unansweredEnd). */
+	| { status: "failed"; code: "compaction_failed"; message: "This conversation has grown too long, and its earlier turns could not be summarized. Try again, or start a new conversation." }
+	/** A request still overflowed the model's context window when pi would not compact again (unansweredEnd). */
+	| { status: "failed"; code: "context_overflow"; message: "This turn needed more than the model can read at once. Try a smaller request, or start a new conversation." }
 	/** Laravel gave up waiting for its start's answer and cancelled it. */
 	| { status: "failed"; code: "start_expired"; message: "The agent could not finish this run. Try again." }
 	| { status: "failed"; code: "folder_limit"; message: string }
@@ -91,6 +96,19 @@ export const WORKER_EXITED: RunEnd = { status: "failed", code: "worker_exited", 
 export const WORKER_FAILED: RunEnd = { status: "failed", code: "worker_failed", message: "The agent could not finish this run. Try again." };
 export const START_EXPIRED: RunEnd = { status: "failed", code: "start_expired", message: "The agent could not finish this run. Try again." };
 export const BUDGET_REACHED: RunEnd = { status: "failed", code: "budget_reached", message: "This conversation reached its budget." };
+export const COMPACTION_FAILED: RunEnd = { status: "failed", code: "compaction_failed", message: "This conversation has grown too long, and its earlier turns could not be summarized. Try again, or start a new conversation." };
+export const TOO_LONG: RunEnd = { status: "failed", code: "context_overflow", message: "This turn needed more than the model can read at once. Try a smaller request, or start a new conversation." };
+
+/**
+ * How a run ends whose `run:<id>` submission pi settled `unanswered`, from pi's reason and detail: `Compaction failed: …`
+ * when a summary to make room failed, and the wrapper's CONTEXT_OVERFLOW when a request overflowed and pi would not compact
+ * again (pi-durable's harness/generation.js). Anything else is the worker's failure.
+ */
+export function unansweredEnd(reason: string, detail: unknown): RunEnd {
+	if (reason !== "model_error" || typeof detail !== "string") return WORKER_FAILED;
+	if (detail.startsWith("Compaction failed")) return COMPACTION_FAILED;
+	return detail === CONTEXT_OVERFLOW ? TOO_LONG : WORKER_FAILED;
+}
 
 /** How a cancel from outside the object ends its run (ARCHITECTURE.md: Strict revocation). */
 export function endFor(reason: CancelReason): RunEnd {

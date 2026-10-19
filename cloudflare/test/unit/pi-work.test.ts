@@ -23,6 +23,7 @@ import { CANCELLED } from "../../src/conversation/events.ts";
 import { admitModel, admitTool, belongs, PI_SETTINGS, type PiCall, piWork, type ToolAdmission } from "../../src/conversation/pi-work.ts";
 import { MIGRATIONS } from "../../src/conversation/schema.ts";
 import { RunStore } from "../../src/conversation/store.ts";
+import { CONTEXT_WINDOW } from "../../src/model/route.ts";
 import { durableStorage, openDatabase } from "./sqlite.ts";
 
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context pi-work test]" }) as never;
@@ -267,6 +268,11 @@ describe("what pi holds for a run, read by its operation", () => {
 describe("pi makes no background work", () => {
 	test("background compaction is off, which the id rule and model admission rest on", () => {
 		expect(PI_SETTINGS.compaction?.backgroundTokens).toBe(0);
+	});
+
+	test("a blocking compaction leaves 15% of the context window for the answer and keeps the newest 30% unsummarized", () => {
+		expect(PI_SETTINGS.compaction).toEqual({ backgroundTokens: 0, reserveTokens: 19_200, keepRecentTokens: 38_400 });
+		expect(CONTEXT_WINDOW).toBe(128_000);
 	});
 });
 

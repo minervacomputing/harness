@@ -6,6 +6,7 @@
 
 import type { ConversationId, HarnessSettings, SubmissionId, TaskId, TaskRecord } from "@earendil-works/pi-durable";
 import type { SqliteStorage } from "@earendil-works/pi-durable/storage/sqlite";
+import { CONTEXT_WINDOW } from "../model/route.ts";
 import type { AttemptFence, EpochMs } from "../shared/rpc.ts";
 import { classifyWork, type PiWork, type SubmissionStatus } from "./gate.ts";
 import type { RunRow, RunStore } from "./store.ts";
@@ -18,13 +19,18 @@ const NEVER_MS = 2_000_000_000;
 
 /**
  * pi's settings: a failed model call ends the turn (any retry delay pi might use
- * stays at or under 60 s, so a long wait is never mistaken for a restart); no background compaction; no
+ * stays at or under 60 s, so a long wait is never mistaken for a restart); no background compaction, and a blocking one
+ * that leaves 15% of the window for the answer and keeps the newest 30% of it unsummarized; no
  * partial commits, so an interrupted answer is asked again; and no context kept in memory after a turn,
  * which would keep every object active, and billed, for 10 minutes (spike: PiHarness, fact 17).
  */
 export const PI_SETTINGS: HarnessSettings = {
 	retry: { enabled: false, maxAgentDelayMs: 60_000 },
-	compaction: { backgroundTokens: 0 },
+	compaction: {
+		backgroundTokens: 0,
+		reserveTokens: Math.round(CONTEXT_WINDOW * 0.15),
+		keepRecentTokens: Math.round(CONTEXT_WINDOW * 0.3),
+	},
 	progress: { partialIntervalMs: NEVER_MS, outputIntervalMs: NEVER_MS },
 	stream: { maxRetryDelayMs: 60_000 },
 	contextRetentionMs: 0,

@@ -3,6 +3,7 @@
 import { describe, expect, test } from "vitest";
 import {
 	CANCELLED,
+	COMPACTION_FAILED,
 	COMPLETED,
 	EMERGENCY_STOP,
 	endFor,
@@ -15,9 +16,12 @@ import {
 	tail,
 	terminalStatus,
 	TIMED_OUT,
+	TOO_LONG,
+	unansweredEnd,
 	WORKER_EXITED,
 	WORKER_FAILED,
 } from "../../src/conversation/events.ts";
+import { CONTEXT_OVERFLOW, PROVIDER_ERROR } from "../../src/model/tap.ts";
 
 describe("how runs end", () => {
 	test("codes and messages", () => {
@@ -46,6 +50,31 @@ describe("how runs end", () => {
 		expect(long).toEqual({ status: "failed", message: `${"é".repeat(498)}😀` });
 		// A cut never leaves half a character.
 		expect(terminalStatus({ status: "failed", code: "folder_limit", message: `${"é".repeat(499)}😀` })).toEqual({ status: "failed", message: "é".repeat(499) });
+	});
+
+	test("a turn pi left unanswered: a failed compaction and a request too long for the model each have their own end", () => {
+		expect(COMPACTION_FAILED).toEqual({
+			status: "failed",
+			code: "compaction_failed",
+			message: "This conversation has grown too long, and its earlier turns could not be summarized. Try again, or start a new conversation.",
+		});
+		expect(TOO_LONG).toEqual({
+			status: "failed",
+			code: "context_overflow",
+			message: "This turn needed more than the model can read at once. Try a smaller request, or start a new conversation.",
+		});
+		// pi-durable's texts (harness/generation.js `compactionFailure`, harness/compaction.js `summaryFailure`).
+		expect(unansweredEnd("model_error", `Compaction failed: Summarization failed: ${PROVIDER_ERROR}`)).toBe(COMPACTION_FAILED);
+		expect(unansweredEnd("model_error", "Compaction failed: orphaned")).toBe(COMPACTION_FAILED);
+		expect(unansweredEnd("model_error", CONTEXT_OVERFLOW)).toBe(TOO_LONG);
+		expect(unansweredEnd("model_error", "Compaction was aborted")).toBe(WORKER_FAILED);
+		expect(unansweredEnd("model_error", PROVIDER_ERROR)).toBe(WORKER_FAILED);
+		expect(unansweredEnd("model_error", "Model response ended with stop reason length")).toBe(WORKER_FAILED);
+		expect(unansweredEnd("model_error", undefined)).toBe(WORKER_FAILED);
+		for (const reason of ["aborted", "no_model", "reset", "stale", "faulted"]) {
+			expect(unansweredEnd(reason, `Compaction failed: ${PROVIDER_ERROR}`)).toBe(WORKER_FAILED);
+			expect(unansweredEnd(reason, CONTEXT_OVERFLOW)).toBe(WORKER_FAILED);
+		}
 	});
 });
 

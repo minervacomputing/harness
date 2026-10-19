@@ -67,6 +67,7 @@ import {
 	type RunEnd,
 	statusEvent,
 	TIMED_OUT,
+	unansweredEnd,
 	WORKER_EXITED,
 	WORKER_FAILED,
 } from "./events.ts";
@@ -885,8 +886,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if (!run || !ACTIVE.has(run.status)) return;
 		const fence = { runId, attempt: run.attempt };
 		if (submission.status === "unanswered") {
-			this.#log(`the model turn ended without an answer (${submission.reason})`);
-			await this.#fail(fence, WORKER_FAILED);
+			const detail = typeof submission.detail === "string" ? `: ${submission.detail}` : "";
+			this.#log(`the model turn ended without an answer (${submission.reason}${detail})`);
+			await this.#fail(fence, unansweredEnd(submission.reason, submission.detail));
 			return;
 		}
 		if (submission.status !== "done" || submission.type !== "input") return;

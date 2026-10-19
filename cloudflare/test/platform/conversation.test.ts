@@ -1,7 +1,7 @@
 // The Conversation Durable Object in local workerd, as Laravel's commands reach it (startRun, cancelRun, deleteConversation
 // through the internal mount) with the fake Laravel: the start, runs and their events, cancels, the deadline, the stream's
-// WebSocket, tools through a fake executor, the history replay, fencing, model calls, and restarts and recovery through the
-// attempt gate with the fake model.
+// WebSocket, tools through a fake executor, the history replay, fencing, model calls, compaction, and restarts and recovery
+// through the attempt gate with the fake model.
 
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
@@ -9,7 +9,7 @@ import type { RunEvent } from "@minerva/contract";
 import type { CancelReason, Fact, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { BUSY_MESSAGE } from "../../src/conversation/conversation.ts";
-import { CANCELLED, statusEvent, WORKER_FAILED } from "../../src/conversation/events.ts";
+import { CANCELLED, COMPACTION_FAILED, statusEvent, TOO_LONG, WORKER_FAILED } from "../../src/conversation/events.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { FOLDER_INSTRUCTIONS } from "../../src/conversation/history.ts";
 import { type RunHead, RunStore } from "../../src/conversation/store.ts";
@@ -24,7 +24,7 @@ import type { DispatchResult } from "../../src/gateway/ledger.ts";
 import type { ToolResult } from "../../src/gateway/results.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
+import { countedFails, FAKE_OVERFLOW, type FakeOptions, type FakeScript, fakeUpstream, SUMMARY_OUTPUT, SUMMARY_START } from "../../src/model/fake.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../../src/model/route.ts";
 import { PROVIDER_ERROR } from "../../src/model/tap.ts";
 import type { RunId } from "../../src/shared/rpc.ts";
@@ -737,6 +737,78 @@ describe("the model", () => {
 		}
 		expect(logged.join("\n")).toContain("The model provider reported an error");
 		expect(logged.join("\n")).not.toContain(secret);
+	});
+});
+
+describe("compaction", () => {
+	/** A read whose result is about 160,000 characters: pi estimates it at about 45,700 tokens, over keepRecentTokens. */
+	const LARGE: Partial<Fakes> = {
+		declarations: [declaration("fake_read", true)],
+		invoke: async (request) => allowed(request, { items: [{ text: "y".repeat(160_000) }], count: 1 }),
+	};
+	const READ = { tools: [{ name: "fake_read", arguments: { key: "a" } }] };
+	/** What the read's call reports: with its result, pi's estimate of the next request passes the blocking threshold. */
+	const FULL = { input: 70_000, output: 10 };
+
+	/** The run's end as the fake Laravel received it. */
+	async function finished(start: StartRun) {
+		return (await delivered(start)).find((fact) => fact.type === "run.finished" && fact.run === start.run)?.data;
+	}
+
+	test("a run whose own tool output fills the context compacts inside itself, its message summarized, and answers", async () => {
+		const content = scripted({ turns: [{ ...READ, usage: FULL }, { text: "Read it all." }] });
+		const { start, stub, fakes } = await started(content, LARGE);
+		expect(await settled(stub, start.run)).toMatchObject({ status: "completed" });
+		expect((await eventsOf(stub, start.run)).find((event) => event.type === "message")?.data).toMatchObject({ content: "Read it all." });
+		const { compactions, calls } = (await stub.faultView(start.run, 0, 0)).internals;
+		expect(compactions.map((compaction) => compaction.reason)).toEqual(["threshold"]);
+		// The cut fell after the run's own message: the summary holds it, and the read's round is kept as it was.
+		expect(compactions[0]?.summary).toContain(content);
+		const last = (fakes.contexts.at(-1) as TranscriptContext).messages.filter((item) => item.role !== "system");
+		expect(last.map((item) => item.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect(JSON.stringify(last[0])).toContain(SUMMARY_START);
+		// The summary's call is the run's, recorded as a summary, and its usage reaches Laravel.
+		expect(calls.map((call) => [call.summary, call.output_tokens])).toEqual([
+			[false, 10],
+			[true, SUMMARY_OUTPUT],
+			[false, expect.any(Number)],
+		]);
+		const usage = (await delivered(start)).filter((fact) => fact.type === "run.usage").map((fact) => (fact.data as { outputTokens: number }).outputTokens);
+		expect(usage).toContain(SUMMARY_OUTPUT);
+		expect(usage.length).toBe(3);
+	});
+
+	test("a compaction whose summary fails ends the run compaction_failed, with its message, and logs pi's detail", async () => {
+		const warned = vi.spyOn(console, "warn");
+		try {
+			const content = scripted({ turns: [{ ...READ, usage: FULL }, { text: "Read it all.", failSummaries: 1 }] });
+			const { start, stub } = await started(content, { ...LARGE, model: { fails: countedFails() } });
+			expect(await settled(stub, start.run)).toMatchObject({ status: "failed", errorMessage: COMPACTION_FAILED.message });
+			expect(await finished(start)).toMatchObject({ status: "failed", code: "compaction_failed", error: COMPACTION_FAILED.message });
+			const { compactions, calls } = (await stub.faultView(start.run, 0, 0)).internals;
+			expect([compactions, calls.map((call) => call.summary)]).toEqual([[], [false, true]]);
+			const line = `the model turn ended without an answer (model_error: Compaction failed: Summarization failed: ${PROVIDER_ERROR})`;
+			expect(warned.mock.calls.some((args) => String(args[0]).endsWith(line))).toBe(true);
+		} finally {
+			warned.mockRestore();
+		}
+	});
+
+	test("a request that overflows when pi will not compact again ends the run context_overflow, with its message", async () => {
+		const OVERFLOW = { error: { message: FAKE_OVERFLOW } };
+		// Nothing before the run's message to summarize: pi finds no cut, and the first overflow ends the run.
+		const short = await started(scripted({ turns: [OVERFLOW] }));
+		expect(await settled(short.stub, short.start.run)).toMatchObject({ status: "failed", errorMessage: TOO_LONG.message });
+		expect(await finished(short.start)).toMatchObject({ status: "failed", code: "context_overflow", error: TOO_LONG.message });
+		expect((await short.stub.faultView(short.start.run, 0, 0)).internals.compactions).toEqual([]);
+		expect(short.fakes.contexts.length).toBe(1);
+		// A read over keepRecentTokens: pi compacts once for the overflow and asks again, and the second overflow ends the run.
+		const long = await started(scripted({ turns: [READ, OVERFLOW] }), LARGE);
+		expect(await settled(long.stub, long.start.run)).toMatchObject({ status: "failed", errorMessage: TOO_LONG.message });
+		expect(await finished(long.start)).toMatchObject({ status: "failed", code: "context_overflow", error: TOO_LONG.message });
+		const { compactions, calls } = (await long.stub.faultView(long.start.run, 0, 0)).internals;
+		expect(compactions.map((compaction) => compaction.reason)).toEqual(["overflow"]);
+		expect(calls.map((call) => call.summary)).toEqual([false, false, true, false]);
 	});
 });
 
