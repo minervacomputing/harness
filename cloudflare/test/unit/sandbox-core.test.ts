@@ -1,16 +1,18 @@
 // The Sandbox's lifecycle (src/sandbox/core.ts) over a scripted container and node:sqlite, without Docker:
 // the states and what each admits, fences, a failed start, hardening and destroy, the alarm's retries and
-// leases, a restart in each state, an admission failure and a container lost under a call, and each
-// incarnation's span and a run's seal. The same paths against the real image are in sandbox-local.test.ts.
+// leases, a restart in each state, an admission failure and a container lost under a call, each
+// incarnation's span and a run's seal, and parking a container for the conversation's next run. The same
+// paths against the real image are in sandbox-local.test.ts.
 
 import { describe, expect, test, vi } from "vitest";
 import { uuid7 } from "../../src/lib/random.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
-import { DEADLINE_GRACE_MS, IDLE_MS, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
+import { DEADLINE_GRACE_MS, IDLE_MS, PARKED_MS, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
 import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
+import { PARK_LINKED } from "../../src/sandbox/hardening.ts";
 import type { ContainerPort, SandboxPorts } from "../../src/sandbox/ports.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
-import { containerCharge, readSpans, readState, SANDBOX_MIGRATIONS } from "../../src/sandbox/store.ts";
+import { containerCharge, readSpans, readState, SANDBOX_MIGRATIONS, type SealedSpans } from "../../src/sandbox/store.ts";
 import { openDatabase } from "./sqlite.ts";
 
 const CGROUP = "/sys/fs/cgroup/agent";
@@ -98,6 +100,11 @@ class ScriptedContainer implements ContainerPort {
 	hangKills = false;
 	hangDestroys = false;
 	hangKeepAlive = false;
+	/** The park exec's exit status. */
+	parkExit = 0;
+	/** A verification whose report says nothing it can read. */
+	failVerification = false;
+	readonly destroyReasons: string[] = [];
 	/** Ends the hung processes, as a destroy does. */
 	#hung: (() => void)[] = [];
 	/** While set, a wrapped process joins the cgroup (and its exec answers) only once it resolves. */
@@ -136,7 +143,11 @@ class ScriptedContainer implements ContainerPort {
 			this.log.push("verify");
 			if (this.hangVerification === "exec") return await new Promise<never>(() => {});
 			if (this.hangVerification === "process") return hung("", (end) => this.#hung.push(end));
-			return process(facts(this.#spec ?? SPEC), 0);
+			return process(this.failVerification ? "{}" : facts(this.#spec ?? SPEC), 0);
+		}
+		if (script.includes("-links +1")) {
+			this.log.push("park");
+			return process("", this.parkExit);
 		}
 		if (script.includes("cgroup.kill")) {
 			this.killsRunning++;
@@ -159,8 +170,9 @@ class ScriptedContainer implements ContainerPort {
 		return process("", 0);
 	}
 
-	async destroy(): Promise<void> {
+	async destroy(reason?: string): Promise<void> {
 		this.log.push("destroy");
+		this.destroyReasons.push(reason ?? "");
 		if (this.hangDestroys) return await new Promise<never>(() => {});
 		if (this.failDestroys > 0) {
 			this.failDestroys--;
@@ -862,5 +874,226 @@ describe("spans and seals", () => {
 		expect(sealed).toEqual({ since: T0, spans: [] });
 		expect(containerCharge(sealed, T0 - MINUTE)).toEqual({ containers: 0, containerMs: 0, containerEstimated: true });
 		expect(containerCharge(sealed, T0 + 1)).toEqual({ containers: 0, containerMs: 0, containerEstimated: false });
+	});
+
+	test("step 3 keeps the row and spans the previous version wrote, and a container can park on the result", async () => {
+		const sql = sqliteSql(openDatabase());
+		migrate(sql, SANDBOX_MIGRATIONS.slice(0, 2), 0);
+		const earlier = uuid7(T0 - MINUTE);
+		sql.exec("INSERT INTO sandbox_state (id, state, incarnation, run_id, attempt, hardened, started_at, lease_until, updated_at) VALUES (1, 'destroying', 'old', ?, 1, 1, ?, ?, ?)", earlier, T0 - MINUTE, T0 + IDLE_MS, T0);
+		sql.exec("INSERT INTO container_spans (incarnation, run_id, attempt, started_at, lease_until) VALUES ('old', ?, 1, ?, ?)", earlier, T0 - MINUTE, T0 + IDLE_MS);
+		migrate(sql, SANDBOX_MIGRATIONS, T0);
+		expect(readState(sql)).toMatchObject({ state: "destroying", incarnation: "old", runId: earlier, hardening: null, parkedVersion: null });
+		expect(readSpans(sql, earlier)).toEqual({ since: 0, spans: [{ startedAt: T0 - MINUTE, leaseUntil: T0 + IDLE_MS, endedAt: null, ended: null }] });
+
+		const made = rig();
+		const core = new SandboxCore({ ...made.ports(), sql });
+		const prepared = await prepareSandbox(core, { runId: uuid7(), attempt: 1 }, SPEC);
+		if (!prepared.ok) throw new Error(prepared.message);
+		expect(await core.park(prepared.fence, null)).toEqual({ parked: true });
+		expect(readState(sql)).toMatchObject({ state: "parked", parkedVersion: null, hardening: expect.stringMatching(/^[0-9a-f]{64}$/) });
+		expect(readSpans(sql, earlier).spans).toEqual([{ startedAt: T0 - MINUTE, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "destroyed" }]);
+		expect(readSpans(sql, prepared.fence.runId).spans).toEqual([{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "parked" }]);
+	});
+});
+
+describe("parking", () => {
+	const T0 = 1_800_000_000_000;
+	const MINUTE = 60_000;
+	const V1 = "0199b000-0000-7000-8000-0000000000a1";
+
+	/** A run's container used once and parked with `version`. */
+	async function parked(made: Rig, version: string | null = V1): Promise<SandboxFence> {
+		const fence = await ready(made);
+		expect(await command(made, fence)).toEqual({ ok: true, exitCode: 0 });
+		expect(await made.core.park(fence, version)).toEqual({ parked: true });
+		return fence;
+	}
+
+	/** What `find` would list of the folder: each entry's flag (`r` readable, `u` not), type, mode and path. */
+	const listing = (...entries: [flag: string, type: string, mode: string, path: string][]) =>
+		`1800000000000000000\n${entries.map(([flag, type, mode, path]) => [flag, type, "1", "1700000000.0", "1700000000.0", "12", "34", mode, `${WORKSPACE}/${path}`, ""].join("\0")).join("")}`;
+
+	test("a parked container admits nothing, and the next run acquires it without a start", async () => {
+		const made = rig();
+		const first = await parked(made);
+		expect(made.core.status()).toMatchObject({ state: "parked", incarnation: first.incarnation, runId: first.runId });
+		expect(made.alarms.at(-1)).toBe(T0 + PARKED_MS);
+		expect(await command(made, first)).toEqual({ refused: "not_verified", message: "The sandbox is not ready." });
+
+		const next = { runId: uuid7(), attempt: 1 };
+		const acquired = await made.core.acquire(next, SPEC, V1);
+		if (!("incarnation" in acquired)) throw new Error(JSON.stringify(acquired));
+		expect(acquired).toEqual({ incarnation: expect.any(String), verifyMs: 0 });
+		expect(acquired.incarnation).not.toBe(first.incarnation);
+		expect(made.core.status()).toMatchObject({ state: "verified", incarnation: acquired.incarnation, runId: next.runId, attempt: 1 });
+		expect(await command(made, { ...next, incarnation: acquired.incarnation })).toEqual({ ok: true, exitCode: 0 });
+		expect(made.container.starts).toBe(1);
+		expect(made.container.log).toEqual(["harden", "verify", "command", "park", "verify", "command"]);
+		// The new run's lease, not the parked one's.
+		expect(made.alarms.at(-1)).toBe(T0 + IDLE_MS);
+	});
+
+	test("park is refused for another fence, answers the same again for its own, and destroys instead while a command runs", async () => {
+		vi.useFakeTimers();
+		try {
+			const made = rig();
+			const fence = await ready(made);
+			expect(await made.core.park({ ...fence, attempt: 2 }, V1)).toMatchObject({ refused: "stale" });
+			expect(await made.core.park({ ...fence, incarnation: uuid7() }, V1)).toMatchObject({ refused: "stale" });
+			expect(await made.core.park(fence, V1)).toEqual({ parked: true });
+			expect(await made.core.park(fence, V1)).toEqual({ parked: true });
+			expect(made.container.log.filter((entry) => entry === "park")).toHaveLength(1);
+
+			const busy = rig();
+			const running = await ready(busy);
+			busy.container.hangCommands = "process";
+			const held = command(busy, running);
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await busy.core.park(running, V1)).toEqual({ parked: false });
+			expect(busy.container.destroyReasons).toEqual(["Work of the run was still running when it parked its sandbox."]);
+			expect(busy.container.running).toBe(false);
+			expect(busy.core.status()).toMatchObject({ state: "none", incarnation: null });
+			await outwait(held);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("park destroys instead when the last scan left out more than links and special files, or a file has two links", async () => {
+		const linked = rig();
+		const links = await ready(linked);
+		linked.container.command = { stdout: listing(["r", "l", "777", "link"], ["r", "p", "644", "pipe"]), exitCode: 0, admitted: true };
+		expect(await linked.core.scan(links, { rehashAll: true })).toMatchObject({ ok: true, warnings: { total: 2 } });
+		expect(await linked.core.park(links, V1)).toEqual({ parked: true });
+
+		const hidden = rig();
+		const unreadable = await ready(hidden);
+		hidden.container.command = { stdout: listing(["r", "l", "777", "link"], ["u", "d", "700", "secret"]), exitCode: 0, admitted: true };
+		expect(await hidden.core.scan(unreadable, { rehashAll: true })).toMatchObject({ ok: true, warnings: { total: 2 } });
+		expect(await hidden.core.park(unreadable, V1)).toEqual({ parked: false });
+		expect(hidden.container.destroyReasons).toEqual(["The folder's last scan left out entries a parked folder cannot keep."]);
+		expect(hidden.container.log).not.toContain("park");
+
+		const hard = rig();
+		const twice = await ready(hard);
+		hard.container.parkExit = PARK_LINKED;
+		expect(await hard.core.park(twice, V1)).toEqual({ parked: false });
+		expect(hard.container.destroyReasons).toEqual(["A file in the folder has more than one link."]);
+		expect(hard.core.status()).toMatchObject({ state: "none" });
+	});
+
+	test("acquire destroys a parked container of another version, hardened differently or failing its verification, and forgets a stopped one", async () => {
+		const cases: { name: string; change(made: Rig): void; spec?: SandboxSpec; version?: string; reason: string }[] = [
+			{ name: "version", change: () => {}, version: "0199b000-0000-7000-8000-0000000000a2", reason: "The parked folder is not the version the run starts from." },
+			{ name: "hardening", change: () => {}, spec: { ...SPEC, folderEntries: 60 }, reason: "The parked container was hardened differently from what the run asks." },
+			{ name: "verification", change: (made) => (made.container.failVerification = true), reason: "The parked container failed its verification." },
+		];
+		for (const entry of cases) {
+			const made = rig();
+			await parked(made);
+			entry.change(made);
+			expect(await made.core.acquire({ runId: uuid7(), attempt: 1 }, entry.spec ?? SPEC, entry.version ?? V1), entry.name).toEqual({ acquired: false, reason: entry.reason });
+			expect(made.container.destroyReasons, entry.name).toEqual([entry.reason]);
+			expect(made.container.running, entry.name).toBe(false);
+			expect(made.core.status(), entry.name).toMatchObject({ state: "none", incarnation: null });
+		}
+
+		const stopped = rig();
+		await parked(stopped);
+		stopped.container.running = false;
+		expect(await stopped.core.acquire({ runId: uuid7(), attempt: 1 }, SPEC, V1)).toEqual({ acquired: false, reason: "The parked container stopped." });
+		expect(stopped.container.destroyReasons).toEqual([]);
+		expect(stopped.core.status()).toMatchObject({ state: "none", incarnation: null });
+
+		const empty = rig();
+		expect(await empty.core.acquire({ runId: uuid7(), attempt: 1 }, SPEC, null)).toEqual({ acquired: false, reason: "Nothing is parked." });
+	});
+
+	test("the alarm destroys a container parked for PARKED_MS", async () => {
+		const made = rig();
+		await parked(made);
+		made.clock.now += PARKED_MS - 1;
+		await made.core.alarm();
+		expect(made.core.status().state).toBe("parked");
+		made.clock.now += 1;
+		await made.core.alarm();
+		expect(made.container.destroyReasons).toEqual(["The parked sandbox was not used for 5 minutes."]);
+		expect(made.core.status()).toMatchObject({ state: "none", incarnation: null });
+		expect(made.alarms.at(-1)).toBeNull();
+	});
+
+	test("the parking run's late calls are refused while parked, and stale once the next run acquired the container", async () => {
+		const made = rig();
+		const first = await parked(made);
+		const checkpoint = () => made.core.checkpoint(first, { files: [] });
+		const fs = () => made.core.fs(first, { op: "lstat", path: `${WORKSPACE}/a` });
+		for (const late of [() => command(made, first), fs, checkpoint, () => made.core.killStrays(first)]) {
+			expect(await late()).toEqual({ refused: "not_verified", message: "The sandbox is not ready." });
+		}
+		const next = await made.core.acquire({ runId: uuid7(), attempt: 1 }, SPEC, V1);
+		expect(next).toMatchObject({ incarnation: expect.any(String) });
+		for (const late of [() => command(made, first), fs, checkpoint, () => made.core.park(first, V1), () => made.core.destroy(first, "late")]) {
+			expect(await late()).toMatchObject({ refused: "stale" });
+		}
+		expect(made.container.running).toBe(true);
+		expect(made.container.log).toEqual(["harden", "verify", "command", "park", "verify"]);
+	});
+
+	test("a seal of the parking run leaves the container, before and after the next run acquired it, and its spans charge neither run for the parked time", async () => {
+		const made = rig();
+		const first = await ready(made);
+		made.clock.now += MINUTE;
+		expect(await made.core.park(first, V1)).toEqual({ parked: true });
+		const firstSpans = { since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0 + MINUTE, ended: "parked" }] };
+		expect(await made.core.seal(first.runId)).toEqual(firstSpans);
+		expect(made.core.status()).toMatchObject({ state: "parked", incarnation: first.incarnation });
+		expect(made.container.running).toBe(true);
+
+		made.clock.now += 2 * MINUTE;
+		const second = { runId: uuid7(), attempt: 1 };
+		const acquired = await made.core.acquire(second, SPEC, V1);
+		if (!("incarnation" in acquired)) throw new Error(JSON.stringify(acquired));
+		expect(await made.core.seal(first.runId)).toEqual(firstSpans);
+		expect(made.core.status()).toMatchObject({ state: "verified", incarnation: acquired.incarnation, runId: second.runId });
+		expect(made.container.running).toBe(true);
+		// A start for the sealed run is still refused, and acquires nothing either.
+		expect(await made.core.acquire({ runId: first.runId, attempt: 2 }, SPEC, V1)).toEqual({ refused: "stale", message: "This run has ended." });
+
+		made.clock.now += MINUTE;
+		const secondSpans = await made.core.seal(second.runId);
+		expect(secondSpans).toEqual({ since: 0, spans: [{ startedAt: T0 + 3 * MINUTE, leaseUntil: T0 + 3 * MINUTE + IDLE_MS, endedAt: T0 + 4 * MINUTE, ended: "destroyed" }] });
+		expect(made.container.running).toBe(false);
+		expect(containerCharge(firstSpans as SealedSpans, T0)).toEqual({ containers: 1, containerMs: MINUTE, containerEstimated: false });
+		expect(containerCharge(secondSpans, T0 + 3 * MINUTE)).toEqual({ containers: 1, containerMs: MINUTE, containerEstimated: false });
+	});
+
+	test("a restart keeps a running parked container, acquired and verified again later, and forgets a stopped one", async () => {
+		const made = rig();
+		const first = await parked(made);
+		await made.restart();
+		expect(made.core.status()).toMatchObject({ state: "parked", incarnation: first.incarnation });
+		expect(made.container.running).toBe(true);
+		expect(made.container.verifications).toBe(1);
+		const acquired = await made.core.acquire({ runId: uuid7(), attempt: 1 }, SPEC, V1);
+		expect(acquired).toMatchObject({ incarnation: expect.any(String) });
+		expect(made.container.verifications).toBe(2);
+
+		const stopped = rig();
+		const gone = await parked(stopped);
+		stopped.container.running = false;
+		stopped.clock.now += MINUTE;
+		await stopped.restart();
+		expect(stopped.core.status()).toMatchObject({ state: "none", incarnation: null });
+		// The run's span ended when it parked, not when the object noticed the container gone.
+		expect(readSpans(stopped.sql, gone.runId).spans).toEqual([{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "parked" }]);
+	});
+
+	test("a container whose object restarted while it ran is destroyed rather than parked: the last scan's warnings went with the restart", async () => {
+		const made = rig();
+		const fence = await ready(made);
+		await made.restart();
+		expect(await made.core.park(fence, V1)).toEqual({ parked: false });
+		expect(made.container.destroyReasons).toEqual(["The folder's last scan left out entries a parked folder cannot keep."]);
 	});
 });

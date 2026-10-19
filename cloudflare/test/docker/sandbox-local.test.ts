@@ -3,8 +3,8 @@
 // operations through Files' sandbox-shim as the agent's user, pi's ExecutionEnv conformance suite (24 cases,
 // one skipped) over the adapter, the read tool's timings, killing strays, the fork and folder limits, and the
 // Sandbox fault rows of the plan (each hardening step failing, cgroup admission failing, a lost destroy, a
-// restart with a container still running). Hydration, scans and checkpoints are folder.test.ts's. Skipped
-// without Docker or the image: `pnpm sandbox:image` builds it.
+// restart with a container still running), and parking a container for the next run. Hydration, scans and
+// checkpoints are folder.test.ts's. Skipped without Docker or the image: `pnpm sandbox:image` builds it.
 
 import { getOrThrow, LineScanner } from "@earendil-works/pi-durable/env";
 import { createEnvConformance } from "@earendil-works/pi-durable/testing";
@@ -532,5 +532,45 @@ describe.skipIf(!READY)("the Sandbox's fault rows", () => {
 		expect(second.fence.incarnation).not.toBe(first.fence.incarnation);
 		expect(await made.core.exec(first.fence, { execId: "o", command: "true", cwd: WORKSPACE, env: {}, timeoutSeconds: 1 }, null)).toMatchObject({ refused: "stale" });
 		expect(await made.core.harden(second.fence)).toMatchObject({ refused: "not_verified" });
+	});
+});
+
+describe.skipIf(!READY)("parking", () => {
+	const VERSION = "0199b000-0000-7000-8000-0000000000a1";
+
+	test("parking leaves only the folder's files and directories, with hydration's modes, kills every agent process and empties every other place the agent writes; the next run acquires it", { timeout: 120_000 }, async () => {
+		const made = track(rig());
+		const fence = await ready(made);
+		const wrote = await run(made.core, fence, "mkdir -p d/e && echo hi > d/e/f && chmod 0600 d/e/f && echo 'echo run' > run.sh && chmod 0700 run.sh && chmod 2770 d && ln -s d/e/f link && mkfifo pipe && echo ok");
+		expect(wrote.stdout).toBe("ok\n");
+		// The run's last checkpoint scans the folder: links and special files are all it leaves out.
+		expect(await made.core.scan(fence, { rehashAll: true })).toMatchObject({ ok: true, warnings: { total: 2 } });
+		const left = await run(made.core, fence, "echo t > /tmp/left && echo s > /dev/shm/left && ipcmk -M 4096 > /dev/null && (setsid sleep 600 > /dev/null 2>&1 &) && echo ok");
+		expect(left.stdout).toBe("ok\n");
+		expect(made.container.shell("pgrep -u 1000 -c -x sleep").stdout.trim()).toBe("1");
+
+		expect(await made.core.park(fence, VERSION)).toEqual({ parked: true });
+		expect(made.core.status().state).toBe("parked");
+		expect(made.container.shell("find /workspace -printf '%y %m %P\\n' | sort").stdout.split("\n")).toEqual(["d 755 ", "d 755 d", "d 755 d/e", "f 644 d/e/f", "f 755 run.sh", ""]);
+		expect(made.container.shell("ls -A /tmp; echo ---; ls -A /dev/shm /dev/mqueue; echo ---; stat -c '%U %a' /tmp/home /tmp/matplotlib").stdout).toBe("home\nmatplotlib\n---\n/dev/mqueue:\n\n/dev/shm:\n---\nagent 755\nagent 755\n");
+		expect(made.container.shell("pgrep -u 1000 -c . || true; ipcs -m | grep -c agent || true").stdout).toBe("0\n0\n");
+
+		const next = { runId: uuid7(), attempt: 1 };
+		const acquired = await made.core.acquire(next, spec(), VERSION);
+		if (!("incarnation" in acquired)) throw new Error(JSON.stringify(acquired));
+		expect(made.container.started).toHaveLength(1);
+		const fresh = { ...next, incarnation: acquired.incarnation };
+		expect((await run(made.core, fresh, "cat d/e/f && ./run.sh && ls -A /tmp")).stdout).toBe("hi\nrun\nhome\nmatplotlib\n");
+		expect(await run(made.core, fence, "true")).toMatchObject({ result: { refused: "stale" } });
+	});
+
+	test("a hard link in the folder destroys the container instead", { timeout: 60_000 }, async () => {
+		const made = track(rig());
+		const fence = await ready(made);
+		expect((await run(made.core, fence, "echo a > a && ln a b && echo ok")).stdout).toBe("ok\n");
+		expect(await made.core.scan(fence, { rehashAll: true })).toMatchObject({ ok: true, warnings: { total: 0 } });
+		expect(await made.core.park(fence, VERSION)).toEqual({ parked: false });
+		expect(made.container.running).toBe(false);
+		expect(made.core.status()).toMatchObject({ state: "none", incarnation: null });
 	});
 });

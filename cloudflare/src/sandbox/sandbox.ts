@@ -10,10 +10,10 @@ import { type About, identity } from "../lib/about.ts";
 import { uuid7 } from "../lib/random.ts";
 import { durableSql } from "../lib/sql.ts";
 import { appliedMigrations, migrate } from "../lib/sqlite.ts";
-import type { AttemptFence, RunId } from "../shared/rpc.ts";
+import type { AttemptFence, RunId, VersionId } from "../shared/rpc.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "./commands.ts";
 import type { SandboxSpec } from "./constants.ts";
-import { type Lost, type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus } from "./core.ts";
+import { type Acquired, type Lost, type NotAcquired, type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus } from "./core.ts";
 import type { FsRequest, FsResponse } from "./files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "./folder.ts";
 import type { HardeningReport, VerificationReport } from "./hardening.ts";
@@ -121,6 +121,14 @@ export class Sandbox extends DurableObject<Env> implements SandboxApi {
 
 	async seal(runId: RunId): Promise<SealedSpans> {
 		return this.core.seal(runId);
+	}
+
+	async park(fence: SandboxFence, versionId: VersionId | null): Promise<{ parked: boolean } | Refused> {
+		return this.core.park(fence, versionId);
+	}
+
+	async acquire(fence: AttemptFence, spec: SandboxSpec, versionId: VersionId | null): Promise<Acquired | NotAcquired | Refused> {
+		return this.core.acquire(fence, spec, versionId);
 	}
 
 	async status(): Promise<SandboxStatus> {

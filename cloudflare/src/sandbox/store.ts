@@ -1,21 +1,24 @@
 // The Sandbox's durable state: one row, written before every step it describes (ARCHITECTURE.md: The sandbox
 // lifecycle). It names the container's incarnation, the run and attempt that own it (the newest the object
-// has seen, so an older attempt's call is refused), the hardening state, and a destroy still owed. Each
-// incarnation's span (when it started, its last lease, when and how it ended) changes with the row, in the
-// same transaction, and is what the run's container time is charged from.
+// has seen, so an older attempt's call is refused), the hardening state, a destroy still owed, and for a
+// parked container the version its folder holds. Each incarnation's span (when it started, its last lease,
+// when and how it ended) changes with the row, in the same transaction, and is what the run's container time
+// is charged from. An incarnation is one run's use of a container: parking ends it, and the next run that
+// acquires the container begins a new one.
 
 import { parseJson } from "../lib/json.ts";
 import { first, type Sql } from "../lib/sql.ts";
-import type { EpochMs, RunId } from "../shared/rpc.ts";
+import type { EpochMs, RunId, VersionId } from "../shared/rpc.ts";
 import { HARD_GRACE_MS, type SandboxSpec } from "./constants.ts";
 
 /**
- * `starting → hardening → verified → in_use → destroying`. Before `verified` no agent command or file
- * operation is admitted. A Sandbox Durable Object that restarts never reuses a running container it did
- * not verify in its current incarnation: it destroys it first. A failed `destroy()` leaves `cleanupPending`
- * and is retried by an alarm.
+ * `starting → hardening → verified → in_use → destroying`, or after a run's last checkpoint `in_use → parked`,
+ * and `parked → verified` for the conversation's next run. Before `verified`, and while `parked`, no agent
+ * command or file operation is admitted. A Sandbox Durable Object that restarts never reuses a running
+ * container it did not verify in its current incarnation: it destroys it first, but keeps a parked one, which
+ * is verified again when acquired. A failed `destroy()` leaves `cleanupPending` and is retried by an alarm.
  */
-export type SandboxState = "none" | "starting" | "hardening" | "verified" | "in_use" | "destroying";
+export type SandboxState = "none" | "starting" | "hardening" | "verified" | "in_use" | "parked" | "destroying";
 
 // The table's schema steps are in schema.ts, apart so the account tests (Node) can read their ids.
 export { SANDBOX_MIGRATIONS } from "./schema.ts";
@@ -34,6 +37,10 @@ export interface StateRow {
 	cleanupReason: string | null;
 	/** When the container is destroyed if nothing uses it. */
 	leaseUntil: number | null;
+	/** The SHA-256 of the hardening exec's argv, once it succeeded: a run whose spec asks for another never acquires the container. */
+	hardening: string | null;
+	/** The folder version a parked container holds; read only while `state` is `parked`. */
+	parkedVersion: VersionId | null;
 }
 
 type Raw = {
@@ -48,6 +55,8 @@ type Raw = {
 	cleanup_pending: number;
 	cleanup_reason: string | null;
 	lease_until: number | null;
+	hardening: string | null;
+	parked_version: string | null;
 };
 
 export const EMPTY: StateRow = {
@@ -62,6 +71,8 @@ export const EMPTY: StateRow = {
 	cleanupPending: false,
 	cleanupReason: null,
 	leaseUntil: null,
+	hardening: null,
+	parkedVersion: null,
 };
 
 export function readState(sql: Sql): StateRow {
@@ -79,28 +90,38 @@ export function readState(sql: Sql): StateRow {
 		cleanupPending: row.cleanup_pending === 1,
 		cleanupReason: row.cleanup_reason,
 		leaseUntil: row.lease_until,
+		hardening: row.hardening,
+		parkedVersion: row.state === "parked" ? row.parked_version : null,
 	};
 }
 
 /**
  * How an incarnation went away: `destroyed` when a destroy answered; `gone` when the object found the
- * container already stopped, which it learns only when it looks, so the span's end is when it noticed.
+ * container already stopped, which it learns only when it looks, so the span's end is when it noticed;
+ * `parked` when the run left the container for the conversation's next run.
  */
-export type SpanEnd = "destroyed" | "gone";
+export type SpanEnd = "destroyed" | "gone" | "parked";
 
 export type SpanChange =
 	| { kind: "open"; incarnation: string; runId: RunId; attempt: number; startedAt: EpochMs; leaseUntil: EpochMs }
 	| { kind: "lease"; incarnation: string; leaseUntil: EpochMs }
 	| { kind: "close"; incarnation: string; endedAt: EpochMs; ended: SpanEnd };
 
-/** What the state going from `previous` to `next` at `now` does to the spans; `ended` says why an incarnation went away. */
+/**
+ * What the state going from `previous` to `next` at `now` does to the spans; `ended` says why an incarnation went away.
+ * Parking closes the incarnation's span, so a parked row has none open: its time is no run's (ARCHITECTURE.md: The
+ * sandbox lifecycle, Container time), and the container going away from there, or to the next run, closes nothing.
+ */
 export function spanChange(previous: StateRow, next: StateRow, now: EpochMs, ended: SpanEnd | null): SpanChange[] {
 	const changes: SpanChange[] = [];
-	if (previous.incarnation !== null && previous.incarnation !== next.incarnation) {
-		if (ended === null) throw new Error(`The incarnation ${previous.incarnation} went away without saying how.`);
-		changes.push({ kind: "close", incarnation: previous.incarnation, endedAt: now, ended });
+	const open = previous.state === "parked" ? null : previous.incarnation;
+	if (open !== null && open !== next.incarnation) {
+		if (ended === null) throw new Error(`The incarnation ${open} went away without saying how.`);
+		changes.push({ kind: "close", incarnation: open, endedAt: now, ended });
+	} else if (open !== null && next.state === "parked") {
+		changes.push({ kind: "close", incarnation: open, endedAt: now, ended: "parked" });
 	}
-	if (next.incarnation === null) return changes;
+	if (next.incarnation === null || next.state === "parked") return changes;
 	if (next.incarnation !== previous.incarnation) {
 		const { runId, attempt, startedAt, leaseUntil } = next;
 		if (runId === null || attempt === null || startedAt === null || leaseUntil === null) throw new Error(`The incarnation ${next.incarnation} has no run, start or lease.`);
@@ -116,12 +137,12 @@ export function writeState(sql: Sql, state: StateRow, now: number, ended: SpanEn
 	sql.transaction(() => {
 		const changes = spanChange(readState(sql), state, now, ended);
 		sql.exec(
-			`INSERT INTO sandbox_state (id, state, incarnation, run_id, attempt, spec, hardened, started_at, verified_at, cleanup_pending, cleanup_reason, lease_until, updated_at)
-			 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO sandbox_state (id, state, incarnation, run_id, attempt, spec, hardened, started_at, verified_at, cleanup_pending, cleanup_reason, lease_until, updated_at, hardening, parked_version)
+			 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT (id) DO UPDATE SET state = excluded.state, incarnation = excluded.incarnation, run_id = excluded.run_id,
 			   attempt = excluded.attempt, spec = excluded.spec, hardened = excluded.hardened, started_at = excluded.started_at,
 			   verified_at = excluded.verified_at, cleanup_pending = excluded.cleanup_pending, cleanup_reason = excluded.cleanup_reason,
-			   lease_until = excluded.lease_until, updated_at = excluded.updated_at`,
+			   lease_until = excluded.lease_until, updated_at = excluded.updated_at, hardening = excluded.hardening, parked_version = excluded.parked_version`,
 			state.state,
 			state.incarnation,
 			state.runId,
@@ -134,6 +155,8 @@ export function writeState(sql: Sql, state: StateRow, now: number, ended: SpanEn
 			state.cleanupReason,
 			state.leaseUntil,
 			now,
+			state.hardening,
+			state.state === "parked" ? state.parkedVersion : null,
 		);
 		for (const change of changes) {
 			if (change.kind === "open") {
@@ -202,7 +225,7 @@ export interface ContainerCharge {
  * the alarm has destroyed it; an open span counts to that cutoff. The cutoff is a charging rule, not proof the
  * container stopped, so the charge is estimated when a span is open, `gone` (its end is when the object
  * noticed), or ended past the cutoff, and when the run was created before the object kept spans (or at that
- * same millisecond).
+ * same millisecond). A span ended `parked` is as exact as a destroyed one: the run's use ended when it parked.
  */
 export function containerCharge(sealed: SealedSpans, runCreatedAt: EpochMs): ContainerCharge {
 	let containerMs = 0;
@@ -211,7 +234,7 @@ export function containerCharge(sealed: SealedSpans, runCreatedAt: EpochMs): Con
 		const cutoff = span.leaseUntil + HARD_GRACE_MS;
 		const end = span.endedAt === null ? cutoff : Math.min(span.endedAt, cutoff);
 		containerMs += Math.max(0, end - span.startedAt);
-		if (span.ended !== "destroyed" || span.endedAt > cutoff) containerEstimated = true;
+		if ((span.ended !== "destroyed" && span.ended !== "parked") || span.endedAt > cutoff) containerEstimated = true;
 	}
 	return { containers: sealed.spans.length, containerMs, containerEstimated };
 }

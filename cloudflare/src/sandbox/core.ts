@@ -7,15 +7,24 @@
 // the newest one seen is refused too, so a late call from a replaced attempt can never touch the next
 // attempt's container. A destroy that fails stays owed (`cleanupPending`) and is retried by the alarm.
 //
+// After a run's last checkpoint the Conversation parks its container (`in_use → parked`): its processes are
+// killed and the folder is left as that checkpoint's version, with nothing else the agent wrote. A parked
+// container belongs to the conversation, not to a run, and admits nothing. The conversation's next run
+// acquires it (`parked → verified`) under a new incarnation, so every fence of the run that parked it is stale,
+// if it holds the version the run starts from and was hardened as the run asks; anything else destroys it, and
+// so does an idle PARKED_MS.
+//
 // When the object restarts (an eviction, a crash, a deploy) it has lost its exec handles. A running
-// container it had verified is verified again before its next use; one it had not is destroyed at once.
-// Commands and file operations run side by side; hydration, scans and checkpoints need the folder to
-// themselves and are refused (`busy`) while anything else runs, as the Conversation's barrier expects.
+// container it had verified is verified again before its next use, a parked one when it is acquired; any
+// other is destroyed at once. Commands and file operations run side by side; hydration, scans and
+// checkpoints need the folder to themselves and are refused (`busy`) while anything else runs, as the
+// Conversation's barrier expects.
 //
 // Each incarnation keeps a span (store.ts), closed with how it ended. Sealing a run, once it is over, refuses
-// its later starts, destroys its container and answers its spans: the run's container time.
+// its later starts, destroys its container unless it parked it, and answers its spans: the run's container time.
 
-import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
+import type { FolderWarnings } from "../files/manifest.ts";
+import type { AttemptFence, EpochMs, RunId, VersionId } from "../shared/rpc.ts";
 import { type ExecOutputSink, type ExecRequest, type ExecResult, type RunningCommand, runCommand } from "./commands.ts";
 import {
 	AGENT_CGROUP,
@@ -26,6 +35,7 @@ import {
 	IDLE_MS,
 	INSTANCE,
 	MAX_INACTIVITY_MS,
+	PARKED_MS,
 	type SandboxSpec,
 	workspaceBytes,
 } from "./constants.ts";
@@ -36,7 +46,10 @@ import {
 	type HardeningReport,
 	type VerificationReport,
 	hardeningArgv,
+	hardeningDigest,
 	hardeningReport,
+	PARK_LINKED,
+	parkArgv,
 	verificationArgv,
 	verificationReport,
 } from "./hardening.ts";
@@ -69,6 +82,11 @@ export type Refused = { refused: "stale" | "not_verified" | "busy"; message: str
  */
 export type Lost = { lost: string };
 
+/** A parked container taken for a new attempt, under a new incarnation, and how long its verification took. */
+export type Acquired = { incarnation: string; verifyMs: number };
+/** Nothing was parked, or what was parked could not be used (and is destroyed): the attempt starts a container. */
+export type NotAcquired = { acquired: false; reason: string };
+
 /**
  * The Sandbox Durable Object's RPC surface. A refusal for a fence that is not current is `{refused:
  * "stale"}`; before verification, `{refused: "not_verified"}`.
@@ -96,6 +114,18 @@ export interface SandboxApi {
 	 * alarm, so a destroy that keeps hanging delays a seal at most once.
 	 */
 	seal(runId: RunId): Promise<SealedSpans>;
+	/**
+	 * Leaves this incarnation's container for the conversation's next run, its folder made the version `versionId`
+	 * (the run's last checkpoint, else the version it started from). `{parked: false}` when it was destroyed instead:
+	 * work of the run still in flight, a folder the last scan could not fully see, a hard link, or a failed clean-up.
+	 * Idempotent for the same fence and version.
+	 */
+	park(fence: SandboxFence, versionId: VersionId | null): Promise<{ parked: boolean } | Refused>;
+	/**
+	 * Takes the parked container for this attempt if it holds `versionId` and was hardened as `spec` asks, and passes
+	 * its verification again; refused for a sealed run or an older attempt, as `start` is.
+	 */
+	acquire(fence: AttemptFence, spec: SandboxSpec, versionId: VersionId | null): Promise<Acquired | NotAcquired | Refused>;
 	status(): Promise<SandboxStatus>;
 }
 
@@ -107,6 +137,7 @@ const DESTROY_MS = 60_000;
 const KEEP_ALIVE_MS = 10_000;
 
 const STALE: Refused = { refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." };
+const PARKED_REASON = `The parked sandbox was not used for ${PARKED_MS / 60_000} minutes.`;
 const NOT_VERIFIED: Refused = { refused: "not_verified", message: "The sandbox is not ready." };
 const STOPPED: Refused = { refused: "not_verified", message: "The sandbox stopped." };
 const BUSY: Refused = { refused: "busy", message: "The sandbox is saving or loading the folder." };
@@ -114,6 +145,11 @@ const SEALED: Refused = { refused: "stale", message: "This run has ended." };
 
 function positiveInteger(value: unknown): boolean {
 	return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+/** Whether a scan left out anything but symbolic links and special files, which parking removes, or more than it lists. */
+function leavesOutMore(warnings: FolderWarnings): boolean {
+	return warnings.total > warnings.items.length || warnings.items.some((item) => item.reason !== "symlink" && item.reason !== "special");
 }
 
 /** Whether a spec's numbers make sense: the hardening writes them into mount options and cgroup files. */
@@ -158,8 +194,13 @@ class Generation {
 	#starting = 0;
 	#settled: (() => void)[] = [];
 	readonly commands = new Map<string, PendingCommand>();
-	/** The files the scan last hashed, so unchanged ones are not hashed again. */
+	/** The files the scan last hashed, so unchanged ones are not hashed again; it carries over to the run that acquires a parked container. */
 	index: FolderIndex = new Map();
+	/**
+	 * The folder holds nothing a parked folder cannot keep but links and special files: true for a hydrated or
+	 * acquired folder, then what the last scan found. A generation recovered after a restart does not know.
+	 */
+	scanClean = true;
 	/**
 	 * The regular files of the last scan and their sizes: what a checkpoint may read. Forgotten once anything
 	 * else is admitted, which might change the folder.
@@ -246,7 +287,7 @@ export class SandboxCore {
 	}
 
 	#gone(): StateRow {
-		return { ...this.#state, state: "none", incarnation: null, hardened: false, cleanupPending: false, cleanupReason: null, leaseUntil: null };
+		return { ...this.#state, state: "none", incarnation: null, hardened: false, cleanupPending: false, cleanupReason: null, leaseUntil: null, hardening: null, parkedVersion: null };
 	}
 
 	/** Lifecycle steps run one at a time; commands and file operations do not wait for each other. */
@@ -315,7 +356,10 @@ export class SandboxCore {
 		});
 	}
 
-	/** After a restart: a container verified before is verified again before it is used; any other is destroyed. */
+	/**
+	 * After a restart: a container verified before is verified again before it is used, a parked one when it is
+	 * acquired; any other is destroyed.
+	 */
 	async recover(): Promise<void> {
 		await this.#serial(async () => {
 			const container = this.#ports.container;
@@ -325,7 +369,12 @@ export class SandboxCore {
 				if ((state.state === "verified" || state.state === "in_use") && state.incarnation !== null) {
 					const generation = new Generation(state.incarnation);
 					generation.reverify = true;
+					// The last scan's warnings went with the previous instance: parking cannot trust the folder.
+					generation.scanClean = false;
 					this.#generation = generation;
+					await this.#keepAlive();
+				} else if (state.state === "parked" && state.incarnation !== null) {
+					this.#generation = new Generation(state.incarnation);
 					await this.#keepAlive();
 				} else {
 					await this.#destroyNow(`A container in state ${state.state} was running when the object started.`);
@@ -377,6 +426,8 @@ export class SandboxCore {
 				cleanupPending: false,
 				cleanupReason: null,
 				leaseUntil: this.#lease(spec, now),
+				hardening: null,
+				parkedVersion: null,
 			});
 			this.#forget();
 			this.#generation = new Generation(incarnation);
@@ -435,14 +486,13 @@ export class SandboxCore {
 				await this.#destroyNow(`The hardening failed at ${report.failed}.`);
 				return report;
 			}
-			this.#write({ ...this.#state, hardened: true });
+			this.#write({ ...this.#state, hardened: true, hardening: await hardeningDigest(state.spec, this.#cgroup) });
 			return report;
 		});
 	}
 
-	async #verification(): Promise<VerificationReport | Lost> {
+	async #verification(spec: SandboxSpec | null = this.#state.spec): Promise<VerificationReport | Lost> {
 		const machine = this.#machine();
-		const spec = this.#state.spec;
 		if (!machine || !spec) return { ok: false, checks: [{ name: "workspace_mount", ok: false, detail: "No container." }] };
 		const probe = wrapperArgv(this.#cgroup, { command: DROPPED_PROBE, cwd: "/", env: helperEnvironment(), timeoutSeconds: 10 });
 		try {
@@ -622,6 +672,7 @@ export class SandboxCore {
 			const { result, index } = await scan(machine, generation.index, limits, options.rehashAll === true);
 			if (index && generation.live) generation.index = index;
 			if (result.ok && generation.live) generation.scanned = new Map(Object.entries(result.sizes));
+			generation.scanClean = result.ok && !leavesOutMore(result.warnings);
 			return result;
 		});
 	}
@@ -676,8 +727,104 @@ export class SandboxCore {
 		return this.#serial(async () => {
 			sealRun(this.#ports.sql, runId, this.#ports.now());
 			const state = this.#state;
-			if (state.runId === runId && state.state !== "none" && !state.cleanupPending) await this.#destroyNow("The run has ended.");
+			// A parked container is the conversation's, waiting for its next run; the run's span closed when it parked.
+			if (state.runId === runId && state.state !== "none" && state.state !== "parked" && !state.cleanupPending) await this.#destroyNow("The run has ended.");
 			return readSpans(this.#ports.sql, runId);
+		});
+	}
+
+	park(fence: SandboxFence, versionId: VersionId | null): Promise<{ parked: boolean } | Refused> {
+		return this.#serial(async () => {
+			if (!this.#owns(fence)) return STALE;
+			const state = this.#state;
+			if (state.state === "parked" && state.parkedVersion === versionId) return { parked: true };
+			if (state.state === "parked") {
+				await this.#destroyNow("The run parked its sandbox again with another version.");
+				return { parked: false };
+			}
+			if (state.state !== "verified" && state.state !== "in_use") return NOT_VERIFIED;
+			const generation = this.#generation;
+			const machine = this.#machine(generation);
+			if (!generation || !machine || generation.incarnation !== fence.incarnation) return STOPPED;
+			// Something of the run still runs, or the folder may hold what the checkpoint did not save.
+			if (generation.inflight > 0 || generation.exclusive || generation.killing) {
+				await this.#destroyNow("Work of the run was still running when it parked its sandbox.");
+				return { parked: false };
+			}
+			if (!generation.scanClean) {
+				await this.#destroyNow("The folder's last scan left out entries a parked folder cannot keep.");
+				return { parked: false };
+			}
+			// Held for the clean-up, so nothing is admitted meanwhile.
+			generation.exclusive = true;
+			generation.scanned = null;
+			let failed: string | null;
+			try {
+				const result = await runRoot(machine, parkArgv(this.#cgroup), { timeoutMs: ROOT_MS });
+				if (result.exitCode === 0 && !result.timedOut) failed = null;
+				else if (result.exitCode === PARK_LINKED) failed = "A file in the folder has more than one link.";
+				else failed = `The sandbox could not be cleaned for parking (exit ${result.exitCode}): ${result.stderr.slice(-200)}`;
+			} catch (error) {
+				if (!(error instanceof ContainerGone)) throw error;
+				failed = "The container did not answer its parking.";
+			} finally {
+				generation.exclusive = false;
+			}
+			if (failed !== null) {
+				await this.#destroyNow(failed);
+				return { parked: false };
+			}
+			this.#write({ ...this.#state, state: "parked", parkedVersion: versionId, leaseUntil: this.#ports.now() + PARKED_MS });
+			await this.#keepAlive();
+			await this.#schedule();
+			this.#ports.log("sandbox parked", { version: versionId });
+			return { parked: true };
+		});
+	}
+
+	acquire(fence: AttemptFence, spec: SandboxSpec, versionId: VersionId | null): Promise<Acquired | NotAcquired | Refused> {
+		return this.#serial(async () => {
+			if (isSealed(this.#ports.sql, fence.runId)) return SEALED;
+			if (olderThan(fence, this.#state)) return STALE;
+			// The newest attempt seen, as a start writes it: a late call of an attempt it replaces is refused.
+			if (this.#state.runId !== fence.runId || this.#state.attempt !== fence.attempt) this.#write({ ...this.#state, runId: fence.runId, attempt: fence.attempt });
+			const state = this.#state;
+			const container = this.#ports.container;
+			if (state.state !== "parked" || !container) return { acquired: false, reason: "Nothing is parked." };
+			if (!container.running) {
+				this.#forget();
+				this.#write(this.#gone(), "gone");
+				await this.#schedule();
+				return { acquired: false, reason: "The parked container stopped." };
+			}
+			let refusal: string | null = null;
+			if (state.parkedVersion !== versionId) refusal = "The parked folder is not the version the run starts from.";
+			else if (!validSpec(spec) || state.hardening !== (await hardeningDigest(spec, this.#cgroup))) refusal = "The parked container was hardened differently from what the run asks.";
+			if (refusal !== null) {
+				await this.#destroyNow(refusal);
+				return { acquired: false, reason: refusal };
+			}
+			const started = this.#ports.now();
+			const report = await this.#verification(spec);
+			if ("lost" in report || !report.ok) {
+				const reason = "lost" in report ? report.lost : "The parked container failed its verification.";
+				await this.#destroyNow(reason);
+				return { acquired: false, reason };
+			}
+			const now = this.#ports.now();
+			const incarnation = this.#ports.id();
+			// Nothing changed the folder while it was parked, so the scan's index still vouches for its files.
+			const index = this.#generation?.index ?? new Map();
+			this.#write({ ...state, state: "verified", incarnation, spec, startedAt: now, verifiedAt: now, leaseUntil: this.#lease(spec, now), parkedVersion: null });
+			this.#forget();
+			const generation = new Generation(incarnation);
+			generation.index = index;
+			this.#generation = generation;
+			await this.#keepAlive();
+			await this.#schedule();
+			const verifyMs = now - started;
+			this.#ports.log("sandbox acquired", { verifyMs });
+			return { incarnation, verifyMs };
 		});
 	}
 
@@ -700,7 +847,8 @@ export class SandboxCore {
 					await this.#ports.alarm(Math.min(now + 60_000, state.leaseUntil + HARD_GRACE_MS));
 					return;
 				}
-				await this.#destroyNow(state.spec?.deadline ? "The run's deadline passed." : "The sandbox was not used for an hour.");
+				const reason = state.state === "parked" ? PARKED_REASON : state.spec?.deadline ? "The run's deadline passed." : "The sandbox was not used for an hour.";
+				await this.#destroyNow(reason);
 				return;
 			}
 			await this.#schedule();

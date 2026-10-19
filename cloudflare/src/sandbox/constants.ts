@@ -39,6 +39,11 @@ export const WORKSPACE = "/workspace";
 export const TMP = "/tmp";
 export const HOME = "/tmp/home";
 export const MPLCONFIGDIR = "/tmp/matplotlib";
+/**
+ * Where else the agent's user can write once the container is hardened, measured in the image under Docker:
+ * the shared memory and POSIX message queue mounts. Parking empties them with `/tmp`.
+ */
+export const AGENT_WRITABLE = ["/dev/shm", "/dev/mqueue"] as const;
 
 /** The cgroup every agent process runs in, with the limits of the spec; `cgroup.kill` ends them all. */
 export const AGENT_CGROUP = "/sys/fs/cgroup/agent";
@@ -79,6 +84,8 @@ export const KILL_AFTER_SECONDS = 5;
 
 /** How long a running container may go unused before the Sandbox destroys it, when its run has no deadline. */
 export const IDLE_MS = 60 * 60 * 1000;
+/** How long a parked container waits for the conversation's next run before the Sandbox destroys it. */
+export const PARKED_MS = 5 * 60_000;
 /** How long past its run's deadline a container is kept, for the run's last checkpoint. */
 export const DEADLINE_GRACE_MS = 2 * 60 * 1000;
 /** How long past its lease a container may stay for work that is still running; container time is charged to no later. */

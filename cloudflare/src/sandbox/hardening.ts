@@ -4,10 +4,12 @@
 // and memory limits, and `/` remounted read-only. It prints the step it starts before each, so a failure
 // names its step. A second root exec reports what holds afterwards, and this module decides from those
 // facts alone, in the Durable Object: any check that fails, or a report it cannot read, destroys the
-// container. Values are arguments of the scripts, never interpolated into them.
+// container. A third, parking, leaves a container as a fresh one hardened and hydrated would be, for the
+// conversation's next run. Values are arguments of the scripts, never interpolated into them.
 
 import { parseJson } from "../lib/json.ts";
-import { AGENT_GID, AGENT_UID, HOME, MPLCONFIGDIR, PYTHON, type SandboxSpec, TMP, WORKSPACE, workspaceBytes } from "./constants.ts";
+import { sha256Hex } from "../lib/hash.ts";
+import { AGENT_GID, AGENT_UID, AGENT_WRITABLE, HOME, MPLCONFIGDIR, PYTHON, type SandboxSpec, TMP, WORKSPACE, workspaceBytes } from "./constants.ts";
 
 /**
  * One root exec with `set -eu`: tmpfs `/workspace` (size, nr_inodes, uid 1000), tmpfs `/tmp` noexec,
@@ -90,6 +92,44 @@ export function hardeningArgv(spec: SandboxSpec, cgroup: string): string[] {
 		HOME,
 		MPLCONFIGDIR,
 	];
+}
+
+/**
+ * What a container was hardened with: the SHA-256 of the hardening exec's argv, which holds the script and every
+ * limit. A parked container is acquired only by a run whose spec gives the same.
+ */
+export function hardeningDigest(spec: SandboxSpec, cgroup: string): Promise<string> {
+	return sha256Hex(hardeningArgv(spec, cgroup).join("\0"));
+}
+
+/** The park exec's exit status when a regular file in the folder has more than one link. */
+export const PARK_LINKED = 3;
+
+// Parking, as root with `set -eu`, once the run's last checkpoint saved the folder. The agent's processes are killed
+// until its cgroup is empty, as `killStrays` does. A hard link fails it: hydration never makes one, and the scan
+// cannot see it. What a checkpoint never keeps goes: entries in the folder that are neither regular files nor
+// directories (found without following links), and whatever the agent left in `/tmp`, the other places it can
+// write (AGENT_WRITABLE) and System V IPC. Modes become hydration's, directories 0755 and files 0755 or 0644 by
+// their owner's execute bit (`00755` clears a directory's set-group-ID bit, which `0755` keeps), changed only where
+// they differ, so the scan's index still vouches for the other files. Then the home directories are made again.
+const PARK = [
+	"set -eu",
+	"cgroup=$0 workspace=$1 tmpdir=$2 home=$3 mpl=$4 uid=$5 gid=$6 linked=$7",
+	"shift 7",
+	'for i in $(seq 100); do echo 1 > "$cgroup/cgroup.kill"; grep -qx \'populated 0\' "$cgroup/cgroup.events" && break; [ "$i" -lt 100 ] || exit 1; sleep 0.05; done',
+	'[ -z "$(find -P "$workspace" -type f -links +1 -print -quit)" ] || exit "$linked"',
+	'find -P "$workspace" -mindepth 1 ! -type f ! -type d -delete',
+	'find -P "$workspace" -type d ! -perm 0755 -exec chmod 00755 {} +',
+	'find -P "$workspace" -type f -perm -u=x ! -perm 0755 -exec chmod 0755 {} +',
+	'find -P "$workspace" -type f ! -perm -u=x ! -perm 0644 -exec chmod 0644 {} +',
+	'for place in "$tmpdir" "$@"; do [ ! -d "$place" ] || find -P "$place" -mindepth 1 -delete; done',
+	"ipcrm --all",
+	'install -d -o "$uid" -g "$gid" -m 0755 "$home" "$mpl"',
+].join("\n");
+
+/** The park exec's argv, as root. */
+export function parkArgv(cgroup: string): string[] {
+	return ["/bin/bash", "-c", PARK, cgroup, WORKSPACE, TMP, HOME, MPLCONFIGDIR, String(AGENT_UID), String(AGENT_GID), String(PARK_LINKED), ...AGENT_WRITABLE];
 }
 
 /** The report of a hardening exec from its exit status and output: the step that failed is the last one it started. */

@@ -44,7 +44,7 @@ function scripted(storage: DurableObjectStorage, container: ScriptedContainer, a
 describe("the Sandbox object", () => {
 	test("its schema, its status, and a start without a container", async () => {
 		const stub = sandbox();
-		expect(await stub.about()).toMatchObject({ kind: "sandbox", migrations: [1, 2] });
+		expect(await stub.about()).toMatchObject({ kind: "sandbox", migrations: [1, 2, 3] });
 		expect(await stub.status()).toEqual({ state: "none", incarnation: null, runId: null, attempt: null, cleanupPending: false, startedAt: null });
 		expect(await stub.start({ runId: uuid7(), attempt: 1 }, SPEC)).toEqual({ failed: "This Worker has no container." });
 	});
@@ -59,6 +59,8 @@ describe("the Sandbox object", () => {
 		expect(await stub.scan(fence, { rehashAll: false })).toMatchObject({ refused: "stale" });
 		expect(await stub.killStrays(fence)).toMatchObject({ refused: "stale" });
 		expect(await stub.destroy(fence, "late")).toMatchObject({ refused: "stale" });
+		expect(await stub.park(fence, null)).toMatchObject({ refused: "stale" });
+		expect(await stub.acquire({ runId: fence.runId, attempt: 1 }, SPEC, null)).toEqual({ acquired: false, reason: "Nothing is parked." });
 		await stub.cancel(fence, "x");
 	});
 
@@ -94,6 +96,16 @@ describe("the Sandbox object", () => {
 			expect(container.verifications).toBe(2);
 			expect(await restarted.destroy(prepared.fence, "done")).toEqual({ destroyed: true });
 			expect(readState(durableSql(state.storage))).toMatchObject({ state: "none", incarnation: null });
+			// A container parked on the object's own SQLite, then acquired by the next run.
+			const parking = await prepareSandbox(restarted, { runId: uuid7(), attempt: 1 }, SPEC);
+			if (!parking.ok) throw new Error(parking.message);
+			expect(await restarted.park(parking.fence, null)).toEqual({ parked: true });
+			expect(readState(durableSql(state.storage))).toMatchObject({ state: "parked", parkedVersion: null });
+			const next = { runId: uuid7(), attempt: 1 };
+			const acquired = await restarted.acquire(next, SPEC, null);
+			if (!("incarnation" in acquired)) throw new Error(JSON.stringify(acquired));
+			expect(readState(durableSql(state.storage))).toMatchObject({ state: "verified", incarnation: acquired.incarnation, runId: next.runId });
+			expect(await restarted.destroy({ ...next, incarnation: acquired.incarnation }, "done")).toEqual({ destroyed: true });
 			expect(alarms.at(-1)).toBeNull();
 		});
 	});
