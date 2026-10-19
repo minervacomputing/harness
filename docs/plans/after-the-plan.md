@@ -1,6 +1,6 @@
 # Long conversations, a lasting sandbox and memory
 
-Status: proposed, 2026-10-15. Chunk 19a was built and verified on 2026-10-18 and is on `main`. Staging has run it since 2026-10-19 (deployed from `acc893a` with the owner's approval, and again from `6f3cec9`, whose engine differs only by a removed unit test); production gets it with a later deploy the owner approves. Chunk 19b was built and verified on 2026-10-19, after the pi 1.3.0 upgrade (`e698e51`), and staging has run it since that day (deployed from `3785328`). Chunk 19c, Laravel's half, is the app's `a278280`, on Laravel's staging since 2026-10-19. Production gets them with a later deploy the owner approves. Nothing else here is built. On 2026-10-19 the owner accepted the changes to Decisions 2 and 7 and to Retention, and armed the program without waiting for 15b's live box. It picks up where [product-and-engine.md](product-and-engine.md) ends (chunk 18). opencode reviewed the first draft and the snapshot chunk; their findings are folded in (Appendix A).
+Status: proposed, 2026-10-15. Chunk 19a was built and verified on 2026-10-18 and is on `main`. Staging has run it since 2026-10-19 (deployed from `acc893a` with the owner's approval, and again from `6f3cec9`, whose engine differs only by a removed unit test); production gets it with a later deploy the owner approves. Chunk 19b was built and verified on 2026-10-19, after the pi 1.3.0 upgrade (`e698e51`), and staging has run it since that day (deployed from `3785328`). Chunk 19c, Laravel's half, is the app's `a278280`, on Laravel's staging since 2026-10-19. Chunk 20, parking the sandbox between turns, was built on 2026-10-19 (`4758c91`, `a38150b`), and its live and perf checks passed on a test instance that day. Production gets them with a later deploy the owner approves. Nothing else here is built. On 2026-10-19 the owner accepted the changes to Decisions 2 and 7 and to Retention, and armed the program without waiting for 15b's live box. It picks up where [product-and-engine.md](product-and-engine.md) ends (chunk 18). opencode reviewed the first draft and the snapshot chunk; their findings are folded in (Appendix A).
 
 A long conversation should feel like one session with a computer that stays put, and Minerva should learn from conversations over time. Before chunk 19b each turn started a new pi session from the latest 20 messages, and each turn still rebuilds the sandbox from R2. This plan keeps one pi conversation per Minerva conversation (chunks 19a to 19c), keeps the sandbox parked between turns (20), restores a cold sandbox from a container snapshot (21), and adds memory held in Laravel (22 to 24). Throughout, a run is still one turn with its grants compiled when it starts, so strict revocation is unchanged.
 
@@ -190,53 +190,93 @@ The design was deleted once the chunk was built (`git show 3785328:docs/plans/ch
 
 **From 19a** (lines at `f888e7d`). The start's wait ends the previous run's pi tasks, not the commands those tasks started in the container, and a local tool's command can outlive its task. Stop them before the next run uses the parked container. Settlement would also lose a parked container. `#settleJob` seals the run (`conversation.ts:809`), and `seal` destroys the container while it still belongs to that run (`sandbox/core.ts:675` to `:680`), as `#cleanSandbox` does for ended runs (`conversation.ts:1190`). Define parking against `seal`, the container's spans and recovery's clean-up, and test a settlement before and after the next run takes the container.
 
+Built on 2026-10-19 in `4758c91` (the Sandbox) and `a38150b` (the Conversation), from a design opencode reviewed (`047eb6e`, deleted since). What stays true is in ARCHITECTURE.md (The sandbox lifecycle: Parking, Container time, When a container starts; Strict revocation).
+
 **Files.**
 
-- [ ] Edit `cloudflare/src/sandbox/core.ts`, `cloudflare/src/sandbox/constants.ts`, `cloudflare/src/conversation/local-run.ts`, the Conversation's `#prepareLocal` and its recovery cleanup.
-- [ ] Edit ARCHITECTURE.md (The sandbox lifecycle, Strict revocation, open question 2) and product-and-engine.md (Decision 2).
+- [x] Edit `cloudflare/src/sandbox/core.ts`, `cloudflare/src/sandbox/constants.ts`, `cloudflare/src/conversation/local-run.ts`, the Conversation's `#prepareLocal` and its recovery cleanup. Also `store.ts`, `schema.ts` (step 3), `hardening.ts` (the park exec) and `sandbox.ts`.
+- [x] Edit ARCHITECTURE.md (The sandbox lifecycle, Strict revocation, open question 2) and product-and-engine.md (Decision 2). Also README.md's sealed sandbox and docs/data-processing.md's Sandbox row.
 
 **Build.**
 
-- [ ] Add a `parked` state to the Sandbox's state machine. A container is parked only after the run's final checkpoint is recorded, the run's admission is sealed and its processes are killed. Parking also removes what the checkpoint does not keep (symbolic links, special files, `/tmp`), so a parked folder equals the committed version as a scan sees it.
-- [ ] The Conversation parks with an idempotent call fenced by run, attempt and incarnation, after it has committed the run's last checkpoint, naming the committed version. A run that changed nothing names its parent version. A cancel or a failed commit destroys the container instead. The Sandbox never infers the version from its own upload.
-- [ ] A parked container has its own idle deadline (start with 15 minutes) and remembers the image and hardening version it was verified under.
-- [ ] The next run acquires it in one step if the folder version, image and hardening version all match, and verifies it again. Anything else, including an object restart between pi settling and the final checkpoint, destroys it and starts fresh.
-- [ ] Start a container only for runs that may need it. Today every attempt prepares one while the model starts (`#prepareLocal` in `conversation.ts`), so a turn that only chats or calls apps still costs a container, and with parking it would hold one for the idle window too. An attempt prepares early only when the folder version it hydrates has files, which includes attachments. Otherwise the first local call starts the container and waits for it behind "Preparing files", which for an empty folder is the start, hardening and verification alone (about 2 s). A container already parked is acquired whatever the folder holds.
-- [ ] Deleting the conversation destroys a parked container, as chunk 12a's deletion does today. A revocation does not need to, since a container holds no credentials and the next run's grants are compiled anew. Write that in ARCHITECTURE.md's Strict revocation.
+- [x] Add a `parked` state to the Sandbox's state machine. A container is parked only after the run's final checkpoint is recorded, the run's admission is sealed and its processes are killed. Parking also removes what the checkpoint does not keep (symbolic links, special files, `/tmp`), so a parked folder equals the committed version as a scan sees it.
+  - The run itself is not sealed, since a new attempt of the same run may take the container. Instead a parked container admits nothing, and `acquire` gives it a new incarnation, so every fence of the parking run is stale.
+  - The park exec also empties `/dev/shm` and `/dev/mqueue` and removes System V IPC objects, every place uid 1000 can write after the hardening (measured under Docker). It sets hydration's modes. It refuses a hard link, which the scan cannot see.
+  - A container is destroyed instead of parked when work of the run is in flight, or when the last scan left out more than links and special files.
+- [x] The Conversation parks with an idempotent call fenced by run, attempt and incarnation, after it has committed the run's last checkpoint, naming the committed version. A run that changed nothing names its parent version. A cancel or a failed commit destroys the container instead. The Sandbox never infers the version from its own upload.
+  - The park comes after the final checkpoint and before the run counts as complete (`#settle`), since the run's end would otherwise destroy the container while it parks.
+  - A cancel or a failure during the turn destroys it, and so does a final checkpoint that failed.
+  - What lands after the park does not matter, because `publish` makes the parked version the conversation's folder however the run ends.
+- [x] A parked container has its own idle deadline (start with 15 minutes) and remembers the image and hardening version it was verified under.
+  - The deadline is 5 minutes (`PARKED_MS`), the owner's choice on 2026-10-19.
+  - The row records the SHA-256 of the hardening exec's argv, which covers the script and every limit.
+  - The image is not recorded. A deploy with a new image rolls running containers over, and an acquire verifies again (Accepted, 2).
+- [x] The next run acquires it in one step if the folder version, image and hardening version all match, and verifies it again. Anything else, including an object restart between pi settling and the final checkpoint, destroys it and starts fresh.
+- [x] Start a container only for runs that may need it. Today every attempt prepares one while the model starts (`#prepareLocal` in `conversation.ts`), so a turn that only chats or calls apps still costs a container, and with parking it would hold one for the idle window too. An attempt prepares early only when the folder version it hydrates has files, which includes attachments. Otherwise the first local call starts the container and waits for it behind "Preparing files", which for an empty folder is the start, hardening and verification alone (about 2 s). A container already parked is acquired whatever the folder holds.
+- [x] Deleting the conversation destroys a parked container, as chunk 12a's deletion does today. A revocation does not need to, since a container holds no credentials and the next run's grants are compiled anew. Write that in ARCHITECTURE.md's Strict revocation.
 
 **You see.**
 
-- [ ] The second of two turns a minute apart runs its first command without starting a container or hydrating the folder. The Sandbox's log shows an acquire and no start.
-- [ ] A turn that only answers in text, in a conversation with an empty folder, starts no container.
+- [x] The second of two turns a minute apart runs its first command without starting a container or hydrating the folder. The Sandbox's log shows an acquire and no start. In `test/account/park.test.ts`, on minerva-cf-test-19 on 2026-10-19:
+  - Over two turns, `local:prepared` (a start) fired once, in the first.
+  - `local:acquired` fired once, in the second.
+  - The second run's `run.settled` counted one container.
+- [x] A turn that only answers in text, in a conversation with an empty folder, starts no container. Its `run.settled` counted 0 containers and the Sandbox stayed `none` (`park.test.ts`).
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Sandbox core cases for park, acquire, the idle destroy, a version mismatch, and a late call from the earlier run. Run `pnpm test:unit` and `pnpm test:docker`.
-- [ ] Conversation cases for the lazy start. An attempt on an empty folder prepares nothing until its first local call, an attempt on a folder with files prepares at once, and a first local call on an empty folder waits for the start and succeeds. Run `pnpm test:platform`.
+- [x] Sandbox core cases for park, acquire, the idle destroy, a version mismatch, and a late call from the earlier run. Run `pnpm test:unit` and `pnpm test:docker`. Cases in `sandbox-core.test.ts` and `sandbox-spans.test.ts`:
+  - park, refused for a stale fence, and destroyed instead while work is in flight or after an unreadable entry;
+  - acquire, and acquire on a version or hardening mismatch, a failed verification or a stopped container;
+  - the idle alarm, and recovery of a parked container;
+  - a late exec, file operation and checkpoint from the parking fence;
+  - `seal` before and after the next run acquired, and the charge of two runs on one container;
+  - `destroyRunSandbox` leaving a parked container but for the deletion.
+
+  In the real image (`sandbox-local.test.ts`), parking removes a link and a FIFO, empties `/tmp` and `/dev/shm`, kills a `setsid` sleeper and refuses a hard link, and an acquired container verifies and runs a command. `pnpm test:unit` ran 2,832 tests and `pnpm test:docker` 58, all passing.
+- [x] Conversation cases for the lazy start. An attempt on an empty folder prepares nothing until its first local call, an attempt on a folder with files prepares at once, and a first local call on an empty folder waits for the start and succeeds. Run `pnpm test:platform`. In `local-tools.test.ts`, with two runs in a row where the second acquires and never starts, and a deletion destroying a parked container. `pnpm test:platform` ran 400 tests, all passing.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Regression against `main`. Update `turns.test.ts`, which asserts the container is destroyed after a turn, to assert it is parked, and pass it.
-- [ ] A deleted conversation leaves no container running.
-- [ ] An object restart after pi settles and before the final checkpoint destroys the container, and so does one between the commit and the park call.
-- [ ] A conversation that starts with an empty folder and asks for a file in its second turn gets the file. The first turn's log shows no container.
-- [ ] A symbolic link the agent made is gone after parking and absent from the next turn.
+- [ ] Regression against `main`. Update `turns.test.ts`, which asserts the container is destroyed after a turn, to assert it is parked, and pass it. Updated, with `faults.test.ts`, whose second turn now takes the parked container. The account drain now accepts a parked container. Both pass in `account.yml`'s run of every fault file.
+- [x] A deleted conversation leaves no container running. `park.test.ts`: the Sandbox is `none` and its container stopped once `deleteConversation` answers.
+- [x] An object restart after pi settles and before the final checkpoint destroys the container, and so does one between the commit and the park call. `park.test.ts` resets the object at the new fault points `local:finishing` and `local:parking`. Each turn completes with its file saved and its container destroyed.
+- [x] A conversation that starts with an empty folder and asks for a file in its second turn gets the file. The first turn's log shows no container. `park.test.ts`: 0 containers in the first `run.settled`, 1 in the second, and the folder holds the file.
+- [x] A symbolic link the agent made is gone after parking and absent from the next turn. `park.test.ts`: after a turn that made a link, a FIFO and a file in `/tmp`, the next turn lists only the regular file in `/workspace` and only the home directories in `/tmp`.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. Time from the run's start to the sandbox being ready for its first command, separate from model latency, in the second of two turns, with a folder of 500 files and 50 MiB in total.
-- [ ] Probe. The same two-turn script on `main` and on the head, on the test instance, interleaved three times.
-- [ ] Baseline. Record `main`'s time first.
-- [ ] Rule. The head's sandbox-ready time in the second turn is under 1 s. Over 1 s fails.
-- [ ] Metric. Containers started per 100 runs in the scripted conversations, with chat-only turns among them. Rule. A run that makes no local call on an empty folder starts none. One that does fails.
+- [x] Metric. Time from the run's start to the sandbox being ready for its first command, separate from model latency, in the second of two turns, with a folder of 500 files and 50 MiB in total. Measured as the gap between the starts of the second turn's two model calls, on the object's clock. The fake model answers its first call with a `read` of a note at once, so the gap is the sandbox's preparation and one read (`test/account/park-perf.test.ts`).
+- [x] Probe. The same two-turn script on `main` and on the head, on the test instance, interleaved three times. One round each on minerva-cf-test-19 on 2026-10-19, `main` (`047eb6e`'s engine) first, then the head (`a38150b`), each after `pnpm run deploy:test`. The three interleaved rounds were dropped by the owner's preference for short checks: a start and a 50 MiB hydration against an acquire leave no margin a repeat would change.
+- [x] Baseline. Record `main`'s time first. 21,359 ms.
+- [x] Rule. The head's sandbox-ready time in the second turn is under 1 s. Over 1 s fails. 489 ms. The whole second run took 635 ms, against 21,359 ms on `main`.
+- [x] Metric. Containers started per 100 runs in the scripted conversations, with chat-only turns among them. Rule. A run that makes no local call on an empty folder starts none. One that does fails. Checked on the rule alone: the chat-only run in `park.test.ts` counted 0 containers in its `run.settled`. The count per 100 runs was not scripted.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] opencode reviewed the design and the diff.
+  - **Design.** Five findings, four of which changed it: the clean-up runs before `parked` is written, modes and hard links are handled, an `acquire` to a Sandbox on the previous version falls back to a start, and a lazy start shows "Preparing files". The fifth, parking before the answer is validated, is safe, since the run keeps the parked version however it ends.
+  - **Diff.** No actionable findings.
+
+**Accepted, not fixed.**
+
+1. The time a container sits parked (up to 5 minutes of a `standard-1`) is charged to no run (the owner's choice). Charging the parking run would hold its settlement until the next turn or the deadline.
+2. The image is not stamped on a parked container. A deploy with a new image rolls running containers over. Within the rollout's window a parked container on the old image could be acquired once, and its verification still runs.
+3. Extended attributes the agent set stay on a parked folder, and a cold start would not have them. Nothing in the image reads them.
+4. After a rollback below this chunk, an older version that meets a parked row destroys the container, so only parking is lost. An older version's writes leave `hardening` as it was, so a container it started and hardened, then parked by this version, carries the digest of an earlier incarnation. That needs a rollback and a roll forward within one conversation's turns, and the acquire still verifies.
+5. A Sandbox object that restarted during a run no longer knows its last scan's warnings, so that run's container is destroyed rather than parked. The next turn starts cold.
+6. The park exec runs before a completed run counts as complete, which adds its time to the turn's end. It was not measured. The probe's single round per side cannot show a few hundred milliseconds: its first turn took 19.9 s on the head and 25.0 s on `main`.
 
 ## Restore a cold sandbox from a snapshot (chunk 21)
 
 **Depends on.** Chunk 20.
+
+**From 20.**
+
+- **Where to snapshot.** A parked container retires through the Sandbox's alarm at its lease, 5 minutes after its turn (`PARKED_MS`, `core.ts` `alarm`), so the snapshot belongs on that path.
+- **What the row knows.** The parked row already records the version its folder holds (`parked_version`) and the SHA-256 of its hardening argv (`hardening`), which the cache record can reuse. The image is not recorded.
+- **New states.** A `retiring` state, or any other new value of `state` or of a span's `ended`, means rebuilding the table again, since SQLite cannot widen a CHECK in place. Sandbox schema step 3 is the pattern: the same columns and keys, so the previous version's code still works.
+- **The folder at retire.** A parked folder is already the version, with hydration's modes and no links, special files or hard links. Only extended attributes remain (chunk 20, Accepted, 3).
 
 **Files.**
 
