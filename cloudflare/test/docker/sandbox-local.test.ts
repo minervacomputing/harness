@@ -3,8 +3,9 @@
 // operations through Files' sandbox-shim as the agent's user, pi's ExecutionEnv conformance suite (24 cases,
 // one skipped) over the adapter, the read tool's timings, killing strays, the fork and folder limits, and the
 // Sandbox fault rows of the plan (each hardening step failing, cgroup admission failing, a lost destroy, a
-// restart with a container still running), and parking a container for the next run. Hydration, scans and
-// checkpoints are folder.test.ts's. Skipped without Docker or the image: `pnpm sandbox:image` builds it.
+// restart with a container still running), parking a container for the next run, and retiring it with a snapshot
+// that a later start restores and seeds the folder from. Hydration, scans and checkpoints are folder.test.ts's.
+// Skipped without Docker or the image: `pnpm sandbox:image` builds it.
 
 import { getOrThrow, LineScanner } from "@earendil-works/pi-durable/env";
 import { createEnvConformance } from "@earendil-works/pi-durable/testing";
@@ -14,9 +15,11 @@ import { uuid7 } from "../../src/lib/random.ts";
 import { commandEnvironment, IDLE_MS, WORKSPACE } from "../../src/sandbox/constants.ts";
 import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
 import { SandboxExecutionEnv } from "../../src/sandbox/env.ts";
+import type { HydratePlan } from "../../src/sandbox/folder.ts";
 import type { Delivered } from "../../src/sandbox/output.ts";
 import type { ContainerPort } from "../../src/sandbox/ports.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
+import { readSnapshot, type SnapshotRecord, writeSnapshot } from "../../src/sandbox/store.ts";
 import { DockerContainer, dockerReady, plainSink, ready, type Rig, rig, run, spec } from "./sandbox-docker.ts";
 
 const READY = dockerReady();
@@ -418,7 +421,11 @@ describe.skipIf(!READY)("the Sandbox's fault rows", () => {
 			get running() {
 				return container.running;
 			},
+			get image() {
+				return container.image;
+			},
 			start: (options) => container.start(options),
+			snapshot: () => container.snapshot(),
 			exec: (argv, options) => {
 				const script = argv[2];
 				if (argv[0] === "/bin/bash" && typeof script === "string" && script.includes("step readonly_root")) {
@@ -572,5 +579,117 @@ describe.skipIf(!READY)("parking", () => {
 		expect(await made.core.park(fence, VERSION)).toEqual({ parked: false });
 		expect(made.container.running).toBe(false);
 		expect(made.core.status()).toMatchObject({ state: "none", incarnation: null });
+	});
+});
+
+describe.skipIf(!READY)("retiring and restoring", () => {
+	const VERSION = "0199b000-0000-7000-8000-0000000000b1";
+	/** Enough entries for the 300 files that make a folder worth a snapshot. */
+	const LIMITS = { folderBytes: 64 * MiB, folderEntries: 1000 };
+	/** Every extended attribute under `root`, ACLs included, as `path name` lines. */
+	const XATTRS = "import os, sys\nfor d, ds, fs in os.walk(sys.argv[1]):\n    for p in [d] + [os.path.join(d, f) for f in fs]:\n        for n in os.listxattr(p, follow_symlinks=False): print(p, n)";
+	const ARCHIVE = "/var/lib/minerva/folder.tar";
+
+	let made: Rig;
+	let core: SandboxCore;
+	let plan: HydratePlan;
+	let record: SnapshotRecord;
+
+	/** The plan a version of the folder as `scanned` would hydrate. */
+	function planOf(scanned: Awaited<ReturnType<SandboxCore["scan"]>>, versionId: string): HydratePlan {
+		if (!("ok" in scanned) || !scanned.ok) throw new Error(JSON.stringify(scanned));
+		const files = scanned.manifest.files.map((file) => ({ ...file, size: scanned.sizes[file.path] ?? 0, key: `k/${file.path}` }));
+		return { versionId, files, dirs: scanned.manifest.dirs };
+	}
+
+	/** A run's sandbox restored from the snapshot, hardened and verified; `change` runs as root on the restored archive first. */
+	async function restore(sandbox: SandboxCore, limits = LIMITS, change?: string): Promise<SandboxFence> {
+		const attempt = { runId: uuid7(), attempt: 1 };
+		const started = await sandbox.start(attempt, spec(limits), VERSION);
+		if (!("incarnation" in started)) throw new Error(JSON.stringify(started));
+		expect(started.restored).toBe(true);
+		if (change) expect(made.container.shell(change)).toMatchObject({ status: 0 });
+		const fence = { ...attempt, incarnation: started.incarnation };
+		expect(await sandbox.harden(fence)).toMatchObject({ ok: true });
+		expect(await sandbox.verify(fence)).toMatchObject({ ok: true });
+		return fence;
+	}
+
+	beforeAll(async () => {
+		made = track(rig());
+		core = new SandboxCore({ ...made.ports(), parkedMs: 0 });
+		const fence = await ready({ ...made, core }, LIMITS);
+		const wrote = await run(
+			core,
+			fence,
+			[
+				"mkdir -p many .git empty && for i in $(seq 300); do echo $i > many/$i; done",
+				"printf '[core]\\n' > .git/config && echo classified > secret.txt && chmod 0600 secret.txt && echo é > café.txt",
+				"python3 -c \"import os; os.setxattr('café.txt', 'user.origin', b'web')\" && echo ok",
+			].join(" && "),
+		);
+		expect(wrote.stdout).toBe("ok\n");
+		plan = planOf(await core.scan(fence, { rehashAll: true }), VERSION);
+		expect(await core.park(fence, VERSION)).toEqual({ parked: true });
+		await core.alarm();
+		const taken = readSnapshot(made.sql);
+		if (!taken) throw new Error(`no snapshot: ${made.logs.join(", ")}`);
+		record = taken;
+	}, 300_000);
+
+	test("a retired folder's snapshot restores it as the agent's, with hydration's modes and no extended attribute; the archive on the root disk is root's alone and holds none either", { timeout: 180_000 }, async () => {
+		expect(made.container.snapshots).toEqual([record.snapshotId]);
+		expect(core.status()).toMatchObject({ state: "none", snapshot: { versionId: VERSION, takenAt: record.takenAt } });
+		expect(plan.files.find((file) => file.path === "secret.txt")).toMatchObject({ mode: 0o644 });
+		expect(plan.dirs).toContain("empty");
+
+		const fence = await restore(core);
+		expect(made.container.started.at(-1)?.restore).toBe(record.snapshotId);
+		expect(await run(core, fence, "true")).toMatchObject({ result: { refused: "not_verified" } });
+		const seeded = await core.hydrate(fence, plan);
+		expect(seeded).toMatchObject({ ok: true, restored: { seedMs: expect.any(Number), checkMs: expect.any(Number) } });
+		expect(readSnapshot(made.sql)?.restoredAt).toEqual(expect.any(Number));
+
+		const listing = made.container.shell("find /workspace -mindepth 1 -not -path '/workspace/many/*' -printf '%u %y %m %P\\n' | sort").stdout;
+		expect(listing.split("\n")).toEqual(["agent d 755 .git", "agent d 755 empty", "agent d 755 many", "agent f 644 .git/config", "agent f 644 café.txt", "agent f 644 secret.txt", ""]);
+		expect(made.container.shell("find /workspace/many -type f -printf '%u %m\\n' | sort | uniq -c").stdout.trim()).toBe("300 agent 644");
+		expect(made.container.shell(`/usr/bin/python3 -I -c "${XATTRS}" /workspace`).stdout).toBe("");
+		// GNU tar stores extended attributes, ACLs and SELinux labels as SCHILY.* and RHT.* pax records.
+		expect(made.container.shell(`stat -c '%U %a' /var/lib/minerva ${ARCHIVE}; grep -ac -e SCHILY -e RHT ${ARCHIVE} || true`).stdout).toBe("root 700\nroot 600\n0\n");
+		expect((await run(core, fence, "cat .git/config café.txt secret.txt; ls /var/lib/minerva 2>&1")).stdout).toBe("[core]\né\nclassified\nls: cannot open directory '/var/lib/minerva': Permission denied\n");
+		expect(await core.destroy(fence, "turn over")).toEqual({ destroyed: true });
+	});
+
+	for (const [name, change, difference] of [
+		["an extra file", `echo stray > /tmp/stray.txt && tar -r -f ${ARCHIVE} --format=pax -C /tmp stray.txt`, '"stray.txt" (extra file)'],
+		["a changed byte", `/usr/bin/python3 -I -c 'import sys; f = open(sys.argv[1], "r+b"); f.seek(f.read().index(b"classified")); f.write(b"C")' ${ARCHIVE}`, '"secret.txt" (sha256)'],
+	] as const) {
+		test(`an archive with ${name} fails the check, destroys the container and drops the record`, { timeout: 180_000 }, async () => {
+			writeSnapshot(made.sql, record);
+			const fence = await restore(core, LIMITS, change);
+			expect(await core.hydrate(fence, plan)).toEqual({ ok: false, reason: "restore_failed", message: `The restored folder differs from the plan at ${difference}.` });
+			expect(core.status()).toMatchObject({ state: "none", snapshot: null });
+			expect(made.container.running).toBe(false);
+		});
+	}
+
+	test("timings: the seed and the check of a 200 MB file", { timeout: 300_000 }, async () => {
+		const big = track(rig());
+		const sandbox = new SandboxCore({ ...big.ports(), parkedMs: 0 });
+		const limits = { folderBytes: 256 * MiB, folderEntries: 100 };
+		const fence = await ready({ ...big, core: sandbox }, limits);
+		expect((await run(sandbox, fence, "head -c 200000000 /dev/urandom > big.bin && echo ok", { timeoutSeconds: 120 })).stdout).toBe("ok\n");
+		const bigPlan = planOf(await sandbox.scan(fence, { rehashAll: true }), VERSION);
+		expect(await sandbox.park(fence, VERSION)).toEqual({ parked: true });
+		const retiring = performance.now();
+		await sandbox.alarm();
+		const retireMs = Math.round(performance.now() - retiring);
+		expect(sandbox.status().snapshot).toMatchObject({ versionId: VERSION });
+		const restoring = performance.now();
+		const restored = await restore(sandbox, limits);
+		const restoreMs = Math.round(performance.now() - restoring);
+		const seeded = await sandbox.hydrate(restored, bigPlan);
+		if (!("ok" in seeded) || !seeded.ok || !seeded.restored) throw new Error(JSON.stringify(seeded));
+		console.log(`timings (ms), 200 MB: retire (archive and docker commit) ${retireMs}; restore (start, harden, verify) ${restoreMs}; seed ${seeded.restored.seedMs}; check ${seeded.restored.checkMs}`);
 	});
 });

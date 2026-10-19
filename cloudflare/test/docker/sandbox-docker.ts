@@ -6,7 +6,9 @@
 // its process (exit 137).
 //
 // By default the container is privileged (the hardening mounts and remounts) and shares the Docker host's
-// cgroup tree, so the agent cgroup is a unique one under the host's root, removed when the container is.
+// cgroup tree, so the agent cgroup is a unique one under the host's root, removed when the container is. A snapshot
+// is a `docker commit`, which keeps the container's own layer and no mount made inside it, as the platform's keeps
+// the root disk and no tmpfs; a restore runs the committed image.
 // `runtime: "workerd"` starts it instead as the offline dev server's workerd does: SYS_ADMIN, /dev/fuse and
 // AppArmor unconfined, in its own read-only cgroup namespace, with the agent cgroup at its usual path.
 //
@@ -131,7 +133,9 @@ export class DockerContainer implements ContainerPort {
 	#execs = 0;
 	/** Set to make the next destroys fail, as a lost `destroy()` would. */
 	failDestroys = 0;
-	readonly started: { labels: { [name: string]: string } }[] = [];
+	readonly started: { labels: { [name: string]: string }; restore?: string }[] = [];
+	/** The images its snapshots committed, which `remove` deletes. */
+	readonly snapshots: string[] = [];
 
 	constructor(image = LOCAL_IMAGE, runtime: DockerRuntime = "privileged") {
 		const id = `${Date.now().toString(36)}${(++counter).toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
@@ -145,12 +149,25 @@ export class DockerContainer implements ContainerPort {
 		return this.#running;
 	}
 
-	start(options: { enableInternet: false; instance: "standard-1"; labels: { [name: string]: string } }): void {
-		this.started.push({ labels: options.labels });
+	get image(): string {
+		return this.#image;
+	}
+
+	start(options: { enableInternet: false; instance: "standard-1"; labels: { [name: string]: string }; restore?: string }): void {
+		this.started.push({ labels: options.labels, ...(options.restore === undefined ? {} : { restore: options.restore }) });
 		docker(["rm", "-f", this.name]);
-		const result = docker(["run", "-d", "--name", this.name, ...RUN_FLAGS[this.#runtime], "--network", "none", this.#image]);
+		const result = docker(["run", "-d", "--name", this.name, ...RUN_FLAGS[this.#runtime], "--network", "none", options.restore ?? this.#image]);
 		if (result.status !== 0) throw new Error(`docker run failed: ${decoder.decode(result.stderr)}`);
 		this.#running = true;
+	}
+
+	async snapshot(): Promise<{ id: string; size: number }> {
+		const id = `${this.name}-snapshot-${this.snapshots.length + 1}`;
+		const committed = docker(["commit", this.name, id]);
+		if (committed.status !== 0) throw new Error(`docker commit failed: ${decoder.decode(committed.stderr)}`);
+		this.snapshots.push(id);
+		const size = docker(["image", "inspect", "--format", "{{.Size}}", id]);
+		return { id, size: Number(decoder.decode(size.stdout).trim()) };
 	}
 
 	/** Runs a root shell command in the container directly, outside the Sandbox (test setup and checks). */
@@ -223,11 +240,17 @@ export class DockerContainer implements ContainerPort {
 			this.failDestroys--;
 			throw new Error("destroy failed (injected)");
 		}
-		this.remove();
+		this.discard();
+	}
+
+	/** Removes the container, its agent cgroup and the images its snapshots committed. */
+	remove(): void {
+		this.discard();
+		for (const id of this.snapshots.splice(0)) docker(["rmi", "-f", id]);
 	}
 
 	/** Removes the container and its agent cgroup. */
-	remove(): void {
+	discard(): void {
 		if (this.#running || docker(["inspect", this.name]).status === 0) {
 			docker([
 				"exec",

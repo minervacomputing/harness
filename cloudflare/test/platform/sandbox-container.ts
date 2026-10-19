@@ -28,6 +28,8 @@ function finished(stdout: string, exitCode: number): ExecProcess {
 
 export class ScriptedContainer implements ContainerPort {
 	running = false;
+	/** No image's name: its parked container retires without a snapshot, as one started from an unnamed image would. */
+	readonly image = "";
 	verifications = 0;
 	readonly #spec: SandboxSpec;
 
@@ -82,4 +84,8 @@ export class ScriptedContainer implements ContainerPort {
 	}
 
 	async setInactivityTimeout(): Promise<void> {}
+
+	async snapshot(): Promise<never> {
+		throw new Error("The scripted container takes no snapshots.");
+	}
 }

@@ -44,8 +44,8 @@ function scripted(storage: DurableObjectStorage, container: ScriptedContainer, a
 describe("the Sandbox object", () => {
 	test("its schema, its status, and a start without a container", async () => {
 		const stub = sandbox();
-		expect(await stub.about()).toMatchObject({ kind: "sandbox", migrations: [1, 2, 3] });
-		expect(await stub.status()).toEqual({ state: "none", incarnation: null, runId: null, attempt: null, cleanupPending: false, startedAt: null });
+		expect(await stub.about()).toMatchObject({ kind: "sandbox", migrations: [1, 2, 3, 4] });
+		expect(await stub.status()).toEqual({ state: "none", incarnation: null, runId: null, attempt: null, cleanupPending: false, startedAt: null, snapshot: null });
 		expect(await stub.start({ runId: uuid7(), attempt: 1 }, SPEC)).toEqual({ failed: "This Worker has no container." });
 	});
 

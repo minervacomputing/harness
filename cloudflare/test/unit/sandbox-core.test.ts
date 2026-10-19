@@ -7,15 +7,17 @@
 import { describe, expect, test, vi } from "vitest";
 import { uuid7 } from "../../src/lib/random.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
-import { DEADLINE_GRACE_MS, IDLE_MS, PARKED_MS, sandboxSpec, type SandboxSpec, WORKSPACE } from "../../src/sandbox/constants.ts";
+import { DEADLINE_GRACE_MS, IDLE_MS, PARKED_MS, sandboxSpec, type SandboxSpec, SNAPSHOT_AGE_MS, WORKSPACE } from "../../src/sandbox/constants.ts";
 import { SandboxCore, type SandboxFence } from "../../src/sandbox/core.ts";
-import { PARK_LINKED } from "../../src/sandbox/hardening.ts";
+import { PARK_LINKED, RETIRE_SMALL, retireArgv, SEED } from "../../src/sandbox/hardening.ts";
 import type { ContainerPort, SandboxPorts } from "../../src/sandbox/ports.ts";
 import { prepareSandbox } from "../../src/sandbox/session.ts";
-import { containerCharge, readSpans, readState, SANDBOX_MIGRATIONS, type SealedSpans } from "../../src/sandbox/store.ts";
+import type { HydratePlan } from "../../src/sandbox/folder.ts";
+import { containerCharge, readSnapshot, readSpans, readState, SANDBOX_MIGRATIONS, type SealedSpans, writeSnapshot } from "../../src/sandbox/store.ts";
 import { openDatabase } from "./sqlite.ts";
 
 const CGROUP = "/sys/fs/cgroup/agent";
+const RETIRE_SCRIPT = retireArgv(CGROUP)[2];
 const SPEC = sandboxSpec({ id: "w", jurisdiction: null }, "c", { folderBytes: 1 << 20, folderEntries: 50 }, null);
 
 function stream(text: string): ReadableStream<Uint8Array> {
@@ -82,7 +84,10 @@ function facts(spec: SandboxSpec): string {
 
 class ScriptedContainer implements ContainerPort {
 	running = false;
+	image = "minerva-sandbox:1";
 	starts = 0;
+	/** The snapshot each start restored, or null for one from the image. */
+	readonly restores: (string | null)[] = [];
 	verifications = 0;
 	failDestroys = 0;
 	ready = true;
@@ -102,6 +107,17 @@ class ScriptedContainer implements ContainerPort {
 	hangKeepAlive = false;
 	/** The park exec's exit status. */
 	parkExit = 0;
+	/** The retire exec's exit status: a folder too small for a snapshot unless a test says otherwise. */
+	retireExit = RETIRE_SMALL;
+	/** While set, the retire exec answers only once it resolves. */
+	retireGate: Promise<void> | null = null;
+	/** While set, a snapshot answers only once it resolves; `hang` never answers. */
+	snapshotGate: Promise<void> | "hang" | null = null;
+	failSnapshots = false;
+	readonly snapshots: string[] = [];
+	/** The seed exec's exit status, and while `seedGate` is set it answers only once that resolves. */
+	seedExit = 0;
+	seedGate: Promise<void> | null = null;
 	/** A verification whose report says nothing it can read. */
 	failVerification = false;
 	readonly destroyReasons: string[] = [];
@@ -116,15 +132,37 @@ class ScriptedContainer implements ContainerPort {
 	readonly log: string[] = [];
 	#spec: SandboxSpec | null = null;
 
-	start(): void {
+	start(options: { restore?: string }): void {
 		this.starts++;
+		this.restores.push(options.restore ?? null);
 		this.running = true;
+	}
+
+	async snapshot(name: string): Promise<{ id: string; size: number }> {
+		this.log.push("snapshot");
+		const gate = this.snapshotGate;
+		if (gate === "hang") return await new Promise<never>(() => {});
+		if (gate) await gate;
+		if (this.failSnapshots) throw new Error("The snapshot failed.");
+		const id = `snapshot-${this.snapshots.length + 1}`;
+		this.snapshots.push(`${id} ${name}`);
+		return { id, size: 4096 };
 	}
 
 	async exec(argv: string[]): Promise<ExecProcess> {
 		if (!this.running || this.lostOnExec) throw new Error("exec() cannot be called on a container that is not running");
 		const script = argv[2] ?? "";
 		if (argv[0] === "/bin/true") return process("", this.ready ? 0 : 1);
+		if (script === RETIRE_SCRIPT) {
+			this.log.push("retire");
+			if (this.retireGate) await this.retireGate;
+			return process("", this.retireExit);
+		}
+		if (script === SEED) {
+			this.log.push("seed");
+			if (this.seedGate) await this.seedGate;
+			return process("", this.seedExit);
+		}
 		if (argv[0] === "/bin/bash" && script.includes("step readonly_root")) {
 			this.log.push("harden");
 			if (this.hangHardenings > 0) {
@@ -255,6 +293,10 @@ async function outwait<T>(promise: Promise<T>): Promise<T> {
 
 const command = (made: Rig, fence: SandboxFence, execId = uuid7()) =>
 	made.core.exec(fence, { execId, command: "true", cwd: WORKSPACE, env: {}, timeoutSeconds: 10 }, null);
+
+/** What `find` would list of the folder: each entry's flag (`r` readable, `u` not), type, mode and path. */
+const listing = (...entries: [flag: string, type: string, mode: string, path: string][]) =>
+	`1800000000000000000\n${entries.map(([flag, type, mode, path]) => [flag, type, "1", "1700000000.0", "1700000000.0", "12", "34", mode, `${WORKSPACE}/${path}`, ""].join("\0")).join("")}`;
 
 describe("the lifecycle", () => {
 	test("start, harden and verify, each state written before its step", async () => {
@@ -895,6 +937,28 @@ describe("spans and seals", () => {
 		expect(readSpans(sql, earlier).spans).toEqual([{ startedAt: T0 - MINUTE, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "destroyed" }]);
 		expect(readSpans(sql, prepared.fence.runId).spans).toEqual([{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "parked" }]);
 	});
+
+	test("step 4 keeps a parked row's digest, version and closed span, and starts with no snapshot", async () => {
+		const sql = sqliteSql(openDatabase());
+		migrate(sql, SANDBOX_MIGRATIONS.slice(0, 3), 0);
+		const parking = uuid7(T0 - MINUTE);
+		const version = "0199b000-0000-7000-8000-0000000000a1";
+		const digest = "d".repeat(64);
+		sql.exec(
+			"INSERT INTO sandbox_state (id, state, incarnation, run_id, attempt, hardened, started_at, lease_until, updated_at, hardening, parked_version) VALUES (1, 'parked', 'old', ?, 1, 1, ?, ?, ?, ?, ?)",
+			parking,
+			T0 - MINUTE,
+			T0 + PARKED_MS,
+			T0,
+			digest,
+			version,
+		);
+		sql.exec("INSERT INTO container_spans (incarnation, run_id, attempt, started_at, lease_until, ended_at, ended) VALUES ('old', ?, 1, ?, ?, ?, 'parked')", parking, T0 - MINUTE, T0 + IDLE_MS, T0);
+		migrate(sql, SANDBOX_MIGRATIONS, T0);
+		expect(readState(sql)).toMatchObject({ state: "parked", incarnation: "old", runId: parking, hardening: digest, parkedVersion: version, leaseUntil: T0 + PARKED_MS, restoring: null });
+		expect(readSpans(sql, parking).spans).toEqual([{ startedAt: T0 - MINUTE, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "parked" }]);
+		expect(readSnapshot(sql)).toBeNull();
+	});
 });
 
 describe("parking", () => {
@@ -909,10 +973,6 @@ describe("parking", () => {
 		expect(await made.core.park(fence, version)).toEqual({ parked: true });
 		return fence;
 	}
-
-	/** What `find` would list of the folder: each entry's flag (`r` readable, `u` not), type, mode and path. */
-	const listing = (...entries: [flag: string, type: string, mode: string, path: string][]) =>
-		`1800000000000000000\n${entries.map(([flag, type, mode, path]) => [flag, type, "1", "1700000000.0", "1700000000.0", "12", "34", mode, `${WORKSPACE}/${path}`, ""].join("\0")).join("")}`;
 
 	test("a parked container admits nothing, and the next run acquires it without a start", async () => {
 		const made = rig();
@@ -986,7 +1046,8 @@ describe("parking", () => {
 	test("acquire destroys a parked container of another version, hardened differently or failing its verification, and forgets a stopped one", async () => {
 		const cases: { name: string; change(made: Rig): void; spec?: SandboxSpec; version?: string; reason: string }[] = [
 			{ name: "version", change: () => {}, version: "0199b000-0000-7000-8000-0000000000a2", reason: "The parked folder is not the version the run starts from." },
-			{ name: "hardening", change: () => {}, spec: { ...SPEC, folderEntries: 60 }, reason: "The parked container was hardened differently from what the run asks." },
+			{ name: "hardening", change: () => {}, spec: { ...SPEC, folderEntries: 60 }, reason: "The parked container was started or hardened differently from what the run asks." },
+			{ name: "image", change: (made) => (made.container.image = "minerva-sandbox:2"), reason: "The parked container was started or hardened differently from what the run asks." },
 			{ name: "verification", change: (made) => (made.container.failVerification = true), reason: "The parked container failed its verification." },
 		];
 		for (const entry of cases) {
@@ -1095,5 +1156,304 @@ describe("parking", () => {
 		await made.restart();
 		expect(await made.core.park(fence, V1)).toEqual({ parked: false });
 		expect(made.container.destroyReasons).toEqual(["The folder's last scan left out entries a parked folder cannot keep."]);
+	});
+});
+
+describe("retiring and restoring", () => {
+	const T0 = 1_800_000_000_000;
+	const MINUTE = 60_000;
+	const V1 = "0199b000-0000-7000-8000-0000000000a1";
+	const V2 = "0199b000-0000-7000-8000-0000000000a2";
+	const RETIRED = "The parked sandbox was not used for 5 minutes.";
+	/** The version the tests restore: one empty directory, which the scripted scan lists after the seed. */
+	const PLAN: HydratePlan = { versionId: V1, files: [], dirs: ["d"] };
+	const SEEDED = { stdout: listing(["r", "d", "755", "d"]), exitCode: 0, admitted: true };
+
+	/** A run's container, parked with `version`, at its parked lease. */
+	async function parkedUntil(made: Rig, version = V1): Promise<SandboxFence> {
+		const fence = await ready(made);
+		expect(await made.core.park(fence, version)).toEqual({ parked: true });
+		made.clock.now += PARKED_MS;
+		return fence;
+	}
+
+	/** A rig whose parked container retired with a snapshot of V1. */
+	async function retired(): Promise<Rig> {
+		const made = rig();
+		made.container.retireExit = 0;
+		await parkedUntil(made);
+		await made.core.alarm();
+		expect(made.core.status().snapshot).toEqual({ versionId: V1, takenAt: T0 + PARKED_MS });
+		return made;
+	}
+
+	/** A start of a new attempt for `version`, then its hardening and verification. */
+	async function started(made: Rig, version: string | null = V1, fence: { runId: string; attempt: number } = { runId: uuid7(), attempt: 1 }) {
+		const answer = await made.core.start(fence, SPEC, version);
+		if (!("incarnation" in answer)) throw new Error(JSON.stringify(answer));
+		const own: SandboxFence = { ...fence, incarnation: answer.incarnation };
+		expect(await made.core.harden(own)).toMatchObject({ ok: true });
+		expect(await made.core.verify(own)).toMatchObject({ ok: true });
+		return { fence: own, restored: answer.restored };
+	}
+
+	const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+	test("a parked container retires at its lease with a snapshot of its folder, which the record keeps, and is destroyed", async () => {
+		const made = rig();
+		made.container.retireExit = 0;
+		await parkedUntil(made);
+		await made.core.alarm();
+		expect(made.container.log.slice(-3)).toEqual(["retire", "snapshot", "destroy"]);
+		expect(made.container.snapshots).toEqual([`snapshot-1 ${V1}`]);
+		expect(made.container.destroyReasons).toEqual([RETIRED]);
+		expect(made.core.status()).toMatchObject({ state: "none", incarnation: null, snapshot: { versionId: V1, takenAt: T0 + PARKED_MS } });
+		expect(readSnapshot(made.sql)).toEqual({ snapshotId: "snapshot-1", versionId: V1, digest: expect.stringMatching(/^[0-9a-f]{64}$/), format: expect.stringMatching(/^[0-9a-f]{64}$/), takenAt: T0 + PARKED_MS, restoredAt: null });
+		expect(made.alarms.at(-1)).toBeNull();
+	});
+
+	test("a small folder, a version already recorded, an outdated digest and an image without a name take no snapshot", async () => {
+		const small = rig();
+		await parkedUntil(small);
+		await small.core.alarm();
+		expect(small.container.log).toContain("retire");
+		expect(small.container.snapshots).toEqual([]);
+		expect(small.core.status()).toMatchObject({ state: "none", snapshot: null });
+
+		const recorded = await retired();
+		await parkedUntil(recorded);
+		const before = recorded.container.log.length;
+		await recorded.core.alarm();
+		expect(recorded.container.log.slice(before)).toEqual(["destroy"]);
+		expect(recorded.container.snapshots).toHaveLength(1);
+
+		for (const image of ["minerva-sandbox:2", ""]) {
+			const changed = rig();
+			changed.container.retireExit = 0;
+			await parkedUntil(changed);
+			changed.container.image = image;
+			const kept = changed.container.log.length;
+			await changed.core.alarm();
+			expect(changed.container.log.slice(kept), image).toEqual(["destroy"]);
+			expect(changed.core.status(), image).toMatchObject({ state: "none", snapshot: null });
+		}
+	});
+
+	test("a start during the retire's archive or its snapshot leaves the new container alone and no record, whether the retire then answers or fails", async () => {
+		const cases = [
+			{ at: "retire", fails: false },
+			{ at: "retire", fails: true },
+			{ at: "snapshot", fails: false },
+			{ at: "snapshot", fails: true },
+		] as const;
+		for (const { at, fails } of cases) {
+			const name = `${at}, ${fails ? "failing" : "answering"}`;
+			const made = rig();
+			made.container.retireExit = 0;
+			let release = () => {};
+			const gate = new Promise<void>((resolve) => (release = resolve));
+			if (at === "retire") made.container.retireGate = gate;
+			else made.container.snapshotGate = gate;
+			await parkedUntil(made);
+			const alarm = made.core.alarm();
+			await tick();
+			expect(made.container.log.at(-1), name).toBe(at);
+			expect(made.core.status().state, name).toBe("retiring");
+
+			const next = await made.core.start({ runId: uuid7(), attempt: 1 }, SPEC, V1);
+			expect(next, name).toEqual({ incarnation: expect.any(String), restored: false });
+			if (fails && at === "retire") made.container.retireExit = 1;
+			if (fails && at === "snapshot") made.container.failSnapshots = true;
+			release();
+			await alarm;
+			expect(readSnapshot(made.sql), name).toBeNull();
+			expect(made.container.running, name).toBe(true);
+			expect(made.container.destroyReasons, name).toEqual(["Replaced by a new start."]);
+			expect(made.core.status(), name).toMatchObject({ state: "starting", incarnation: (next as { incarnation: string }).incarnation });
+			// The port is the object's: an archive that answers after the start never snapshots the new container.
+			if (at === "retire") expect(made.container.log, name).not.toContain("snapshot");
+		}
+	});
+
+	test("a snapshot that never answers ends at the retire's deadline, and an object restarted while retiring destroys the container; neither records it", async () => {
+		vi.useFakeTimers();
+		try {
+			const made = rig();
+			made.container.retireExit = 0;
+			made.container.snapshotGate = "hang";
+			await parkedUntil(made);
+			await outwait(made.core.alarm());
+			expect(made.container.destroyReasons).toEqual([`${RETIRED} Its snapshot failed: The snapshot did not answer in time.`]);
+			expect(made.core.status()).toMatchObject({ state: "none", snapshot: null });
+		} finally {
+			vi.useRealTimers();
+		}
+
+		const restarted = rig();
+		restarted.container.retireExit = 0;
+		restarted.container.retireGate = new Promise(() => {});
+		await parkedUntil(restarted);
+		void restarted.core.alarm();
+		await tick();
+		expect(restarted.core.status().state).toBe("retiring");
+		await restarted.restart();
+		expect(restarted.container.destroyReasons).toEqual(["A container in state retiring was running when the object started."]);
+		expect(restarted.core.status()).toMatchObject({ state: "none", snapshot: null });
+	});
+
+	test("a start for the recorded version restores the snapshot, and starts from the image for another version, spec, image, format or age", async () => {
+		const made = await retired();
+		const restored = await started(made);
+		expect(restored.restored).toBe(true);
+		expect(made.container.restores).toEqual([null, "snapshot-1"]);
+		expect(made.core.status()).toMatchObject({ state: "verified", snapshot: { versionId: V1 } });
+
+		const cases: { name: string; change(made: Rig): void; spec?: SandboxSpec; version?: string | null; dropped?: boolean }[] = [
+			{ name: "version", change: () => {}, version: V2 },
+			{ name: "no version", change: () => {}, version: null },
+			{ name: "hardening", change: () => {}, spec: { ...SPEC, folderEntries: 60 } },
+			{ name: "image", change: (made) => (made.container.image = "minerva-sandbox:2") },
+			{ name: "format", change: (made) => writeSnapshot(made.sql, { ...(readSnapshot(made.sql) as NonNullable<ReturnType<typeof readSnapshot>>), format: "0".repeat(64) }) },
+			{ name: "age", change: (made) => (made.clock.now += SNAPSHOT_AGE_MS), dropped: true },
+		];
+		for (const entry of cases) {
+			const other = await retired();
+			entry.change(other);
+			const answer = await other.core.start({ runId: uuid7(), attempt: 1 }, entry.spec ?? SPEC, entry.version === undefined ? V1 : entry.version);
+			expect(answer, entry.name).toEqual({ incarnation: expect.any(String), restored: false });
+			expect(other.container.restores.at(-1), entry.name).toBeNull();
+			expect(readSnapshot(other.sql) === null, entry.name).toBe(entry.dropped === true);
+		}
+	});
+
+	test("a restored container admits only its hydration, which seeds the folder, checks it against the plan and notes the restore", async () => {
+		const made = await retired();
+		const { fence } = await started(made);
+		expect(await command(made, fence)).toEqual({ refused: "not_verified", message: "The sandbox is not ready." });
+		expect(await made.core.scan(fence, { rehashAll: true })).toEqual({ refused: "not_verified", message: "The sandbox is not ready." });
+		made.container.command = SEEDED;
+		made.clock.now += MINUTE;
+		expect(await made.core.hydrate(fence, PLAN)).toEqual({ ok: true, restored: { seedMs: 0, checkMs: 0 } });
+		expect(made.container.log.slice(-2)).toEqual(["seed", "command"]);
+		expect(readSnapshot(made.sql)).toMatchObject({ snapshotId: "snapshot-1", restoredAt: T0 + PARKED_MS + MINUTE });
+		expect(await command(made, fence)).toEqual({ ok: true, exitCode: 0 });
+		expect(made.core.status()).toMatchObject({ state: "in_use", incarnation: fence.incarnation });
+	});
+
+	test("a restore that does not become ready, fails its hardening, its verification, its seed or its folder check drops the record", async () => {
+		const notReady = await retired();
+		notReady.container.ready = false;
+		const clock = notReady.clock;
+		const advancing = setInterval(() => (clock.now += MINUTE), 50);
+		try {
+			expect(await notReady.core.start({ runId: uuid7(), attempt: 1 }, SPEC, V1)).toEqual({ failed: "The container did not become ready." });
+		} finally {
+			clearInterval(advancing);
+		}
+		expect(notReady.container.restores.at(-1)).toBe("snapshot-1");
+		expect(notReady.core.status()).toMatchObject({ state: "none", snapshot: null });
+
+		for (const step of ["hardening", "verification"] as const) {
+			const made = await retired();
+			if (step === "hardening") made.container.failHardeningAt = "cgroup";
+			else made.container.failVerification = true;
+			const attempt = { runId: uuid7(), attempt: 1 };
+			const answer = await made.core.start(attempt, SPEC, V1);
+			if (!("incarnation" in answer)) throw new Error(JSON.stringify(answer));
+			expect(answer.restored, step).toBe(true);
+			const fence = { ...attempt, incarnation: answer.incarnation };
+			const hardened = await made.core.harden(fence);
+			if (step === "hardening") expect(hardened, step).toMatchObject({ ok: false, failed: "cgroup" });
+			else expect(await made.core.verify(fence), step).toMatchObject({ ok: false });
+			expect(made.core.status(), step).toMatchObject({ state: "none", snapshot: null });
+		}
+
+		const checks: { name: string; change(made: Rig): void; message: string }[] = [
+			{ name: "seed", change: (made) => (made.container.seedExit = 2), message: "The archive could not be seeded (exit 2): " },
+			{
+				name: "folder",
+				change: (made) => (made.container.command = { ...SEEDED, stdout: listing(["r", "d", "755", "d"], ["r", "d", "755", "stray"]) }),
+				message: 'The restored folder differs from the plan at "stray" (extra directory).',
+			},
+			{ name: "warning", change: (made) => (made.container.command = { ...SEEDED, stdout: listing(["r", "d", "755", "d"], ["r", "l", "777", "link"]) }), message: 'The restored folder differs from the plan at "link" (symlink).' },
+		];
+		for (const entry of checks) {
+			const made = await retired();
+			const { fence } = await started(made);
+			made.container.command = SEEDED;
+			entry.change(made);
+			expect(await made.core.hydrate(fence, PLAN), entry.name).toEqual({ ok: false, reason: "restore_failed", message: entry.message });
+			expect(made.container.destroyReasons.at(-1), entry.name).toBe(entry.message);
+			expect(made.container.running, entry.name).toBe(false);
+			expect(made.core.status(), entry.name).toMatchObject({ state: "none", snapshot: null });
+		}
+	});
+
+	test("a late failure of a restore that a new start replaced leaves the new container and the record alone", async () => {
+		const made = await retired();
+		const runId = uuid7();
+		const first = await started(made, V1, { runId, attempt: 1 });
+		let release = () => {};
+		made.container.seedGate = new Promise<void>((resolve) => (release = resolve));
+		made.container.seedExit = 1;
+		const seeding = made.core.hydrate(first.fence, PLAN);
+		await tick();
+		expect(made.container.log.at(-1)).toBe("seed");
+
+		const second = await made.core.start({ runId, attempt: 2 }, SPEC, V1);
+		expect(second).toEqual({ incarnation: expect.any(String), restored: true });
+		release();
+		expect(await seeding).toEqual({ ok: false, reason: "restore_failed", message: "The archive could not be seeded (exit 1): " });
+		expect(readSnapshot(made.sql)).toMatchObject({ snapshotId: "snapshot-1" });
+		expect(made.container.running).toBe(true);
+		expect(made.container.destroyReasons).toEqual([RETIRED, "Replaced by a new start."]);
+		expect(made.core.status()).toMatchObject({ state: "starting", incarnation: (second as { incarnation: string }).incarnation, attempt: 2 });
+	});
+
+	test("an object restarted before a restored folder was checked destroys the container and keeps the record", async () => {
+		const made = await retired();
+		await started(made);
+		await made.restart();
+		expect(made.container.destroyReasons.at(-1)).toBe("A container in state verified was running when the object started.");
+		expect(made.core.status()).toMatchObject({ state: "none", snapshot: { versionId: V1 } });
+	});
+
+	test("forget drops the record, and destroys a retiring container, whose snapshot is then never recorded; again it changes nothing", async () => {
+		const made = await retired();
+		await made.core.forget();
+		expect(made.core.status().snapshot).toBeNull();
+
+		made.container.retireExit = 0;
+		let release = () => {};
+		made.container.retireGate = new Promise<void>((resolve) => (release = resolve));
+		await parkedUntil(made);
+		const alarm = made.core.alarm();
+		await tick();
+		expect(made.core.status().state).toBe("retiring");
+		await made.core.forget();
+		expect(made.container.destroyReasons.at(-1)).toBe("The conversation's snapshot was forgotten.");
+		release();
+		await alarm;
+		expect(made.container.snapshots).toHaveLength(1);
+		expect(made.core.status()).toMatchObject({ state: "none", snapshot: null });
+		await made.core.forget();
+		expect(made.core.status()).toMatchObject({ state: "none", snapshot: null });
+	});
+
+	test("a seal of the parking run leaves a retiring container, whose time no span holds", async () => {
+		const made = rig();
+		made.container.retireExit = 0;
+		let release = () => {};
+		made.container.retireGate = new Promise<void>((resolve) => (release = resolve));
+		const fence = await parkedUntil(made);
+		const alarm = made.core.alarm();
+		await tick();
+		expect(await made.core.seal(fence.runId)).toEqual({ since: 0, spans: [{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "parked" }] });
+		expect(made.core.status()).toMatchObject({ state: "retiring", incarnation: fence.incarnation });
+		expect(made.container.running).toBe(true);
+		release();
+		await alarm;
+		expect(made.core.status()).toMatchObject({ state: "none", snapshot: { versionId: V1 } });
+		expect(readSpans(made.sql, fence.runId).spans).toEqual([{ startedAt: T0, leaseUntil: T0 + IDLE_MS, endedAt: T0, ended: "parked" }]);
 	});
 });

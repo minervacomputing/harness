@@ -5,11 +5,29 @@
 // names its step. A second root exec reports what holds afterwards, and this module decides from those
 // facts alone, in the Durable Object: any check that fails, or a report it cannot read, destroys the
 // container. A third, parking, leaves a container as a fresh one hardened and hydrated would be, for the
-// conversation's next run. Values are arguments of the scripts, never interpolated into them.
+// conversation's next run. When a parked container retires, a fourth archives its folder onto the root disk, which a
+// snapshot keeps, and a fifth extracts the archive into the folder of a container restored from that snapshot.
+// Values are arguments of the scripts, never interpolated into them.
 
 import { parseJson } from "../lib/json.ts";
 import { sha256Hex } from "../lib/hash.ts";
-import { AGENT_GID, AGENT_UID, AGENT_WRITABLE, HOME, MPLCONFIGDIR, PYTHON, type SandboxSpec, TMP, WORKSPACE, workspaceBytes } from "./constants.ts";
+import {
+	AGENT_GID,
+	AGENT_UID,
+	AGENT_WRITABLE,
+	FOLDER_ARCHIVE,
+	FOLDER_ARCHIVE_DIR,
+	FOLDER_EXTRACT,
+	HOME,
+	MPLCONFIGDIR,
+	PYTHON,
+	type SandboxSpec,
+	SNAPSHOT_BYTES,
+	SNAPSHOT_FILES,
+	TMP,
+	WORKSPACE,
+	workspaceBytes,
+} from "./constants.ts";
 
 /**
  * One root exec with `set -eu`: tmpfs `/workspace` (size, nr_inodes, uid 1000), tmpfs `/tmp` noexec,
@@ -95,11 +113,12 @@ export function hardeningArgv(spec: SandboxSpec, cgroup: string): string[] {
 }
 
 /**
- * What a container was hardened with: the SHA-256 of the hardening exec's argv, which holds the script and every
- * limit. A parked container is acquired only by a run whose spec gives the same.
+ * What a container was started and hardened with: the SHA-256 of the image's name and the hardening exec's argv,
+ * which holds the script and every limit. A parked container is acquired, and a snapshot restored, only for a run
+ * whose spec gives the same with the image the class starts now, so a deploy that replaced the image retires both.
  */
-export function hardeningDigest(spec: SandboxSpec, cgroup: string): Promise<string> {
-	return sha256Hex(hardeningArgv(spec, cgroup).join("\0"));
+export function hardeningDigest(spec: SandboxSpec, cgroup: string, image: string): Promise<string> {
+	return sha256Hex([image, ...hardeningArgv(spec, cgroup)].join("\0"));
 }
 
 /** The park exec's exit status when a regular file in the folder has more than one link. */
@@ -130,6 +149,58 @@ const PARK = [
 /** The park exec's argv, as root. */
 export function parkArgv(cgroup: string): string[] {
 	return ["/bin/bash", "-c", PARK, cgroup, WORKSPACE, TMP, HOME, MPLCONFIGDIR, String(AGENT_UID), String(AGENT_GID), String(PARK_LINKED), ...AGENT_WRITABLE];
+}
+
+/** The retire exec's exit status when the folder is too small to be worth a snapshot (SNAPSHOT_FILES, SNAPSHOT_BYTES). */
+export const RETIRE_SMALL = 3;
+
+// The retire, as root, on a parked container, which admitted nothing since parking refused work in flight: no
+// helper or file operation runs. The agent's processes are killed until its cgroup is empty. A folder under both
+// thresholds ends it with its own status. Anything parking does not leave fails it, since the archive must hold what
+// hydration would write: an entry neither a regular file nor a directory, a file with more than one link, a
+// directory not 0755 or a file neither 0644 nor 0755. Then root's tar archives the folder into a directory made
+// afresh on the root disk, so nothing deleted rides along, storing no extended attributes, ACLs or links between
+// files and keeping modes and modification times to the nanosecond; the archive is root's alone. `/` is synced and
+// made read-only again so the snapshot finds the disk clean.
+const RETIRE = [
+	"set -eu -o pipefail",
+	"cgroup=$0 workspace=$1 dir=$2 archive=$3 files=$4 bytes=$5 small=$6",
+	'for i in $(seq 100); do echo 1 > "$cgroup/cgroup.kill"; grep -qx \'populated 0\' "$cgroup/cgroup.events" && break; [ "$i" -lt 100 ] || exit 1; sleep 0.05; done',
+	"counted=$(find -P \"$workspace\" -type f -printf '%s\\n' | awk '{ n++; s += $1 } END { printf \"%d %.0f\\n\", n, s }')",
+	'read -r count total <<< "$counted"',
+	'[ "$count" -ge "$files" ] || [ "$total" -ge "$bytes" ] || exit "$small"',
+	'odd=$(find -P "$workspace" \\( ! -type f ! -type d -o -type f -links +1 -o -type f ! -perm 0644 ! -perm 0755 -o -type d ! -perm 0755 \\) -print -quit)',
+	"[ -z \"$odd\" ] || { echo 'The folder holds an entry parking does not leave.' >&2; exit 1; }",
+	"mount -o remount,rw /",
+	'rm -rf "$dir"',
+	'mkdir -m 0700 "$dir"',
+	"umask 077",
+	'tar -c -f "$archive" --format=pax --hard-dereference --no-xattrs --no-acls --no-selinux -C "$workspace" .',
+	"sync",
+	"mount -o remount,ro /",
+].join("\n");
+
+/** The retire exec's argv, as root. */
+export function retireArgv(cgroup: string): string[] {
+	return ["/bin/bash", "-c", RETIRE, cgroup, WORKSPACE, FOLDER_ARCHIVE_DIR, FOLDER_ARCHIVE, String(SNAPSHOT_FILES), String(SNAPSHOT_BYTES), String(RETIRE_SMALL)];
+}
+
+// The seed, as root, on a container restored from a snapshot and hardened: the archive the retire wrote goes to the
+// wrapped argv that follows, hydration's own extraction (FOLDER_EXTRACT), so the agent's tar writes the folder as
+// hydration does, its files the agent's, with the archive's modes and times.
+export const SEED = ["set -eu", "archive=$0", '"$@" < "$archive"'].join("\n");
+
+/** The seed exec's argv, as root: `wrapped` is the wrapper's argv of FOLDER_EXTRACT. */
+export function seedArgv(wrapped: string[]): string[] {
+	return ["/bin/bash", "-c", SEED, FOLDER_ARCHIVE, ...wrapped];
+}
+
+/**
+ * The format of a snapshot's archive: the SHA-256 of the scripts that write and read it. A snapshot is restored only
+ * with the format it was taken in, so changing either script retires every older snapshot with nothing to bump.
+ */
+export function snapshotFormat(): Promise<string> {
+	return sha256Hex([RETIRE, SEED, ...FOLDER_EXTRACT].join("\0"));
 }
 
 /** The report of a hardening exec from its exit status and output: the step that failed is the last one it started. */

@@ -1,10 +1,11 @@
 // The Sandbox's durable state: one row, written before every step it describes (ARCHITECTURE.md: The sandbox
 // lifecycle). It names the container's incarnation, the run and attempt that own it (the newest the object
-// has seen, so an older attempt's call is refused), the hardening state, a destroy still owed, and for a
-// parked container the version its folder holds. Each incarnation's span (when it started, its last lease,
-// when and how it ended) changes with the row, in the same transaction, and is what the run's container time
-// is charged from. An incarnation is one run's use of a container: parking ends it, and the next run that
-// acquires the container begins a new one.
+// has seen, so an older attempt's call is refused), the hardening state, a destroy still owed, for a parked
+// or retiring container the version its folder holds, and for a restored one the snapshot it came from until
+// its folder passed the check. Each incarnation's span (when it started, its last lease, when and how it
+// ended) changes with the row, in the same transaction, and is what the run's container time is charged
+// from. An incarnation is one run's use of a container: parking ends it, and the next run that acquires the
+// container begins a new one. Beside the row, the record of the conversation's one snapshot.
 
 import { parseJson } from "../lib/json.ts";
 import { first, type Sql } from "../lib/sql.ts";
@@ -13,12 +14,13 @@ import { HARD_GRACE_MS, type SandboxSpec } from "./constants.ts";
 
 /**
  * `starting → hardening → verified → in_use → destroying`, or after a run's last checkpoint `in_use → parked`,
- * and `parked → verified` for the conversation's next run. Before `verified`, and while `parked`, no agent
- * command or file operation is admitted. A Sandbox Durable Object that restarts never reuses a running
- * container it did not verify in its current incarnation: it destroys it first, but keeps a parked one, which
- * is verified again when acquired. A failed `destroy()` leaves `cleanupPending` and is retried by an alarm.
+ * and `parked → verified` for the conversation's next run, or `parked → retiring → destroying` at the parked
+ * lease. Before `verified`, and while `parked` or `retiring`, no agent command or file operation is admitted.
+ * A Sandbox Durable Object that restarts never reuses a running container it did not verify in its current
+ * incarnation: it destroys it first, but keeps a parked one, which is verified again when acquired. A failed
+ * `destroy()` leaves `cleanupPending` and is retried by an alarm.
  */
-export type SandboxState = "none" | "starting" | "hardening" | "verified" | "in_use" | "parked" | "destroying";
+export type SandboxState = "none" | "starting" | "hardening" | "verified" | "in_use" | "parked" | "retiring" | "destroying";
 
 // The table's schema steps are in schema.ts, apart so the account tests (Node) can read their ids.
 export { SANDBOX_MIGRATIONS } from "./schema.ts";
@@ -39,8 +41,10 @@ export interface StateRow {
 	leaseUntil: number | null;
 	/** The SHA-256 of the hardening exec's argv, once it succeeded: a run whose spec asks for another never acquires the container. */
 	hardening: string | null;
-	/** The folder version a parked container holds; read only while `state` is `parked`. */
+	/** The folder version a parked or retiring container holds; read only in those states. */
 	parkedVersion: VersionId | null;
+	/** The snapshot a restored container started from, until its folder passed the check: nothing is admitted but its hydration. */
+	restoring: string | null;
 }
 
 type Raw = {
@@ -57,6 +61,7 @@ type Raw = {
 	lease_until: number | null;
 	hardening: string | null;
 	parked_version: string | null;
+	restoring: string | null;
 };
 
 export const EMPTY: StateRow = {
@@ -73,7 +78,13 @@ export const EMPTY: StateRow = {
 	leaseUntil: null,
 	hardening: null,
 	parkedVersion: null,
+	restoring: null,
 };
+
+/** A parked or retiring container is the conversation's: it holds no run's span. */
+function idle(state: SandboxState): boolean {
+	return state === "parked" || state === "retiring";
+}
 
 export function readState(sql: Sql): StateRow {
 	const row = first<Raw>(sql, "SELECT * FROM sandbox_state WHERE id = 1");
@@ -91,7 +102,8 @@ export function readState(sql: Sql): StateRow {
 		cleanupReason: row.cleanup_reason,
 		leaseUntil: row.lease_until,
 		hardening: row.hardening,
-		parkedVersion: row.state === "parked" ? row.parked_version : null,
+		parkedVersion: idle(row.state as SandboxState) ? row.parked_version : null,
+		restoring: row.restoring,
 	};
 }
 
@@ -109,19 +121,19 @@ export type SpanChange =
 
 /**
  * What the state going from `previous` to `next` at `now` does to the spans; `ended` says why an incarnation went away.
- * Parking closes the incarnation's span, so a parked row has none open: its time is no run's (ARCHITECTURE.md: The
- * sandbox lifecycle, Container time), and the container going away from there, or to the next run, closes nothing.
+ * Parking closes the incarnation's span, so a parked or retiring row has none open: its time is no run's (ARCHITECTURE.md:
+ * The sandbox lifecycle, Container time), and the container going away from there, or to the next run, closes nothing.
  */
 export function spanChange(previous: StateRow, next: StateRow, now: EpochMs, ended: SpanEnd | null): SpanChange[] {
 	const changes: SpanChange[] = [];
-	const open = previous.state === "parked" ? null : previous.incarnation;
+	const open = idle(previous.state) ? null : previous.incarnation;
 	if (open !== null && open !== next.incarnation) {
 		if (ended === null) throw new Error(`The incarnation ${open} went away without saying how.`);
 		changes.push({ kind: "close", incarnation: open, endedAt: now, ended });
 	} else if (open !== null && next.state === "parked") {
 		changes.push({ kind: "close", incarnation: open, endedAt: now, ended: "parked" });
 	}
-	if (next.incarnation === null || next.state === "parked") return changes;
+	if (next.incarnation === null || idle(next.state)) return changes;
 	if (next.incarnation !== previous.incarnation) {
 		const { runId, attempt, startedAt, leaseUntil } = next;
 		if (runId === null || attempt === null || startedAt === null || leaseUntil === null) throw new Error(`The incarnation ${next.incarnation} has no run, start or lease.`);
@@ -137,12 +149,13 @@ export function writeState(sql: Sql, state: StateRow, now: number, ended: SpanEn
 	sql.transaction(() => {
 		const changes = spanChange(readState(sql), state, now, ended);
 		sql.exec(
-			`INSERT INTO sandbox_state (id, state, incarnation, run_id, attempt, spec, hardened, started_at, verified_at, cleanup_pending, cleanup_reason, lease_until, updated_at, hardening, parked_version)
-			 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO sandbox_state (id, state, incarnation, run_id, attempt, spec, hardened, started_at, verified_at, cleanup_pending, cleanup_reason, lease_until, updated_at, hardening, parked_version, restoring)
+			 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT (id) DO UPDATE SET state = excluded.state, incarnation = excluded.incarnation, run_id = excluded.run_id,
 			   attempt = excluded.attempt, spec = excluded.spec, hardened = excluded.hardened, started_at = excluded.started_at,
 			   verified_at = excluded.verified_at, cleanup_pending = excluded.cleanup_pending, cleanup_reason = excluded.cleanup_reason,
-			   lease_until = excluded.lease_until, updated_at = excluded.updated_at, hardening = excluded.hardening, parked_version = excluded.parked_version`,
+			   lease_until = excluded.lease_until, updated_at = excluded.updated_at, hardening = excluded.hardening, parked_version = excluded.parked_version,
+			   restoring = excluded.restoring`,
 			state.state,
 			state.incarnation,
 			state.runId,
@@ -156,7 +169,8 @@ export function writeState(sql: Sql, state: StateRow, now: number, ended: SpanEn
 			state.leaseUntil,
 			now,
 			state.hardening,
-			state.state === "parked" ? state.parkedVersion : null,
+			idle(state.state) ? state.parkedVersion : null,
+			state.restoring,
 		);
 		for (const change of changes) {
 			if (change.kind === "open") {
@@ -257,4 +271,54 @@ export function olderThan(fence: { runId: RunId; attempt: number }, state: State
 	if (state.runId === null || state.attempt === null) return false;
 	if (fence.runId !== state.runId) return fence.runId < state.runId;
 	return fence.attempt < state.attempt;
+}
+
+/**
+ * The conversation's one snapshot: a retired container whose root disk holds an archive of the folder version
+ * `versionId`. There is no call that lists snapshots, so this row is the only way back to one.
+ */
+export interface SnapshotRecord {
+	snapshotId: string;
+	versionId: VersionId;
+	/** The hardening digest of the container it was taken from, which covers the image (hardening.ts `hardeningDigest`). */
+	digest: string;
+	/** The digest of the scripts that wrote the archive and read it back (hardening.ts `snapshotFormat`). */
+	format: string;
+	takenAt: EpochMs;
+	restoredAt: EpochMs | null;
+}
+
+export function readSnapshot(sql: Sql): SnapshotRecord | null {
+	const row = first<{ snapshot_id: string; version_id: string; digest: string; format: string; taken_at: number; restored_at: number | null }>(
+		sql,
+		"SELECT snapshot_id, version_id, digest, format, taken_at, restored_at FROM sandbox_snapshot WHERE id = 1",
+	);
+	if (!row) return null;
+	return { snapshotId: row.snapshot_id, versionId: row.version_id, digest: row.digest, format: row.format, takenAt: row.taken_at, restoredAt: row.restored_at };
+}
+
+/** Records a new snapshot in place of any earlier one. */
+export function writeSnapshot(sql: Sql, record: SnapshotRecord): void {
+	sql.exec(
+		`INSERT INTO sandbox_snapshot (id, snapshot_id, version_id, digest, format, taken_at, restored_at) VALUES (1, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (id) DO UPDATE SET snapshot_id = excluded.snapshot_id, version_id = excluded.version_id, digest = excluded.digest,
+		   format = excluded.format, taken_at = excluded.taken_at, restored_at = excluded.restored_at`,
+		record.snapshotId,
+		record.versionId,
+		record.digest,
+		record.format,
+		record.takenAt,
+		record.restoredAt,
+	);
+}
+
+/** Drops the record; with `snapshotId`, only while it still names that snapshot, so a newer one is kept. */
+export function dropSnapshot(sql: Sql, snapshotId?: string): void {
+	if (snapshotId === undefined) sql.exec("DELETE FROM sandbox_snapshot");
+	else sql.exec("DELETE FROM sandbox_snapshot WHERE snapshot_id = ?", snapshotId);
+}
+
+/** Notes a restore of `snapshotId`, which the platform's 30 days count from, while the record still names it. */
+export function snapshotRestored(sql: Sql, snapshotId: string, at: EpochMs): void {
+	sql.exec("UPDATE sandbox_snapshot SET restored_at = ? WHERE snapshot_id = ?", at, snapshotId);
 }

@@ -9,11 +9,18 @@ import type { WorkspaceRef } from "../shared/rpc.ts";
 /** The part of `ctx.container` the Sandbox uses. */
 export interface ContainerPort {
 	readonly running: boolean;
-	/** Starts the image with no route out; the first exec waits for it. */
-	start(options: { enableInternet: false; instance: "standard-1"; labels: { [name: string]: string } }): void;
+	/** The image the class starts (`images.base`); empty where it has none, and then nothing is snapshotted. */
+	readonly image: string;
+	/**
+	 * Starts the image with no route out, or with `restore` the container a snapshot of that id holds; the first
+	 * exec waits for it.
+	 */
+	start(options: { enableInternet: false; instance: "standard-1"; labels: { [name: string]: string }; restore?: string }): void;
 	exec(argv: string[], options: ContainerExecOptions): Promise<ExecProcess>;
 	destroy(reason?: string): Promise<void>;
 	setInactivityTimeout(ms: number): Promise<void>;
+	/** Snapshots the running container's root disk; not its mounts, processes or memory. */
+	snapshot(name: string): Promise<{ id: string; size: number }>;
 }
 
 /** The parts of an R2 bucket a hydration reads and a checkpoint writes. */
@@ -63,6 +70,8 @@ export interface SandboxPorts {
 	cgroup?: string;
 	/** A file operation's limit in seconds; FILE_OPERATION_SECONDS unless a test needs it shorter. */
 	fileSeconds?: number;
+	/** How long a container stays parked before it retires; PARKED_MS unless a test needs it shorter. */
+	parkedMs?: number;
 }
 
 /** R2 as a BucketPort: a put of a known length, its SHA-256 checked by R2. */

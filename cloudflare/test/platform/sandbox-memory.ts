@@ -16,7 +16,7 @@ import { hex } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "../../src/sandbox/commands.ts";
 import type { SandboxSpec } from "../../src/sandbox/constants.ts";
-import type { Acquired, NotAcquired, Refused, SandboxFence, SandboxStatus } from "../../src/sandbox/core.ts";
+import type { Acquired, NotAcquired, Refused, SandboxFence, SandboxStatus, Started } from "../../src/sandbox/core.ts";
 import type { FsRequest, FsResponse } from "../../src/sandbox/files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "../../src/sandbox/folder.ts";
 import type { ScanResult } from "../../src/sandbox/scan.ts";
@@ -105,7 +105,7 @@ export class MemorySandbox implements SandboxPort {
 		return this.#state === "parked" ? NOT_VERIFIED : null;
 	}
 
-	async start(fence: AttemptFence, spec: SandboxSpec): Promise<{ incarnation: string } | Refused | { failed: string }> {
+	async start(fence: AttemptFence, spec: SandboxSpec): Promise<Started | Refused | { failed: string }> {
 		this.log.push(`start ${fence.attempt}`);
 		if (this.faults.start) return { failed: "The container did not become ready." };
 		this.release();
@@ -118,7 +118,7 @@ export class MemorySandbox implements SandboxPort {
 		this.#state = "starting";
 		this.#startedAt = Date.now();
 		this.#spans.push({ runId: fence.runId, span: { startedAt: this.#startedAt, leaseUntil: this.#startedAt + 3_600_000, endedAt: null, ended: null } });
-		return { incarnation };
+		return { incarnation, restored: false };
 	}
 
 	async harden(fence: SandboxFence): Promise<HardeningReport | Refused> {
@@ -385,6 +385,7 @@ export class MemorySandbox implements SandboxPort {
 			attempt: live ? (own?.attempt ?? null) : null,
 			cleanupPending: false,
 			startedAt: this.#startedAt,
+			snapshot: null,
 		};
 	}
 

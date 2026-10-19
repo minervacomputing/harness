@@ -1,11 +1,13 @@
 // The test build's Sandbox (src/faults/): production's class (src/sandbox/sandbox.ts) with the seams the
 // account tests need for the Sandbox row of ARCHITECTURE.md's Testing table, reachable only through the test build's token-gated driver
-// (lab.ts): faults in its container port (a hardening step that fails, destroys that fail), a shorter limit
-// for file operations, a reset of the
-// object that leaves its container running, a root shell for the tests' checks, and whether the container
-// runs. Never part of the production Worker.
+// (lab.ts, and routes.ts for a conversation's Sandbox): faults in its container port (a hardening step that fails,
+// destroys that fail, a restored container's seed that leaves a stray file), a shorter limit for file operations
+// and a shorter parked window, a reset of the object that leaves its container running, a root shell for the tests'
+// checks, and whether the container runs. Never part of the production Worker.
 
 import { parseJson } from "../lib/json.ts";
+import { AGENT_CGROUP, WORKSPACE } from "../sandbox/constants.ts";
+import { SEED } from "../sandbox/hardening.ts";
 import { runRoot } from "../sandbox/process.ts";
 import { Sandbox, objectPorts } from "../sandbox/sandbox.ts";
 import type { ContainerPort, SandboxPorts } from "../sandbox/ports.ts";
@@ -17,6 +19,10 @@ export interface SandboxFaults {
 	failDestroys?: number;
 	/** A file operation's limit in seconds, shorter than production's so a FIFO's read ends soon. */
 	fileSeconds?: number;
+	/** How long a container stays parked before it retires, shorter than production's so a test reaches the retire soon. */
+	parkedMs?: number;
+	/** A restored container's seed also writes a file of root's into the folder, so the folder fails its check. */
+	straySeed?: boolean;
 }
 
 const TABLE = "CREATE TABLE IF NOT EXISTS fault_sandbox (id INTEGER PRIMARY KEY, value TEXT NOT NULL)";
@@ -40,13 +46,20 @@ export class FaultSandbox extends Sandbox {
 			get running() {
 				return real.running;
 			},
+			get image() {
+				return real.image;
+			},
 			start: (options) => real.start(options),
 			exec: (argv, options) => {
-				// The hardening is one root script of named steps: a `false` after the named one fails it there.
-				const step = this.#faults().failHardeningAt;
+				const faults = this.#faults();
+				const step = faults.failHardeningAt;
 				const script = argv[2];
+				// The hardening is one root script of named steps: a `false` after the named one fails it there.
 				if (step && argv[0] === "/bin/bash" && typeof script === "string" && script.includes("step readonly_root")) {
 					return real.exec([argv[0], argv[1] as string, script.replace(`step ${step}\n`, `step ${step}\nfalse\n`), ...argv.slice(3)], options);
+				}
+				if (faults.straySeed && argv[0] === "/bin/bash" && script === SEED) {
+					return real.exec([argv[0], argv[1] as string, `${SEED}\necho stray > ${WORKSPACE}/stray.txt`, ...argv.slice(3)], options);
 				}
 				return real.exec(argv, options);
 			},
@@ -59,6 +72,7 @@ export class FaultSandbox extends Sandbox {
 				await real.destroy(reason);
 			},
 			setInactivityTimeout: (ms) => real.setInactivityTimeout(ms),
+			snapshot: (name) => real.snapshot(name),
 		};
 		const faults = () => this.#faults();
 		return {
@@ -66,6 +80,9 @@ export class FaultSandbox extends Sandbox {
 			container,
 			get fileSeconds() {
 				return faults().fileSeconds;
+			},
+			get parkedMs() {
+				return faults().parkedMs;
 			},
 		};
 	}
@@ -81,9 +98,9 @@ export class FaultSandbox extends Sandbox {
 	}
 
 	async faultRoot(script: string): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-		const container = this.ctx.container;
+		const container = objectPorts(this.ctx, this.env).container;
 		if (!container) throw new Error("This Worker has no container.");
-		return runRoot({ container, cgroup: "/sys/fs/cgroup/agent" }, ["/bin/bash", "-c", script], { timeoutMs: 60_000 });
+		return runRoot({ container, cgroup: AGENT_CGROUP }, ["/bin/bash", "-c", script], { timeoutMs: 60_000 });
 	}
 
 	async faultRunning(): Promise<boolean> {

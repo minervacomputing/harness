@@ -9,6 +9,7 @@ const RUN = "0199b000-0000-7000-8000-000000000001";
 const LIVE: StateRow = { ...EMPTY, state: "starting", incarnation: "a", runId: RUN, attempt: 1, startedAt: 100, leaseUntil: 1000 };
 const NONE: StateRow = { ...LIVE, state: "none", incarnation: null, leaseUntil: null };
 const PARKED: StateRow = { ...LIVE, state: "parked", leaseUntil: 3000 };
+const RETIRING: StateRow = { ...PARKED, state: "retiring", leaseUntil: 4000 };
 const NEXT = "0199b000-0000-7000-8000-000000000002";
 
 describe("spanChange", () => {
@@ -45,6 +46,9 @@ describe("spanChange", () => {
 		},
 		{ name: "a parked container destroyed closes nothing more", previous: PARKED, next: NONE, ended: "destroyed", changes: [] },
 		{ name: "a parked container on its way to a destroy opens nothing", previous: PARKED, next: { ...PARKED, state: "destroying", cleanupPending: true }, ended: null, changes: [] },
+		{ name: "a parked container retiring opens nothing, whatever lease it gets", previous: PARKED, next: RETIRING, ended: null, changes: [] },
+		{ name: "a retiring container on its way to a destroy opens nothing", previous: RETIRING, next: { ...RETIRING, state: "destroying", cleanupPending: true }, ended: null, changes: [] },
+		{ name: "a retiring container destroyed closes nothing more", previous: RETIRING, next: NONE, ended: "destroyed", changes: [] },
 		{
 			name: "the next run acquiring a parked container opens its own span only",
 			previous: PARKED,

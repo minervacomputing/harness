@@ -1,6 +1,6 @@
 // The Sandbox Durable Object's SQLite (store.ts): its one row of durable state. Additive only; see
-// lib/sqlite.ts. Step 3 rebuilds two tables, since SQLite cannot widen a CHECK in place, with the same
-// columns and keys and two new nullable columns, so the previous version's code works on the result.
+// lib/sqlite.ts. Steps 3 and 4 rebuild tables, since SQLite cannot widen a CHECK in place, with the same
+// columns and keys and new nullable columns, so the previous version's code works on the result.
 
 /** lib/sqlite.ts `Migration`, written out so the account tests (Node) can read the ids without the Worker's types. */
 interface Migration {
@@ -94,5 +94,43 @@ export const SANDBOX_MIGRATIONS: Migration[] = [
 		DROP TABLE container_spans;
 		ALTER TABLE container_spans_3 RENAME TO container_spans;
 		CREATE INDEX container_spans_run ON container_spans (run_id)`,
+	},
+	{
+		// A parked container retiring with a snapshot of its folder: the state `retiring`, the snapshot a restored
+		// container came from until its folder passed the check (`restoring`), and the record of the conversation's
+		// one snapshot, the only way back to it. The previous version's writes name their columns, so they leave
+		// `restoring` alone, and it reads `retiring` as a state it does not know, which destroys the container.
+		id: 4,
+		sql: `CREATE TABLE sandbox_state_4 (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			state TEXT NOT NULL CHECK (state IN ('none', 'starting', 'hardening', 'verified', 'in_use', 'parked', 'retiring', 'destroying')),
+			incarnation TEXT,
+			run_id TEXT,
+			attempt INTEGER,
+			spec TEXT,
+			hardened INTEGER NOT NULL DEFAULT 0,
+			started_at INTEGER,
+			verified_at INTEGER,
+			cleanup_pending INTEGER NOT NULL DEFAULT 0,
+			cleanup_reason TEXT,
+			lease_until INTEGER,
+			updated_at INTEGER NOT NULL,
+			hardening TEXT,
+			parked_version TEXT,
+			restoring TEXT
+		) STRICT;
+		INSERT INTO sandbox_state_4 (id, state, incarnation, run_id, attempt, spec, hardened, started_at, verified_at, cleanup_pending, cleanup_reason, lease_until, updated_at, hardening, parked_version)
+			SELECT id, state, incarnation, run_id, attempt, spec, hardened, started_at, verified_at, cleanup_pending, cleanup_reason, lease_until, updated_at, hardening, parked_version FROM sandbox_state;
+		DROP TABLE sandbox_state;
+		ALTER TABLE sandbox_state_4 RENAME TO sandbox_state;
+		CREATE TABLE sandbox_snapshot (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			snapshot_id TEXT NOT NULL,
+			version_id TEXT NOT NULL,
+			digest TEXT NOT NULL,
+			format TEXT NOT NULL,
+			taken_at INTEGER NOT NULL,
+			restored_at INTEGER
+		) STRICT`,
 	},
 ];

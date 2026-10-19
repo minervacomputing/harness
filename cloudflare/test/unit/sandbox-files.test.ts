@@ -64,7 +64,10 @@ function dataFrame(length: number): Uint8Array {
 
 /** A machine whose every process is `process(options)`. */
 function machineOf(process: (options: ContainerExecOptions) => ExecProcess): Machine {
-	return { container: { running: true, start() {}, exec: async (_argv, options) => process(options ?? {}), destroy: async () => {}, setInactivityTimeout: async () => {} }, cgroup: "/sys/fs/cgroup/agent" };
+	return {
+		container: { running: true, image: "", start() {}, exec: async (_argv, options) => process(options ?? {}), destroy: async () => {}, setInactivityTimeout: async () => {}, snapshot: async () => ({ id: "", size: 0 }) },
+		cgroup: "/sys/fs/cgroup/agent",
+	};
 }
 
 describe("a shim's answer", () => {

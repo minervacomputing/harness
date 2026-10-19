@@ -55,7 +55,11 @@ function rewriting(container: ContainerPort, match: (command: string[]) => boole
 		get running() {
 			return container.running;
 		},
+		get image() {
+			return container.image;
+		},
 		start: (options) => container.start(options),
+		snapshot: (name) => container.snapshot(name),
 		exec: (argv, options) => {
 			// The wrapper's argv: bash -c SCRIPT cgroup cwd timeout mode count, then the environment and the command.
 			const at = 8 + Number(argv[7]);

@@ -22,7 +22,7 @@ import { SandboxLab } from "./lab.ts";
 import type { Fault } from "./plan.ts";
 import { type Calibration, providerOf } from "./ports.ts";
 import type { ProviderSetup } from "./provider.ts";
-import type { FaultSandbox } from "./sandbox.ts";
+import type { FaultSandbox, SandboxFaults } from "./sandbox.ts";
 import { FAULTS_HEADER, faultsToken } from "./token.ts";
 import { notesLease } from "./world.ts";
 
@@ -153,6 +153,12 @@ async function laravelOperation(op: string, body: Body, env: Env, exports: Cloud
 		case "conversation-sandbox": {
 			const sandbox = sandboxObject(env, exports, euRef(scope), conversationId) as unknown as DurableObjectStub<FaultSandbox>;
 			return { status: await sandbox.status(), running: await sandbox.faultRunning() };
+		}
+		case "conversation-sandbox-faults": {
+			// The conversation's Sandbox's faults, replacing any it had: a shorter parked window, a seed that breaks the restore.
+			const sandbox = sandboxObject(env, exports, euRef(scope), conversationId) as unknown as DurableObjectStub<FaultSandbox>;
+			await sandbox.faultSet((body.faults ?? {}) as unknown as SandboxFaults);
+			return { ok: true };
 		}
 		default:
 			return null;

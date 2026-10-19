@@ -11,8 +11,17 @@
 // killed and the folder is left as that checkpoint's version, with nothing else the agent wrote. A parked
 // container belongs to the conversation, not to a run, and admits nothing. The conversation's next run
 // acquires it (`parked → verified`) under a new incarnation, so every fence of the run that parked it is stale,
-// if it holds the version the run starts from and was hardened as the run asks; anything else destroys it, and
-// so does an idle PARKED_MS.
+// if it holds the version the run starts from and was started and hardened as the run asks; anything else
+// destroys it.
+//
+// A container parked for PARKED_MS retires (`parked → retiring → destroying`): when its folder is large enough,
+// an archive of it goes onto the root disk, the container is snapshotted, and the snapshot is recorded as the
+// conversation's one. The archive and the snapshot run outside the serial queue, so a start is never held behind
+// them, and their outcome counts only while the retiring generation is the current one. A later start for the
+// version the record holds restores that snapshot instead of starting the image, and its hydration extracts the
+// archive into the folder and checks it against the plan before anything else is admitted (`restoring`). A restore
+// that fails drops the record; the Conversation then prepares from the image and R2. The folder in R2 stays the
+// record of a version: a snapshot is a cache in front of hydration.
 //
 // When the object restarts (an eviction, a crash, a deploy) it has lost its exec handles. A running
 // container it had verified is verified again before its next use, a parked one when it is acquired; any
@@ -31,16 +40,19 @@ import {
 	CLEANUP_RETRY_MS,
 	DEADLINE_GRACE_MS,
 	FILE_OPERATION_SECONDS,
+	FOLDER_EXTRACT,
 	HARD_GRACE_MS,
 	IDLE_MS,
 	INSTANCE,
 	MAX_INACTIVITY_MS,
 	PARKED_MS,
+	RETIRE_MS,
 	type SandboxSpec,
+	SNAPSHOT_AGE_MS,
 	workspaceBytes,
 } from "./constants.ts";
 import { fileOperation, type FsRequest, type FsResponse } from "./files.ts";
-import { type CheckpointUploadPlan, type CheckpointUploadResult, hydrate, type HydratePlan, type HydrateResult, upload } from "./folder.ts";
+import { type CheckpointUploadPlan, type CheckpointUploadResult, hydrate, type HydratePlan, type HydrateResult, restoredDifference, upload } from "./folder.ts";
 import {
 	DROPPED_PROBE,
 	type HardeningReport,
@@ -50,13 +62,32 @@ import {
 	hardeningReport,
 	PARK_LINKED,
 	parkArgv,
+	RETIRE_SMALL,
+	retireArgv,
+	seedArgv,
+	snapshotFormat,
 	verificationArgv,
 	verificationReport,
 } from "./hardening.ts";
 import type { SandboxPorts } from "./ports.ts";
 import { ContainerGone, helperEnvironment, type Machine, runRoot, sleep, within } from "./process.ts";
-import { type FolderIndex, scan, type ScanResult } from "./scan.ts";
-import { isSealed, olderThan, readSpans, readState, type SandboxState, type SealedSpans, sealRun, type SpanEnd, type StateRow, writeState } from "./store.ts";
+import { FOLDER_SECONDS, type FolderIndex, scan, type ScanResult } from "./scan.ts";
+import {
+	dropSnapshot,
+	isSealed,
+	olderThan,
+	readSnapshot,
+	readSpans,
+	readState,
+	type SandboxState,
+	type SealedSpans,
+	sealRun,
+	snapshotRestored,
+	type SpanEnd,
+	type StateRow,
+	writeSnapshot,
+	writeState,
+} from "./store.ts";
 import { wrapperArgv } from "./wrapper.ts";
 
 /** A container incarnation, from `start`; every later call carries it. */
@@ -71,6 +102,8 @@ export interface SandboxStatus {
 	attempt: number | null;
 	cleanupPending: boolean;
 	startedAt: EpochMs | null;
+	/** The conversation's snapshot: the version it holds and when it was taken. */
+	snapshot: { versionId: VersionId; takenAt: EpochMs } | null;
 }
 
 export type Refused = { refused: "stale" | "not_verified" | "busy"; message: string };
@@ -82,6 +115,9 @@ export type Refused = { refused: "stale" | "not_verified" | "busy"; message: str
  */
 export type Lost = { lost: string };
 
+/** A container started for an attempt; `restored` when it came from the conversation's snapshot rather than the image. */
+export type Started = { incarnation: string; restored: boolean };
+
 /** A parked container taken for a new attempt, under a new incarnation, and how long its verification took. */
 export type Acquired = { incarnation: string; verifyMs: number };
 /** Nothing was parked, or what was parked could not be used (and is destroyed): the attempt starts a container. */
@@ -92,14 +128,22 @@ export type NotAcquired = { acquired: false; reason: string };
  * "stale"}`; before verification, `{refused: "not_verified"}`.
  */
 export interface SandboxApi {
-	/** Destroys any container left from an earlier incarnation first, then starts one for this attempt. */
-	start(fence: AttemptFence, spec: SandboxSpec): Promise<{ incarnation: string } | Refused | { failed: string }>;
+	/**
+	 * Destroys any container left from an earlier incarnation first, then starts one for this attempt: restored from
+	 * the conversation's snapshot when it holds `restore`, the version the attempt hydrates, and was taken from what
+	 * `spec` and the image give now; else from the image.
+	 */
+	start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | { failed: string }>;
 	harden(fence: SandboxFence): Promise<HardeningReport | Refused | Lost>;
 	verify(fence: SandboxFence): Promise<VerificationReport | Refused | Lost>;
 	exec(fence: SandboxFence, request: ExecRequest, sink: ExecOutputSink | null): Promise<ExecResult | Refused>;
 	/** Kills one command's processes; idempotent. */
 	cancel(fence: SandboxFence, execId: string): Promise<void>;
 	fs(fence: SandboxFence, request: FsRequest): Promise<FsResponse | Refused>;
+	/**
+	 * Makes the folder the plan's version: from R2, or on a restored container from the archive its snapshot holds,
+	 * checked against the plan before anything else is admitted (`restore_failed` destroys it otherwise).
+	 */
 	hydrate(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused>;
 	scan(fence: SandboxFence, options: { rehashAll: boolean }): Promise<ScanResult | Refused>;
 	checkpoint(fence: SandboxFence, plan: CheckpointUploadPlan): Promise<CheckpointUploadResult | Refused>;
@@ -122,10 +166,12 @@ export interface SandboxApi {
 	 */
 	park(fence: SandboxFence, versionId: VersionId | null): Promise<{ parked: boolean } | Refused>;
 	/**
-	 * Takes the parked container for this attempt if it holds `versionId` and was hardened as `spec` asks, and passes
-	 * its verification again; refused for a sealed run or an older attempt, as `start` is.
+	 * Takes the parked container for this attempt if it holds `versionId` and was started and hardened as `spec` and the
+	 * image ask, and passes its verification again; refused for a sealed run or an older attempt, as `start` is.
 	 */
 	acquire(fence: AttemptFence, spec: SandboxSpec, versionId: VersionId | null): Promise<Acquired | NotAcquired | Refused>;
+	/** Drops the conversation's snapshot record and destroys a retiring container, so nothing restores the conversation's folder again. Idempotent. */
+	forget(): Promise<void>;
 	status(): Promise<SandboxStatus>;
 }
 
@@ -138,6 +184,8 @@ const KEEP_ALIVE_MS = 10_000;
 
 const STALE: Refused = { refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." };
 const PARKED_REASON = `The parked sandbox was not used for ${PARKED_MS / 60_000} minutes.`;
+/** The seed's own limit; the root exec around it gets a little longer, so a slow seed fails rather than losing the container. */
+const SEED_GRACE_MS = 30_000;
 const NOT_VERIFIED: Refused = { refused: "not_verified", message: "The sandbox is not ready." };
 const STOPPED: Refused = { refused: "not_verified", message: "The sandbox stopped." };
 const BUSY: Refused = { refused: "busy", message: "The sandbox is saving or loading the folder." };
@@ -165,6 +213,16 @@ export function validSpec(spec: SandboxSpec): boolean {
 		spec.memoryBytes % 4096 === 0 &&
 		(spec.deadline === undefined || spec.deadline === null || Number.isSafeInteger(spec.deadline))
 	);
+}
+
+/** A parked container on its way to a snapshot: what its retire needs outside the serial queue, and what the record keeps. */
+interface Retiring {
+	generation: Generation;
+	machine: Machine;
+	versionId: VersionId;
+	digest: string;
+	format: string;
+	deadline: number;
 }
 
 /** A command admitted by its exec id, before and after its process exists, so a cancel is never lost. */
@@ -287,7 +345,18 @@ export class SandboxCore {
 	}
 
 	#gone(): StateRow {
-		return { ...this.#state, state: "none", incarnation: null, hardened: false, cleanupPending: false, cleanupReason: null, leaseUntil: null, hardening: null, parkedVersion: null };
+		return {
+			...this.#state,
+			state: "none",
+			incarnation: null,
+			hardened: false,
+			cleanupPending: false,
+			cleanupReason: null,
+			leaseUntil: null,
+			hardening: null,
+			parkedVersion: null,
+			restoring: null,
+		};
 	}
 
 	/** Lifecycle steps run one at a time; commands and file operations do not wait for each other. */
@@ -349,6 +418,17 @@ export class SandboxCore {
 		return gone;
 	}
 
+	/**
+	 * Drops the record of the snapshot the container was restored from, if it still names it: one failed restore is
+	 * enough to stop trusting a snapshot. A destroy someone asked for leaves it.
+	 */
+	#restoreFailed(): void {
+		const snapshot = this.#state.restoring;
+		if (snapshot === null) return;
+		dropSnapshot(this.#ports.sql, snapshot);
+		this.#ports.log("sandbox snapshot dropped", { snapshot });
+	}
+
 	/** Destroys the container when `generation` is still the current one: a late doubt never reaches the next. */
 	async #doubt(generation: Generation, reason: string): Promise<void> {
 		await this.#serial(async () => {
@@ -358,7 +438,8 @@ export class SandboxCore {
 
 	/**
 	 * After a restart: a container verified before is verified again before it is used, a parked one when it is
-	 * acquired; any other is destroyed.
+	 * acquired; any other is destroyed, a restored one whose folder was not checked yet and a retiring one too, whose
+	 * snapshot is then never recorded.
 	 */
 	async recover(): Promise<void> {
 		await this.#serial(async () => {
@@ -366,7 +447,7 @@ export class SandboxCore {
 			const state = this.#state;
 			if (!container) return;
 			if (container.running) {
-				if ((state.state === "verified" || state.state === "in_use") && state.incarnation !== null) {
+				if ((state.state === "verified" || state.state === "in_use") && state.incarnation !== null && state.restoring === null) {
 					const generation = new Generation(state.incarnation);
 					generation.reverify = true;
 					// The last scan's warnings went with the previous instance: parking cannot trust the folder.
@@ -389,6 +470,7 @@ export class SandboxCore {
 
 	status(): SandboxStatus {
 		const state = this.#state;
+		const record = readSnapshot(this.#ports.sql);
 		return {
 			state: state.state,
 			incarnation: state.incarnation,
@@ -396,10 +478,27 @@ export class SandboxCore {
 			attempt: state.attempt,
 			cleanupPending: state.cleanupPending,
 			startedAt: state.startedAt,
+			snapshot: record && { versionId: record.versionId, takenAt: record.takenAt },
 		};
 	}
 
-	start(fence: AttemptFence, spec: SandboxSpec): Promise<{ incarnation: string } | Refused | { failed: string }> {
+	/**
+	 * The snapshot a start for `versionId` restores: the record's, when it holds that version, was taken from what
+	 * `spec` and the image give now, in the current format, and was taken or last restored less than
+	 * SNAPSHOT_AGE_MS ago. An older record is dropped.
+	 */
+	async #restorable(spec: SandboxSpec, versionId: VersionId, image: string, now: number): Promise<string | null> {
+		const record = readSnapshot(this.#ports.sql);
+		if (!record) return null;
+		if (now - Math.max(record.takenAt, record.restoredAt ?? 0) >= SNAPSHOT_AGE_MS) {
+			dropSnapshot(this.#ports.sql, record.snapshotId);
+			return null;
+		}
+		const matches = record.versionId === versionId && record.format === (await snapshotFormat()) && record.digest === (await hardeningDigest(spec, this.#cgroup, image));
+		return matches ? record.snapshotId : null;
+	}
+
+	start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | { failed: string }> {
 		return this.#serial(async () => {
 			if (isSealed(this.#ports.sql, fence.runId)) return SEALED;
 			const container = this.#ports.container;
@@ -413,6 +512,7 @@ export class SandboxCore {
 				if (!(await this.#destroyNow("Replaced by a new start."))) return { failed: "The previous container could not be destroyed." };
 			}
 			const now = this.#ports.now();
+			const snapshot = restore ? await this.#restorable(spec, restore, container.image, now) : null;
 			const incarnation = this.#ports.id();
 			this.#write({
 				state: "starting",
@@ -428,22 +528,26 @@ export class SandboxCore {
 				leaseUntil: this.#lease(spec, now),
 				hardening: null,
 				parkedVersion: null,
+				restoring: snapshot,
 			});
 			this.#forget();
 			this.#generation = new Generation(incarnation);
 			try {
-				container.start({ enableInternet: false, instance: INSTANCE, labels: { incarnation } });
+				container.start({ enableInternet: false, instance: INSTANCE, labels: { incarnation }, ...(snapshot === null ? {} : { restore: snapshot }) });
 			} catch (error) {
+				this.#restoreFailed();
 				await this.#destroyNow(`The container did not start: ${String(error)}`);
 				return { failed: "The container did not start." };
 			}
 			if (!(await this.#ready())) {
+				this.#restoreFailed();
 				await this.#destroyNow("The container did not become ready.");
 				return { failed: "The container did not become ready." };
 			}
 			await this.#keepAlive();
 			await this.#schedule();
-			return { incarnation };
+			if (snapshot !== null) this.#ports.log("sandbox restored from a snapshot", { snapshot, version: restore ?? null });
+			return { incarnation, restored: snapshot !== null };
 		});
 	}
 
@@ -477,16 +581,19 @@ export class SandboxCore {
 				report = result.timedOut ? { ok: false, failed: hardeningReport(1, result.stdout, result.stderr).failed, output: "The hardening timed out." } : hardeningReport(result.exitCode, result.stdout, result.stderr);
 			} catch (error) {
 				if (error instanceof ContainerGone) {
+					this.#restoreFailed();
 					await this.#destroyNow(`The container stopped answering its hardening: ${error.message}`);
 					return { lost: "The container did not answer its hardening." };
 				}
 				report = { ok: false, failed: "workspace", output: String(error) };
 			}
 			if (!report.ok) {
+				this.#restoreFailed();
 				await this.#destroyNow(`The hardening failed at ${report.failed}.`);
 				return report;
 			}
-			this.#write({ ...this.#state, hardened: true, hardening: await hardeningDigest(state.spec, this.#cgroup) });
+			// Right after the start, so the row says what the container was started from.
+			this.#write({ ...this.#state, hardened: true, hardening: await hardeningDigest(state.spec, this.#cgroup, machine.container.image) });
 			return report;
 		});
 	}
@@ -511,10 +618,12 @@ export class SandboxCore {
 			if (state.state !== "hardening" || !state.hardened) return NOT_VERIFIED;
 			const report = await this.#verification();
 			if ("lost" in report) {
+				this.#restoreFailed();
 				await this.#destroyNow("The container stopped answering its verification.");
 				return report;
 			}
 			if (!report.ok) {
+				this.#restoreFailed();
 				await this.#destroyNow(`The verification failed: ${report.checks.filter((check) => !check.ok).map((check) => check.name).join(", ")}.`);
 				return report;
 			}
@@ -541,11 +650,15 @@ export class SandboxCore {
 		return this.#reverifying;
 	}
 
-	/** Admits a command or file operation (or, `exclusive`, a folder step) for `fence`; its generation when admitted. */
-	async #admit(fence: SandboxFence, exclusive: boolean): Promise<Refused | Generation> {
+	/**
+	 * Admits a command or file operation (or, `exclusive`, a folder step) for `fence`; its generation when admitted. A
+	 * restored container admits only its hydration (`seeding`) until its folder passed the check.
+	 */
+	async #admit(fence: SandboxFence, exclusive: boolean, seeding: boolean): Promise<Refused | Generation> {
 		for (;;) {
 			if (!this.#owns(fence)) return STALE;
 			if (this.#state.state !== "verified" && this.#state.state !== "in_use") return NOT_VERIFIED;
+			if (this.#state.restoring !== null && !seeding) return NOT_VERIFIED;
 			const generation = this.#generation;
 			if (!generation || generation.incarnation !== fence.incarnation) return STOPPED;
 			if (generation.reverify) {
@@ -588,6 +701,7 @@ export class SandboxCore {
 	async #lost(generation: Generation): Promise<Refused> {
 		await this.#serial(async () => {
 			if (this.#generation !== generation || this.#state.state === "none") return;
+			this.#restoreFailed();
 			const container = this.#ports.container;
 			if (container?.running) await this.#destroyNow("A call found the container unusable.");
 			else {
@@ -599,8 +713,8 @@ export class SandboxCore {
 		return STOPPED;
 	}
 
-	async #admitted<T>(fence: SandboxFence, exclusive: boolean, work: (machine: Machine, generation: Generation) => Promise<T>): Promise<T | Refused> {
-		const admitted = await this.#admit(fence, exclusive);
+	async #admitted<T>(fence: SandboxFence, exclusive: boolean, work: (machine: Machine, generation: Generation) => Promise<T>, seeding = false): Promise<T | Refused> {
+		const admitted = await this.#admit(fence, exclusive, seeding);
 		if (!(admitted instanceof Generation)) return admitted;
 		try {
 			const machine = this.#machine(admitted);
@@ -655,13 +769,64 @@ export class SandboxCore {
 	}
 
 	hydrate(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused> {
-		return this.#admitted(fence, true, async (machine, generation) => {
-			const spec = this.#state.spec as SandboxSpec;
-			generation.scanned = null;
-			const { result, index } = await hydrate(machine, this.#ports.bucket(spec.workspace), plan, spec.folderEntries);
-			if (index && generation.live) generation.index = index;
-			return result;
-		});
+		return this.#admitted(
+			fence,
+			true,
+			async (machine, generation) => {
+				const spec = this.#state.spec as SandboxSpec;
+				generation.scanned = null;
+				const restoring = this.#state.restoring;
+				if (restoring !== null) return await this.#seed(machine, generation, spec, plan, restoring);
+				const { result, index } = await hydrate(machine, this.#ports.bucket(spec.workspace), plan, spec.folderEntries);
+				if (index && generation.live) generation.index = index;
+				return result;
+			},
+			true,
+		);
+	}
+
+	/**
+	 * A restored container's hydration: the archive its snapshot holds goes into the folder, and the folder must then be
+	 * exactly the plan. The run may use it from then on, and the check's index vouches for its files. Anything else
+	 * destroys the container and drops the record, through the serial queue and only while the generation is the
+	 * current one; a cached folder is never patched.
+	 */
+	async #seed(machine: Machine, generation: Generation, spec: SandboxSpec, plan: HydratePlan, snapshot: string): Promise<HydrateResult | Refused> {
+		const seeded = await this.#seeded(machine, spec, plan, snapshot);
+		if (typeof seeded === "string") {
+			await this.#serial(async () => {
+				if (this.#generation !== generation) return;
+				this.#restoreFailed();
+				await this.#destroyNow(seeded);
+			});
+			return { ok: false, reason: "restore_failed", message: seeded };
+		}
+		if (!generation.live) return STOPPED;
+		this.#write({ ...this.#state, restoring: null });
+		generation.index = seeded.index;
+		snapshotRestored(this.#ports.sql, snapshot, this.#ports.now());
+		this.#ports.log("sandbox folder seeded", { snapshot, ...seeded.ms });
+		return { ok: true, restored: seeded.ms };
+	}
+
+	/**
+	 * The seed and the check: the agent's tar extracts the archive, then a scan hashes every file again and
+	 * must find the plan's files and directories and nothing else. The scan's index and each step's time, or why the
+	 * folder is not the plan.
+	 */
+	async #seeded(machine: Machine, spec: SandboxSpec, plan: HydratePlan, snapshot: string): Promise<{ index: FolderIndex; ms: { seedMs: number; checkMs: number } } | string> {
+		const record = readSnapshot(this.#ports.sql);
+		if (record?.snapshotId !== snapshot || record.versionId !== plan.versionId) return "The snapshot does not hold the plan's version.";
+		const started = this.#ports.now();
+		const extract = wrapperArgv(this.#cgroup, { command: FOLDER_EXTRACT, cwd: "/", env: helperEnvironment(), timeoutSeconds: FOLDER_SECONDS });
+		const seeded = await runRoot(machine, seedArgv(extract), { timeoutMs: FOLDER_SECONDS * 1000 + SEED_GRACE_MS });
+		if (seeded.exitCode !== 0 || seeded.timedOut) return `The archive could not be seeded (exit ${seeded.exitCode}): ${seeded.stderr.slice(-200)}`;
+		const seedMs = this.#ports.now() - started;
+		const { result, index } = await scan(machine, new Map(), { bytes: spec.folderBytes, entries: spec.folderEntries }, true);
+		if (!result.ok || !index) return "The restored folder could not be scanned.";
+		const difference = restoredDifference(plan, result);
+		if (difference) return `The restored folder differs from the plan at ${JSON.stringify(difference.path)} (${difference.field}).`;
+		return { index, ms: { seedMs, checkMs: this.#ports.now() - started - seedMs } };
 	}
 
 	scan(fence: SandboxFence, options: { rehashAll: boolean }): Promise<ScanResult | Refused> {
@@ -727,8 +892,8 @@ export class SandboxCore {
 		return this.#serial(async () => {
 			sealRun(this.#ports.sql, runId, this.#ports.now());
 			const state = this.#state;
-			// A parked container is the conversation's, waiting for its next run; the run's span closed when it parked.
-			if (state.runId === runId && state.state !== "none" && state.state !== "parked" && !state.cleanupPending) await this.#destroyNow("The run has ended.");
+			// A parked or retiring container is the conversation's, not the run's; the run's span closed when it parked.
+			if (state.runId === runId && state.state !== "none" && state.state !== "parked" && state.state !== "retiring" && !state.cleanupPending) await this.#destroyNow("The run has ended.");
 			return readSpans(this.#ports.sql, runId);
 		});
 	}
@@ -774,7 +939,7 @@ export class SandboxCore {
 				await this.#destroyNow(failed);
 				return { parked: false };
 			}
-			this.#write({ ...this.#state, state: "parked", parkedVersion: versionId, leaseUntil: this.#ports.now() + PARKED_MS });
+			this.#write({ ...this.#state, state: "parked", parkedVersion: versionId, leaseUntil: this.#ports.now() + (this.#ports.parkedMs ?? PARKED_MS) });
 			await this.#keepAlive();
 			await this.#schedule();
 			this.#ports.log("sandbox parked", { version: versionId });
@@ -799,7 +964,7 @@ export class SandboxCore {
 			}
 			let refusal: string | null = null;
 			if (state.parkedVersion !== versionId) refusal = "The parked folder is not the version the run starts from.";
-			else if (!validSpec(spec) || state.hardening !== (await hardeningDigest(spec, this.#cgroup))) refusal = "The parked container was hardened differently from what the run asks.";
+			else if (!validSpec(spec) || state.hardening !== (await hardeningDigest(spec, this.#cgroup, container.image))) refusal = "The parked container was started or hardened differently from what the run asks.";
 			if (refusal !== null) {
 				await this.#destroyNow(refusal);
 				return { acquired: false, reason: refusal };
@@ -828,30 +993,95 @@ export class SandboxCore {
 		});
 	}
 
-	/**
-	 * Retries an owed destroy, and destroys a container nobody used for too long or past its run's deadline.
-	 * Work still running then gets a little longer, never more than HARD_GRACE_MS past the lease, after which
-	 * the container is destroyed whatever runs: a hung call cannot keep it.
-	 */
-	alarm(): Promise<void> {
+	forget(): Promise<void> {
 		return this.#serial(async () => {
+			dropSnapshot(this.#ports.sql);
+			if (this.#state.state === "retiring") await this.#destroyNow("The conversation's snapshot was forgotten.");
+		});
+	}
+
+	/**
+	 * Retries an owed destroy, and destroys a container nobody used for too long or past its run's deadline; a parked
+	 * one retires, with a snapshot when one would be used. Work still running then gets a little longer, never more
+	 * than HARD_GRACE_MS past the lease, after which the container is destroyed whatever runs: a hung call cannot keep
+	 * it. Alarms do not overlap, so the retire, which runs after the queued step, holds its own deadline.
+	 */
+	async alarm(): Promise<void> {
+		const retiring = await this.#serial(async (): Promise<Retiring | null> => {
 			const state = this.#state;
 			const now = this.#ports.now();
 			if (state.cleanupPending) {
 				await this.#destroyNow(state.cleanupReason ?? "An owed destroy.");
-				return;
+				return null;
 			}
 			if (state.state !== "none" && state.leaseUntil !== null && state.leaseUntil <= now) {
 				const generation = this.#generation;
 				if (generation && (generation.inflight > 0 || generation.exclusive) && now < state.leaseUntil + HARD_GRACE_MS) {
 					await this.#ports.alarm(Math.min(now + 60_000, state.leaseUntil + HARD_GRACE_MS));
-					return;
+					return null;
 				}
-				const reason = state.state === "parked" ? PARKED_REASON : state.spec?.deadline ? "The run's deadline passed." : "The sandbox was not used for an hour.";
+				const retiring = state.state === "parked" ? await this.#retiring(now) : null;
+				if (retiring) return retiring;
+				const reason = state.state === "parked" || state.state === "retiring" ? PARKED_REASON : state.spec?.deadline ? "The run's deadline passed." : "The sandbox was not used for an hour.";
 				await this.#destroyNow(reason);
-				return;
+				return null;
 			}
 			await this.#schedule();
+			return null;
 		});
+		if (retiring) await this.#retire(retiring);
+	}
+
+	/**
+	 * At the parked lease, in the serial queue: the parked container is written `retiring` when a snapshot of it would
+	 * be used, and null leaves it to be destroyed. None would be when the class starts no named image, the folder has
+	 * no version (it is empty), the container was started or hardened otherwise than the current code gives its spec
+	 * (a start would never restore it), or the record holds this version already, taken as it would be now.
+	 */
+	async #retiring(now: number): Promise<Retiring | null> {
+		const state = this.#state;
+		const generation = this.#generation;
+		const machine = this.#machine(generation);
+		if (!generation || !machine || !machine.container.image || state.parkedVersion === null || !state.spec) return null;
+		const digest = await hardeningDigest(state.spec, this.#cgroup, machine.container.image);
+		const format = await snapshotFormat();
+		const record = readSnapshot(this.#ports.sql);
+		if (state.hardening !== digest || (record?.versionId === state.parkedVersion && record.digest === digest && record.format === format)) return null;
+		const deadline = now + RETIRE_MS;
+		this.#write({ ...state, state: "retiring", leaseUntil: deadline });
+		await this.#schedule();
+		return { generation, machine, versionId: state.parkedVersion, digest, format, deadline };
+	}
+
+	/**
+	 * The retire's archive and snapshot, outside the serial queue so a start is never held behind them. The outcome comes
+	 * back through the queue and counts only while the retiring generation is the current one: a start, `forget` or a
+	 * deletion ends it first, so a retire that finishes after them neither records a snapshot nor destroys the next
+	 * container. A snapshot that completes after its container was destroyed is recorded nowhere and expires.
+	 */
+	async #retire({ generation, machine, versionId, digest, format, deadline }: Retiring): Promise<void> {
+		const started = this.#ports.now();
+		let snapshot: { id: string; size: number } | null = null;
+		let failed: string | null = null;
+		try {
+			const result = await runRoot(machine, retireArgv(this.#cgroup), { timeoutMs: Math.max(0, deadline - this.#ports.now()) });
+			if (result.timedOut || (result.exitCode !== 0 && result.exitCode !== RETIRE_SMALL)) {
+				failed = `The folder could not be archived (exit ${result.exitCode}): ${result.stderr.slice(-200)}`;
+			} else if (result.exitCode === 0) {
+				// The container port is the object's, not the incarnation's: once a start replaced this generation, the call
+				// would snapshot the new container. Nothing awaits between this check and the call.
+				if (!generation.live || this.#generation !== generation) failed = "The retiring container was replaced.";
+				else snapshot = await within(machine.container.snapshot(versionId), Math.max(0, deadline - this.#ports.now()), "The snapshot did not answer in time.");
+			}
+		} catch (error) {
+			failed = error instanceof Error ? error.message : String(error);
+		}
+		const ms = this.#ports.now() - started;
+		await this.#serial(async () => {
+			if (this.#generation !== generation) return;
+			if (snapshot) writeSnapshot(this.#ports.sql, { snapshotId: snapshot.id, versionId, digest, format, takenAt: this.#ports.now(), restoredAt: null });
+			await this.#destroyNow(failed === null ? PARKED_REASON : `${PARKED_REASON} Its snapshot failed: ${failed}`);
+		});
+		this.#ports.log("sandbox retired", { version: versionId, snapshot: snapshot?.id ?? null, bytes: snapshot?.size ?? null, ms, failed });
 	}
 }

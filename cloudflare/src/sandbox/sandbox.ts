@@ -13,7 +13,7 @@ import { appliedMigrations, migrate } from "../lib/sqlite.ts";
 import type { AttemptFence, RunId, VersionId } from "../shared/rpc.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "./commands.ts";
 import type { SandboxSpec } from "./constants.ts";
-import { type Acquired, type Lost, type NotAcquired, type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus } from "./core.ts";
+import { type Acquired, type Lost, type NotAcquired, type Refused, type SandboxApi, SandboxCore, type SandboxFence, type SandboxStatus, type Started } from "./core.ts";
 import type { FsRequest, FsResponse } from "./files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "./folder.ts";
 import type { HardeningReport, VerificationReport } from "./hardening.ts";
@@ -29,13 +29,19 @@ export function objectPorts(ctx: DurableObjectState, env: Env, overrides: Partia
 				get running() {
 					return container.running;
 				},
-				start(options) {
+				get image() {
+					return container.images.base ?? "";
+				},
+				start({ restore, ...options }) {
+					// The platform refuses an image beside a snapshot: a restore starts the image the snapshot was taken from.
 					const image = container.images.base;
-					container.start({ ...options, ...(image ? { image } : {}) } as ContainerStartupOptions);
+					if (restore !== undefined) container.start({ ...options, containerSnapshot: { id: restore } });
+					else container.start({ ...options, ...(image ? { image } : {}) } as ContainerStartupOptions);
 				},
 				exec: (argv, options) => container.exec(argv, options),
 				destroy: (reason) => container.destroy(reason),
 				setInactivityTimeout: (ms) => container.setInactivityTimeout(ms),
+				snapshot: (name) => container.snapshotContainer({ name }),
 			}
 		: null;
 	return {
@@ -75,8 +81,8 @@ export class Sandbox extends DurableObject<Env> implements SandboxApi {
 		return { kind: "sandbox", ...identity(this.ctx), migrations: appliedMigrations(this.ctx.storage) };
 	}
 
-	async start(fence: AttemptFence, spec: SandboxSpec): Promise<{ incarnation: string } | Refused | { failed: string }> {
-		return this.core.start(fence, spec);
+	async start(fence: AttemptFence, spec: SandboxSpec, restore?: VersionId | null): Promise<Started | Refused | { failed: string }> {
+		return this.core.start(fence, spec, restore);
 	}
 
 	async harden(fence: SandboxFence): Promise<HardeningReport | Refused | Lost> {
@@ -129,6 +135,10 @@ export class Sandbox extends DurableObject<Env> implements SandboxApi {
 
 	async acquire(fence: AttemptFence, spec: SandboxSpec, versionId: VersionId | null): Promise<Acquired | NotAcquired | Refused> {
 		return this.core.acquire(fence, spec, versionId);
+	}
+
+	async forget(): Promise<void> {
+		await this.core.forget();
 	}
 
 	async status(): Promise<SandboxStatus> {

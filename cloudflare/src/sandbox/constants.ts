@@ -35,6 +35,8 @@ export const AGENT_GID = 1000;
 
 /** The conversation's folder: a tmpfs of the folder's limits, executable, owned by the agent. */
 export const WORKSPACE = "/workspace";
+/** The agent's extraction of an archive into the folder, as hydration and a restored container's seed run it. */
+export const FOLDER_EXTRACT: readonly string[] = ["tar", "-x", "-f", "-", "-C", WORKSPACE, "--no-same-owner", "--preserve-permissions"];
 /** A tmpfs, noexec: the commands' TMPDIR, with their HOME and matplotlib's cache in it. */
 export const TMP = "/tmp";
 export const HOME = "/tmp/home";
@@ -84,8 +86,23 @@ export const KILL_AFTER_SECONDS = 5;
 
 /** How long a running container may go unused before the Sandbox destroys it, when its run has no deadline. */
 export const IDLE_MS = 60 * 60 * 1000;
-/** How long a parked container waits for the conversation's next run before the Sandbox destroys it. */
+/** How long a parked container waits for the conversation's next run before it retires. */
 export const PARKED_MS = 5 * 60_000;
+/** How long a retiring container has for the archive of its folder and its snapshot, together. */
+export const RETIRE_MS = 3 * 60_000;
+/** A snapshot taken or last restored this long ago is not restored: the platform keeps one 30 days past either. */
+export const SNAPSHOT_AGE_MS = 29 * 24 * 60 * 60_000;
+/** A retiring folder under both is not snapshotted: it hydrates from R2 quickly, and a snapshot costs the container about 5 s even when empty. */
+export const SNAPSHOT_FILES = 300;
+export const SNAPSHOT_BYTES = 20_000_000;
+/**
+ * Where a retiring container archives its folder, on the root disk a snapshot keeps (a tmpfs it does not): one
+ * archive in a directory of root's, 0700, so the agent never reaches it on a restored container. An archive rather
+ * than a copied tree, since a snapshot keeps a file's bytes but not always its metadata: `docker commit` keeps
+ * whole seconds of a file's mtime, which the folder's check would then refuse.
+ */
+export const FOLDER_ARCHIVE_DIR = "/var/lib/minerva";
+export const FOLDER_ARCHIVE = `${FOLDER_ARCHIVE_DIR}/folder.tar`;
 /** How long past its run's deadline a container is kept, for the run's last checkpoint. */
 export const DEADLINE_GRACE_MS = 2 * 60 * 1000;
 /** How long past its lease a container may stay for work that is still running; container time is charged to no later. */

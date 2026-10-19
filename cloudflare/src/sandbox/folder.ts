@@ -8,10 +8,10 @@ import { Files } from "@cloudflare/sandbox";
 import { MAX_MTIME } from "../files/limits.ts";
 import { type FileMode, isValidPath } from "../files/manifest.ts";
 import type { EpochMs, Sha256, VersionId } from "../shared/rpc.ts";
-import { AGENT_GID, AGENT_UID, FILE_OPERATION_SECONDS, WORKSPACE } from "./constants.ts";
+import { AGENT_GID, AGENT_UID, FILE_OPERATION_SECONDS, FOLDER_EXTRACT, WORKSPACE } from "./constants.ts";
 import type { BucketPort } from "./ports.ts";
 import { ContainerGone, helperEnvironment, type Machine, spawn, startWrapped } from "./process.ts";
-import { FOLDER_SECONDS, type FolderIndex, list } from "./scan.ts";
+import { FOLDER_SECONDS, type FolderIndex, list, type ScanResult } from "./scan.ts";
 import { END, entryHeader, FILE, padding, TarReader } from "./tar.ts";
 
 /** What a run starts from: the hydrate version's files, each read from R2 once per distinct hash where it can be. */
@@ -21,7 +21,13 @@ export interface HydratePlan {
 	dirs: string[];
 }
 
-export type HydrateResult = { ok: true } | { ok: false; reason: "not_empty" | "invalid_path" | "blob_missing" | "mismatch" | "failed"; message: string };
+/**
+ * A hydration's answer. A restored container's says how long the seed and the check took; `restore_failed` is its
+ * folder failing the check, after which the container is destroyed.
+ */
+export type HydrateResult =
+	| { ok: true; restored?: { seedMs: number; checkMs: number } }
+	| { ok: false; reason: "not_empty" | "invalid_path" | "blob_missing" | "mismatch" | "failed" | "restore_failed"; message: string };
 
 /**
  * Files to save, each already recorded by the Conversation Durable Object under its R2 key before it is
@@ -113,8 +119,7 @@ export async function hydrate(machine: Machine, bucket: BucketPort, plan: Hydrat
 		return fail("failed", "The folder could not be read.");
 	}
 
-	const command = ["tar", "-x", "-f", "-", "-C", WORKSPACE, "--no-same-owner", "--preserve-permissions"];
-	const wrapped = await startWrapped(machine, { command, cwd: "/", env: helperEnvironment(), timeoutSeconds: FOLDER_SECONDS }, { stdin: "pipe", stderr: "ignore" });
+	const wrapped = await startWrapped(machine, { command: FOLDER_EXTRACT, cwd: "/", env: helperEnvironment(), timeoutSeconds: FOLDER_SECONDS }, { stdin: "pipe", stderr: "ignore" });
 	if (!wrapped.admission.started) return fail("failed", "The folder could not be prepared.");
 	const writer = (wrapped.proc.stdin as WritableStream<Uint8Array>).getWriter();
 	const send = async (bytes: Uint8Array) => {
@@ -274,6 +279,32 @@ export async function hydrate(machine: Machine, bucket: BucketPort, plan: Hydrat
 	}
 	if (found !== plan.files.length) return fail("failed", "The folder does not hold the planned files.");
 	return { result: { ok: true }, index };
+}
+
+/**
+ * Where a restored folder's scan first differs from the plan, or null when it is the plan: the same files, each with
+ * the plan's size, mode, mtime and SHA-256, the same empty directories, and nothing the scan left out. It is the
+ * manifest's equality, which a checkpoint and an acquired parked folder rely on too.
+ */
+export function restoredDifference(plan: HydratePlan, scanned: Extract<ScanResult, { ok: true }>): { path: string; field: string } | null {
+	const warning = scanned.warnings.items[0];
+	if (warning) return { path: warning.path, field: warning.reason };
+	const planned = new Map(plan.files.map((file) => [file.path, file]));
+	for (const file of scanned.manifest.files) {
+		const wanted = planned.get(file.path);
+		if (!wanted) return { path: file.path, field: "extra file" };
+		planned.delete(file.path);
+		if (scanned.sizes[file.path] !== wanted.size) return { path: file.path, field: "size" };
+		if (file.mode !== wanted.mode) return { path: file.path, field: "mode" };
+		if (file.mtime !== wanted.mtime) return { path: file.path, field: "mtime" };
+		if (file.sha256 !== wanted.sha256) return { path: file.path, field: "sha256" };
+	}
+	const [missing] = planned.keys();
+	if (missing !== undefined) return { path: missing, field: "missing file" };
+	const dirs = new Set(plan.dirs);
+	for (const dir of scanned.manifest.dirs) if (!dirs.delete(dir)) return { path: dir, field: "extra directory" };
+	const [absent] = dirs;
+	return absent === undefined ? null : { path: absent, field: "missing directory" };
 }
 
 type PlannedFile = CheckpointUploadPlan["files"][number];
