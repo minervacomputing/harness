@@ -1,4 +1,4 @@
-// pi's deletion by session (src/conversation/pi-tables.ts; docs/plans/chunk-15a-design.md, pi's tables, The two outcomes)
+// pi's deletion by session (src/conversation/pi-tables.ts)
 // over node:sqlite, with pi-durable's own Harness on PiHarness's session store, so its tables are the `pi_` ones the
 // Conversation has. Each turn is a run's: a session seeded with history, claimed in `runs`, one input `run:<id>`, a tool
 // call and an answer. A session is deleted while the same Harness stays open with its documents cached, then other sessions

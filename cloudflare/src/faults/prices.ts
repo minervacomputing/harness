@@ -1,4 +1,4 @@
-// The test build's prices (docs/plans/chunk-14b-design.md, The price table): the fake model's beside the configured route's,
+// The test build's prices: the fake model's beside the configured route's,
 // and time at round numbers, so that tests read their charges at a glance.
 
 import type { PriceTable, RoutePrices } from "@minerva/contract/internal";

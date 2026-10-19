@@ -141,7 +141,7 @@ export interface Tenant {
 }
 
 /**
- * How a connector's resources belong to organizations, which connection policies limit (docs/plans/chunk-17-design.md).
+ * How a connector's resources belong to organizations, which connection policies limit.
  * `account`: a token reaches one tenant, which `account()` names. `resource`: a token reaches several, so every resource it
  * resolves or returns and every item discovery lists names its `tenant`, from what the provider answered for that call, and
  * `tenants` names those of resources a grant edit allows, leaving out any it cannot place. `unknown`: a policy can only offer

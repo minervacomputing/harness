@@ -14,8 +14,7 @@ export function outputCap(requested: unknown, cap: number): number {
 
 /**
  * What a call is counted at when it settles unmetered: the context window pi is told and the call's output cap. A
- * provisional accounting policy, not an enforced bound, until chunk 14b proves one per route (chunk-14a-design.md,
- * amendment 5).
+ * provisional accounting policy, not an enforced bound, until chunk 14b proves one per route.
  */
 export function reservation(cap: number): { input: number; output: number } {
 	return { input: CONTEXT_WINDOW, output: cap };

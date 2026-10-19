@@ -1,4 +1,4 @@
-// Retention in local workerd (docs/plans/chunk-15a-design.md): the `retain` job on the Conversation's alarm deletes a fact
+// Retention in local workerd: the `retain` job on the Conversation's alarm deletes a fact
 // only 7 days after Laravel acknowledged it, raising the floor, and a replay or a gap from below the floor is refused rather
 // than skipping what is gone (Facts and the floor); it deletes a run's own records and its pi session 30 days after the run
 // ended, keeping its row, its answer and its tombstone, and the pi sessions no run names (A run's steps, pi's tables); and it

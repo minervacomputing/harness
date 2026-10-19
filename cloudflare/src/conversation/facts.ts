@@ -1,4 +1,4 @@
-// A Laravel conversation's facts (docs/plans/credentials-and-facts.md, The outbox of facts): what its runs did, as the
+// A Laravel conversation's facts: what its runs did, as the
 // contract's `Fact`s (contract/src/internal/facts.ts), written by the store in the transaction that makes the change each
 // describes and delivered to Laravel in order. This module holds the pure parts: the facts' shapes as the store makes them,
 // and the delivery's rules for reading Laravel's answers.
@@ -71,7 +71,7 @@ export function callFact(record: { call: string; provider: string; model: string
 	}
 }
 
-/** What a delivery makes of Laravel's answer to a batch (docs/plans/credentials-and-facts.md, Delivered in order). */
+/** What a delivery makes of Laravel's answer to a batch. */
 export type DeliveryVerdict =
 	/** Laravel holds the batch: its new watermark. */
 	| { kind: "acknowledged"; acknowledged: number }

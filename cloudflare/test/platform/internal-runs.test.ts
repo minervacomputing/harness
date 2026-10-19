@@ -1,4 +1,4 @@
-// Laravel's `startRun` and `cancelRun` in workerd (docs/plans/start-and-cancel.md): through the internal mount behind an
+// Laravel's `startRun` and `cancelRun` in workerd: through the internal mount behind an
 // Access assertion, the recovery index in D1, and the Conversation object, whose turns answer with the fake model.
 
 import { runInDurableObject } from "cloudflare:test";

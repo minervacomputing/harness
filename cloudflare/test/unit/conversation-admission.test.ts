@@ -1,4 +1,4 @@
-// A model call's admission (docs/plans/chunk-14b-design.md, Admission at the call record): before each call the store
+// A model call's admission: before each call the store
 // compares the run's spend so far (its settled calls and ended scripts, its open scripts and its container time until
 // now) with its allowance, and a run that reached it ends with `budget_reached` in the same change, recording nothing. The
 // store runs over node:sqlite with every schema step applied.

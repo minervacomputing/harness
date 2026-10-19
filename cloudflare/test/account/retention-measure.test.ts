@@ -1,4 +1,4 @@
-// Chunk 15a's measurement (docs/plans/chunk-15a-design.md, pi's tables, The measurement) on the test instance: 20 turns, one
+// Chunk 15a's measurement on the test instance: 20 turns, one
 // after another in one conversation, of the fake model, each a tool call and an answer of 2,000 characters, and each start
 // with the conversation's history as Laravel sends it (its latest MAX_HISTORY messages). After each turn's run.settled has
 // reached the fake Laravel, the driver reads the object's storage: `databaseSize`, and per table its rows and the bytes of its

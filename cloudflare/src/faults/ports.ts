@@ -32,13 +32,13 @@
 //
 // A conversation whose plan sets `run_timeout_ms` starts Laravel's runs with that deadline, one whose plan sets `pi_settle_ms`
 // lets a start wait that long for pi's earlier work before it resets the object (the bound, pi-stops.ts), and one whose plan
-// sets `retention` keeps what it holds for those periods instead of RETENTION's (docs/plans/chunk-15a-design.md, Periods),
+// sets `retention` keeps what it holds for those periods instead of RETENTION's,
 // such as minutes.
 // A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
 // part of the production Worker.
 //
-// `model` set to `fake-remote` gets the fake model with one request to FAKE_MODEL_HOST before each answer (the perf probe,
-// docs/plans/chunk-14a-design.md), so each call sends a real outbound message, which the output gate holds until the object's
+// `model` set to `fake-remote` gets the fake model with one request to FAKE_MODEL_HOST before each answer (the perf probe),
+// so each call sends a real outbound message, which the output gate holds until the object's
 // writes are durable. Each call of a run is marked in memory (`CallMarks`, read with `faultView`), on the object's clock,
 // which moves only when I/O completes. `calibrate` ({bytes, write}) writes that many random bytes through `outside` before
 // each such request, as a record written before the send would, to show that the marks see a write; with `write` false it

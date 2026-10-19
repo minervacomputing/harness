@@ -113,7 +113,7 @@ export interface CallRequest {
 }
 
 /**
- * How a counted call ended (docs/plans/chunk-14a-design.md, Settlement states). `lost` is the restart rule's: a call another
+ * How a counted call ended. `lost` is the restart rule's: a call another
  * instance recorded and never settled (store.ts `settleLost`).
  */
 export type CallOutcome = { outcome: "reported"; tokens: Tokens } | { outcome: "refused" } | { outcome: "unmetered"; cause: "no_usage" | "stopped" | "failed" | "lost" };

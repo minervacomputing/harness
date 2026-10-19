@@ -1,4 +1,4 @@
--- The engine's own accounts retire (docs/plans/chunk-13c-design.md): Laravel holds the people, organizations, workspaces and
+-- The engine's own accounts retire: Laravel holds the people, organizations, workspaces and
 -- connections, and the engine reads only the recovery index, its identity row and D1's migrations table. Every other table
 -- goes, with its rows and indexes; instance_identity, recovery_conversations and recovery_runs stay as they are.
 --

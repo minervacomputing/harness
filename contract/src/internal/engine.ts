@@ -39,7 +39,7 @@ export const LayerInput = z.object({
 export const TenantId = z.string().min(1).max(256)
 
 /**
- * An organization's connection policy as Laravel stores it (docs/plans/chunk-17-design.md): the connectors it offers, each with
+ * An organization's connection policy as Laravel stores it: the connectors it offers, each with
  * the tenants it allows, or null for any. Without one, every connector is offered with any tenant.
  */
 export const ConnectionPolicy = z.object({

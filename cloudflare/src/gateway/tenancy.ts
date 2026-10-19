@@ -1,4 +1,4 @@
-// Connection policies (docs/plans/chunk-17-design.md): which connections an organization's policy admits, and the tenants
+// Connection policies: which connections an organization's policy admits, and the tenants
 // a connection with a tenant per resource is limited to. Pure: the compile (tools.ts), the executor and the settings calls
 // (internal/connections.ts) decide with it.
 

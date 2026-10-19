@@ -1,4 +1,4 @@
-// Connection policies in Laravel's runs (docs/plans/chunk-17-design.md): the policy a start carries decides which of its
+// Connection policies in Laravel's runs: the policy a start carries decides which of its
 // connections the run is offered, and the tenants it limits a connection to are checked on the run's calls. The fake
 // Laravel the test build hosts lends the credential, and an in-memory GitHub answers the run's requests.
 

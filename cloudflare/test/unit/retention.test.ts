@@ -1,4 +1,4 @@
-// The facts' retention (docs/plans/chunk-15a-design.md, Facts and the floor): a `retain` pass over the store on node:sqlite
+// The facts' retention: a `retain` pass over the store on node:sqlite
 // with every schema step applied, on a clock the test moves, against a host that records what the pass schedules.
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";

@@ -1,4 +1,4 @@
-// The perf probe of chunk 14a (docs/plans/chunk-14a-design.md, Perf probe and rule) on the test instance: 20 turns, one after
+// The perf probe of chunk 14a on the test instance: 20 turns, one after
 // another in one conversation, each of six model calls of the `fake-remote` model (src/faults/ports.ts), whose first five
 // answers call a tool that does not exist, which pi answers at once with an error. Each call sends one request to a
 // FaultProvider of the workspace's that does nothing else before its answer, and the Conversation marks it on its own clock, which moves only when I/O
@@ -14,8 +14,8 @@
 //   start does after it (the attempt, pi's session and submit), pi's first step, the call's admission, the output gate's
 //   wait and one round trip.
 //
-// Every turn is given a large allowance, so each call's admission runs its check (docs/plans/chunk-14b-design.md, Perf probe
-// and rule) and none is refused.
+// Every turn is given a large allowance, so each call's admission runs its check
+// and none is refused.
 //
 // Run only with MINERVA_PERF=1, and then alone (vitest.faults.config.ts): `MINERVA_PERF=1 pnpm test:faults` after
 // `pnpm run deploy:test`. MINERVA_PERF_CALIBRATE=write writes 1 MiB of random bytes (MINERVA_PERF_CALIBRATE_BYTES) through

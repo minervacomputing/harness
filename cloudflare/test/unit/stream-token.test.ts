@@ -1,4 +1,4 @@
-// The stream token (docs/plans/credentials-and-facts.md, The token): its keys, and every check a token must pass.
+// The stream token: its keys, and every check a token must pass.
 
 import { SignJWT } from "jose";
 import { describe, expect, test } from "vitest";

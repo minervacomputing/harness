@@ -1,4 +1,4 @@
-// What a Laravel start becomes before anything is stored (docs/plans/start-and-cancel.md, startRun): the checks of the
+// What a Laravel start becomes before anything is stored: the checks of the
 // message alone, and the preparation, which compiles the run's snapshot from the command's raw authority
 // (gateway/tools.ts `startSnapshot`) and selects its history with history.ts. Pure, but for hashing: the Conversation
 // object stores the preparation once and every later try of the start uses it, so a run compiles once.

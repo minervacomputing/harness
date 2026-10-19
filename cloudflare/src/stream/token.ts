@@ -1,4 +1,4 @@
-// The stream token (docs/plans/credentials-and-facts.md, The stream): a JWT that Laravel signs for one run, which the
+// The stream token: a JWT that Laravel signs for one run, which the
 // browser sends to read that run's events. HS256 with a key both sides hold (MINERVA_STREAM_KEYS), naming the key by
 // `kid`; the claims name the engine's environment, the organization, the conversation and the run, and it lives at most
 // five minutes. Anything that does not check out is refused, and nothing says why.

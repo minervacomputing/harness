@@ -1,4 +1,4 @@
-// A Laravel conversation's credentials, facts and stream in workerd (docs/plans/credentials-and-facts.md): leases from the
+// A Laravel conversation's credentials, facts and stream in workerd: leases from the
 // fake Laravel, the facts its runs write, delivered in order and acknowledged, replayed, bounded, and Laravel's run stream
 // with a stream token.
 

@@ -1,4 +1,4 @@
-// Chunk 15a's perf probe (docs/plans/chunk-15a-design.md, Perf probe and rule) on the test instance, in conversations of
+// Chunk 15a's perf probe on the test instance, in conversations of
 // their own: TURNS turns of the fake model, one after another, each a tool call and an answer of 2,000 characters, each start
 // with the conversation's history as Laravel sends it (its latest MAX_HISTORY messages), so the history grows to its cap; one
 // large turn of 200 tool calls and a streamed answer, whose events the driver then makes 10,000 (`events`: the stream writes

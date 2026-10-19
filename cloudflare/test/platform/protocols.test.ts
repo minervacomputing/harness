@@ -415,7 +415,7 @@ describe("starts the store refuses", () => {
 			state.storage.sql.exec("CREATE TRIGGER refuse_runs BEFORE INSERT ON runs BEGIN SELECT RAISE(ABORT, 'string or blob too big'); END");
 		});
 		const start = startIn(w, script([{ text: "Hi." }]));
-		// A stored refusal would be final (docs/plans/start-and-cancel.md, Errors are not refusals): Laravel sends it again.
+		// A stored refusal would be final: Laravel sends it again.
 		expect((await refusalOf(commands.startRun(start))).status).toBeGreaterThanOrEqual(500);
 		expect((await refusalOf(commands.startRun(start))).status).toBeGreaterThanOrEqual(500);
 		const inside = await runInDurableObject(w.stub, (_instance, state) => ({

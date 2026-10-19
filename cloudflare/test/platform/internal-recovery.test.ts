@@ -1,4 +1,4 @@
-// Laravel's `listConversations` in workerd (docs/plans/chunk-15c-design.md, The listing): through the internal mount behind an
+// Laravel's `listConversations` in workerd: through the internal mount behind an
 // Access assertion, over the recovery index in D1 as the commands and the fake model's turns leave it. Each test names its
 // conversations in a block of ids of its own, so a listing from just below the block answers them alone.
 

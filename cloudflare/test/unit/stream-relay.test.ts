@@ -1,4 +1,4 @@
-// The relay's end at a stream token's expiry (docs/plans/credentials-and-facts.md, The route): what the client has not
+// The relay's end at a stream token's expiry: what the client has not
 // taken is dropped when the grant ends, also once the run's end was relayed.
 
 import { describe, expect, test } from "vitest";

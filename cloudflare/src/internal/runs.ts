@@ -1,7 +1,7 @@
-// `startRun`, `cancelRun` and `replayFacts` in the Worker (docs/plans/start-and-cancel.md): the recovery index first, so no run executes
+// `startRun`, `cancelRun` and `replayFacts` in the Worker: the recovery index first, so no run executes
 // without its row and every command names the scope and conversation its run was bound to; then the conversation's
 // object, addressed by the index's jurisdiction, which binds itself and answers. A purged conversation's object is
-// destroyed, so the index answers for it (docs/plans/chunk-15a-design.md, Physical deletion).
+// destroyed, so the index answers for it.
 
 import type { CancelRun, CancelRunResult, Fact, ReplayFacts, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { conversationObject } from "../addressing.ts";
@@ -44,7 +44,7 @@ export async function cancelRun(env: Env, command: CancelRun): Promise<CancelRun
 }
 
 /**
- * `replayFacts` (docs/plans/credentials-and-facts.md): read through the index without binding anything, so an unknown
+ * `replayFacts`: read through the index without binding anything, so an unknown
  * conversation is `NOT_FOUND` and one bound to another organization or workspace `SCOPE_MISMATCH`, as its object checks again;
  * a page from below its floor less one is `FACTS_PRUNED`, with the floor. A purged conversation held no fact Laravel had not
  * acknowledged, so its floor is the index's last sequence plus one, and nothing is left above it.

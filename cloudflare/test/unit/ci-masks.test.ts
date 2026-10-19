@@ -1,4 +1,4 @@
-// What CI's instance masks in the public Actions log (scripts/masks.ts, docs/plans/ci-account-suites.md): every
+// What CI's instance masks in the public Actions log (scripts/masks.ts): every
 // value of its secrets that a log could show, as GitHub's `::add-mask::` commands.
 
 import { describe, expect, test } from "vitest";

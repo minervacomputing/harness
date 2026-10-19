@@ -38,14 +38,14 @@ Readers on both sides ignore fields they do not know (zod's objects strip them, 
 
 **Scope.** Every command except the catalog carries `scope: {environment, organization, workspace}`, and a command about a conversation also carries `conversation`.
 - **Environment.** The engine is configured with its environment (`MINERVA_ENVIRONMENT`, for example `staging`). It refuses a command that names another environment with `WRONG_ENVIRONMENT` (409), so a Laravel configured with the wrong engine fails loudly rather than writing into it.
-- **Organization and workspace.** An execution object (a Conversation, and the recovery index's rows) stores the organization and workspace it was created for, and refuses a command that names others with `SCOPE_MISMATCH` (409). Built in chunk 6 ([start-and-cancel.md](start-and-cancel.md)).
+- **Organization and workspace.** An execution object (a Conversation, and the recovery index's rows) stores the organization and workspace it was created for, and refuses a command that names others with `SCOPE_MISMATCH` (409). Built in chunk 6.
 
 **Answers.**
 - **An outcome is a 200.** A command's definite outcome is answered 200, including a refusal: for example `startRun`'s `{outcome: "refused", code, message}`, which Laravel records as the run's end.
 - **An error is not an outcome.**
   - 401 and 403: authentication.
   - 409: the wrong environment or scope.
-  - 410 `FACTS_PRUNED`, with `data: {floor}`: a `replayFacts` from below the lowest fact the engine still holds (chunk 15a, [chunk-15a-design.md](chunk-15a-design.md)). Only `replayFacts` answers it.
+  - 410 `FACTS_PRUNED`, with `data: {floor}`: a `replayFacts` from below the lowest fact the engine still holds (chunk 15a). Only `replayFacts` answers it.
   - 422 `VALIDATION_FAILED`, with the issues: a bug on the caller's side.
   - 501 `NOT_IMPLEMENTED`: an operation declared before its chunk.
   - 500 and 503: a failure. Commands are idempotent, so a queued job retries them.
@@ -84,8 +84,8 @@ Each is idempotent by its own ids. The engine's chunk that implements each comma
   - `authority`, the raw inputs with their revisions:
     - `connections`: the agent's, each `{id, provider, owner, status, createdAt, scopes, revision}`, and optionally `tenant`, its account's tenant as `describeAccount` answered it (chunk 17);
     - `layers`: `ceiling`, `user` and `agent`, each null or `{restricted, revision, grants: [{connection, kind, resource, name, actions, effect}]}`;
-    - optionally `policy`, the organization's connection policy: `{revision, connectors: [{provider, tenants}]}`, the connectors it offers, each with the tenants it allows or null for any ([chunk-17-design.md](chunk-17-design.md)). Without it, every connector is offered with any tenant. The engine offers no tools on a connection the policy refuses, so it is not in `authorized`, and checks each resource's tenant before each call and on its results for a connector with a tenant per resource.
-  - optionally `allowance`: what the run may spend, in micro-dollars (µ$). The engine refuses the run's next model call once it has spent this, and the run fails with the code `budget_reached` (chunk-14b-design.md). Without it the run has no budget.
+    - optionally `policy`, the organization's connection policy: `{revision, connectors: [{provider, tenants}]}`, the connectors it offers, each with the tenants it allows or null for any. Without it, every connector is offered with any tenant. The engine offers no tools on a connection the policy refuses, so it is not in `authorized`, and checks each resource's tenant before each call and on its results for a connector with a tenant per resource.
+  - optionally `allowance`: what the run may spend, in micro-dollars (µ$). The engine refuses the run's next model call once it has spent this, and the run fails with the code `budget_reached`. Without it the run has no budget.
 
   It answers one of two outcomes:
   - `{outcome: "accepted", catalog, compiler, digest, authorized: [connection ids], attachments: [{path, size, mediaType}]}`: the catalog's and the compiler's versions, the snapshot's digest, the run's authorized set, and the message's attachments as the folder holds them, which Laravel stores on the message;
@@ -104,7 +104,7 @@ Each is idempotent by its own ids. The engine's chunk that implements each comma
 - **`resolveDownload`** `/conversations/download` [12]: `scope`, `conversation`, `version` and `path`. It answers `{key, size, sha256, mediaType}`, or `{outcome: "missing"}`.
 - **`deleteConversation`** `/conversations/delete` [12]: `scope` and `conversation`. It answers once the tombstone is durable.
 - **`admission`** `/admission` [14]: `{environment, open, revision, reason}`, the emergency stop. The highest revision wins, so a repeat or a late delivery changes nothing.
-- **`listConversations`** `/recovery/conversations` [15]: `{environment, after, limit}`, `after` a conversation id or null and `limit` from 1 to 1,000. It answers `{conversations: [{conversation, organization, workspace, factSeq, deletedAt, purgedAt}], more}`: every row of the recovery index after `after`, in order of id, whatever its state, and whether more follow. `factSeq` is the highest fact sequence the engine ever sent Laravel; `deletedAt` and `purgedAt` are null until the conversation is deleted and purged. Laravel pages through it from null, each page after the last id of the one before, and compares each row with what a restore left it ([chunk-15c-design.md](chunk-15c-design.md), The listing). It names no scope, as `catalog` does not, and is a read.
+- **`listConversations`** `/recovery/conversations` [15]: `{environment, after, limit}`, `after` a conversation id or null and `limit` from 1 to 1,000. It answers `{conversations: [{conversation, organization, workspace, factSeq, deletedAt, purgedAt}], more}`: every row of the recovery index after `after`, in order of id, whatever its state, and whether more follow. `factSeq` is the highest fact sequence the engine ever sent Laravel; `deletedAt` and `purgedAt` are null until the conversation is deleted and purged. Laravel pages through it from null, each page after the last id of the one before, and compares each row with what a restore left it. It names no scope, as `catalog` does not, and is a read.
 
 **Credentials in settings calls.** `describeAccount`, `listResources` and `checkGrantEdit` carry the credential in the command, `{kind, secret, generation}`. The plan had the engine lease it with `leaseToken` instead. Sending it in the command gives the same bound, since the engine sees that access token either way, and saves a round trip and a registry of pending settings calls in Laravel. When the provider refuses it, the answer says `CREDENTIAL_REFUSED`, and Laravel marks the connection itself. `leaseToken` is for runs only.
 
@@ -179,7 +179,7 @@ A user's identity token (one with `email` and no `common_name`) fails that last 
 
 `GET /internal/v1/catalog` answers `{version, connectors}`, and optionally `prices`.
 - **The version** is 16 hex characters of SHA-256 over the canonical JSON of `connectors`, as the registry fingerprints operations. Laravel keeps catalogs by version, and `startRun`'s acceptance names the one it compiled against.
-- **`prices`** is `{version, table}`: the price table the engine charges by, in µ$ (chunk-14b-design.md, The price table), and its own version, 16 hex of SHA-256 over the table's canonical JSON, which the money-bearing facts name. The table is `{routes: [{provider, model, input, cachedInput, cacheWrite, output, above?}], container: {instance, perHour}, script: {perScript, perHour}}`: token rates per million tokens, `above` the rates when a call's input passes its `inputTokens`, and time rates per hour.
+- **`prices`** is `{version, table}`: the price table the engine charges by, in µ$, and its own version, 16 hex of SHA-256 over the table's canonical JSON, which the money-bearing facts name. The table is `{routes: [{provider, model, input, cachedInput, cacheWrite, output, above?}], container: {instance, perHour}, script: {perScript, perHour}}`: token rates per million tokens, `above` the rates when a call's input passes its `inputTokens`, and time rates per hour.
 - **The catalog is the engine's view:** the connectors it serves, with the operations its settings offer. A test build's catalog includes its fake connector.
 
 **Each connector:**
@@ -188,7 +188,7 @@ A user's identity token (one with `email` and no `common_name`) fails that last 
 - `kinds` (the public `ResourceKind`, `browsable` included) and `actions`;
 - `operations`: `{name, title, needs: [[kind, action]], consent, mutates, offered}`. Laravel needs them to ask for the right scopes. Where `consentNeeded` and the reconnect's scopes are computed (in a command, or ported with fixtures) is chunk 10's question;
 - `manage`: `{label, url}` or null;
-- `tenancy` (chunk 17, optional in the contract, always sent by an engine that has it): `{kind: "account" | "resource" | "unknown", label}`, how the connector's resources belong to organizations and what people call its tenant ([chunk-17-design.md](chunk-17-design.md), Tenancy, per connector).
+- `tenancy` (chunk 17, optional in the contract, always sent by an engine that has it): `{kind: "account" | "resource" | "unknown", label}`, how the connector's resources belong to organizations and what people call its tenant.
 
 **`auth`** is one of three:
 - `{type: "builtin"}`;

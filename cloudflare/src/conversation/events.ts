@@ -38,7 +38,7 @@ export type NewRunEvent = RunEvent extends infer E ? (E extends { seq: number } 
 export type RunEnd =
 	| { status: "completed"; code: ""; message: "" }
 	| { status: "cancelled"; code: "cancelled"; message: "Stopped." }
-	/** Laravel deleted the run's conversation (docs/plans/start-and-cancel.md). */
+	/** Laravel deleted the run's conversation. */
 	| { status: "cancelled"; code: "conversation_deleted"; message: "Stopped." }
 	| { status: "cancelled"; code: RevocationReason; message: "Stopped because permissions changed." }
 	/** An operator's emergency stop (ARCHITECTURE.md: Strict revocation, Emergency stop). */

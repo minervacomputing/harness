@@ -1,4 +1,4 @@
-// Retention on the account (docs/plans/chunk-15a-design.md, Live checks), in conversations whose plan sets periods of a
+// Retention on the account, in conversations whose plan sets periods of a
 // minute (src/faults/ports.ts, `retention`), so the platform's own alarms run the `retain` job:
 //
 // - two finished turns, the fake Laravel holding back the second's facts, and the object reset (`abort`) after the first step

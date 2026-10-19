@@ -62,7 +62,7 @@ function workspaceOf(command: SettingsCall): WorkspaceRef {
 
 /**
  * The account behind the credential, with its tenant for a connector with a tenant per account, and the tenants it reaches
- * now for any connector whose tenancy is known (docs/plans/chunk-17-design.md).
+ * now for any connector whose tenancy is known.
  */
 export async function describeAccount(env: Env, command: DescribeAccount): Promise<DescribeAccountResult> {
 	const connector = await connectorFor(command);

@@ -116,7 +116,7 @@ export interface PortsContext {
 	ctx: DurableObjectState;
 	workspace: WorkspaceRef;
 	conversationId: ConversationId;
-	/** The organization of a conversation Laravel's commands made; null for the Workspace's (docs/plans/start-and-cancel.md). */
+	/** The organization of a conversation Laravel's commands made; null for the Workspace's. */
 	organization: string | null;
 	/** The folder version the conversation holds now. */
 	folderVersionId: () => VersionId | null;

@@ -1,5 +1,5 @@
-// A Laravel conversation's `run.finished` carries what the folder's publishing returned (docs/plans/chunk-14d-design.md,
-// The number): the conversation's stored bytes, or no such field when the sum threw, and the run ends either way. The
+// A Laravel conversation's `run.finished` carries what the folder's publishing returned:
+// the conversation's stored bytes, or no such field when the sum threw, and the run ends either way. The
 // store runs over node:sqlite with every schema step applied.
 
 import type { Fact } from "@minerva/contract/internal";

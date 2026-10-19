@@ -1,4 +1,4 @@
-// Laravel's staged uploads (docs/plans/start-and-cancel.md, The attachments): objects the browser put under
+// Laravel's staged uploads: objects the browser put under
 // `uploads/<workspace>/` in the conversation's bucket with a URL Laravel signed, which a start names. Nothing about one is
 // trusted: its size is read before its bytes, then its bytes are counted and hashed, and its media type is sniffed from
 // its head. The folder then copies it as a reserved upload, put with this SHA-256, which R2 checks, so an object replaced

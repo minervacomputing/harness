@@ -274,7 +274,7 @@ const WAIT = scripted({ turns: [{ tools: [{ name: "fake_wait", arguments: {} }] 
 const BUSY = { outcome: "refused", code: "CONVERSATION_BUSY", message: BUSY_MESSAGE };
 
 /**
- * What the previous version could leave (chunk-13b-design.md, amendment 2): `left`'s run stored `queued` and never
+ * What the previous version could leave: `left`'s run stored `queued` and never
  * activated, with no deadline and its start answered `accepted`, after `ended`'s run; with its watch job when `watched`.
  */
 async function leftQueued(stub: Stub, ended: StartRun, left: StartRun, watched: boolean): Promise<void> {

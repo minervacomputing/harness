@@ -1,4 +1,4 @@
-// A run's `run.settled` in local workerd (docs/plans/chunk-14a-design.md, Decisions): written once by the run's settlement
+// A run's `run.settled` in local workerd: written once by the run's settlement
 // job, after its `run.finished` and every settlement of its calls, with totals equal to the sums of its call and script
 // records and of the spans its Sandbox kept. The Conversation runs with the test build's ports (src/faults/), for its fault
 // points; its Sandbox is the real object, which has no containers here, so its spans are written into its SQLite.

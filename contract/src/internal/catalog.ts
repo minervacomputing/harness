@@ -73,7 +73,7 @@ export const CatalogOperation = z.object({
 })
 
 /**
- * How the connector's resources belong to organizations (docs/plans/chunk-17-design.md): one tenant per account, a tenant per
+ * How the connector's resources belong to organizations: one tenant per account, a tenant per
  * resource, or unknown. `label` names the tenant for people; null for unknown.
  */
 export const CatalogTenancy = z.object({ kind: z.enum(['account', 'resource', 'unknown']), label: z.string().nullable() })
@@ -105,7 +105,7 @@ export const RoutePrices = TokenRates.extend({
 })
 export type RoutePrices = z.infer<typeof RoutePrices>
 
-/** What the engine charges, in µ$ (docs/plans/chunk-14b-design.md, The price table): model routes, and container and script time per hour. */
+/** What the engine charges, in µ$: model routes, and container and script time per hour. */
 export const PriceTable = z.object({
   routes: z.array(RoutePrices),
   container: z.object({ instance: z.string(), perHour: Micros }),

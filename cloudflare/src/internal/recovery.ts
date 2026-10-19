@@ -1,4 +1,4 @@
-// The recovery index in D1 (docs/plans/start-and-cancel.md, The recovery index): Laravel's conversations and runs, each
+// The recovery index in D1: Laravel's conversations and runs, each
 // bound to the scope and conversation of the first command that named it. The Worker writes and reads it back in one
 // batch before it reaches a Conversation object, so no run executes without its row, and the object is addressed by the
 // jurisdiction the row was created with.
@@ -158,7 +158,7 @@ export async function raiseFactSeq(db: D1Database, raise: { conversation: string
 }
 
 /**
- * A deleted conversation's purge (docs/plans/chunk-15a-design.md, Physical deletion), marked before its object deletes its blobs
+ * A deleted conversation's purge, marked before its object deletes its blobs
  * and its storage: from here a command that reads the index no longer reaches the object. Only through the row bound to that
  * organization and workspace and deleted; a mark already there keeps its time. False when there is no such row.
  */
@@ -173,7 +173,7 @@ export async function markPurged(db: D1Database, mark: { conversation: string; o
 type ListedRow = Omit<ConversationRow, "jurisdiction"> & { id: string };
 
 /**
- * `listConversations` (docs/plans/chunk-15c-design.md, The listing): every row after `after` in order of id, whatever its state,
+ * `listConversations`: every row after `after` in order of id, whatever its state,
  * for Laravel to compare with what a restore left it. One row past the page says whether more follow.
  */
 export async function listIndexed(db: D1Database, command: ListConversations): Promise<ListConversationsResult> {

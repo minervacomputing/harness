@@ -158,7 +158,7 @@ interface LeaseBase {
 }
 
 /**
- * What Laravel lends for one provider call of its run (`leaseToken`, docs/plans/credentials-and-facts.md): the credential
+ * What Laravel lends for one provider call of its run (`leaseToken`): the credential
  * itself, held in memory for this one call and never stored, logged or put in an event.
  */
 export interface HeldLease extends LeaseBase {

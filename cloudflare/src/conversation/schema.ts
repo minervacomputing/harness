@@ -14,7 +14,7 @@ interface Migration {
 export const MIGRATIONS: Migration[] = [
 	// Unused since chunk 13b: `messages`, `starts`, `releases`, and `runs.released`; `runs.activated` is only still written
 	// (store.ts `activate`). They stay while the previous version may run beside this one or after a rollback, and its code
-	// writes them (chunk-13b-design.md, The Conversation keeps its tables and columns).
+	// writes them.
 	{
 		id: 1,
 		sql: `
@@ -165,7 +165,7 @@ CREATE TABLE start_keys (
 CREATE INDEX start_keys_age ON start_keys (created_at);
 `,
 	},
-	// Laravel's conversations (docs/plans/start-and-cancel.md): the organization a conversation is bound to (null for
+	// Laravel's conversations: the organization a conversation is bound to (null for
 	// the Workspace's); each start's preparation, its compiled snapshot kept from the first try until the start is
 	// answered (in parts, like run_snapshots); and each start's answer, kept so a repeat gets it again.
 	{
@@ -187,7 +187,7 @@ CREATE TABLE internal_answers (
 ) STRICT;
 `,
 	},
-	// A Laravel conversation's facts and their delivery (docs/plans/credentials-and-facts.md): each fact's JSON as it is
+	// A Laravel conversation's facts and their delivery: each fact's JSON as it is
 	// delivered, by its sequence; the delivery's state (`written` is never lowered, so a sequence is never used twice); and
 	// what a write's settlement reports, fixed at dispatch.
 	{
@@ -211,7 +211,7 @@ CREATE TABLE internal_answers (
 			...LEDGER_NOTES_SCHEMA,
 		].join(";\n"),
 	},
-	// Each counted model call (docs/plans/chunk-14a-design.md, Decisions): recorded before its request by the instance that
+	// Each counted model call: recorded before its request by the instance that
 	// sends it, settled once (`outcome` set) before pi hears its answer. Tokens are the report's, or the reservation for an
 	// unmetered call; `request_bytes` is null for a call that built no request.
 	{
@@ -242,7 +242,7 @@ CREATE TABLE call_records (
 CREATE INDEX call_records_open ON call_records (instance) WHERE outcome IS NULL;
 `,
 	},
-	// Each script `run_script` ran (docs/plans/chunk-14a-design.md, Decisions): recorded before it runs by the instance that
+	// Each script `run_script` ran: recorded before it runs by the instance that
 	// runs it, ended when it answers. One a gone instance left open ends at its clock's bound, `estimated`.
 	{
 		id: 10,
@@ -260,7 +260,7 @@ CREATE INDEX script_records_run ON script_records (run_id);
 CREATE INDEX script_records_open ON script_records (instance) WHERE ended_at IS NULL;
 `,
 	},
-	// A run's `run.settled` (docs/plans/chunk-14a-design.md, Decisions): owed only by a run this version started (`metered`),
+	// A run's `run.settled`: owed only by a run this version started (`metered`),
 	// written once (`settled_at`) after it ended and every call and script record of it settled.
 	{
 		id: 11,
@@ -270,7 +270,7 @@ ALTER TABLE runs ADD COLUMN settled_at INTEGER;
 CREATE INDEX runs_unsettled ON runs (id) WHERE metered = 1 AND settled_at IS NULL;
 `,
 	},
-	// Budgets (docs/plans/chunk-14b-design.md, Admission at the call record), in µ$: a run's allowance (null when Laravel sent
+	// Budgets, in µ$: a run's allowance (null when Laravel sent
 	// none), what its settled calls and ended scripts were charged (`spent`), and since when it may have had a container. A
 	// call record keeps the rates and the price table's version it was admitted at (null when its route had no price), a
 	// script record the version it was charged at; each its charge once settled. Records settled before this step have none.
@@ -289,7 +289,7 @@ ALTER TABLE script_records ADD COLUMN cost_micros INTEGER;
 	},
 	// What the folder keeps, summed at each run's end from an index of the stored blobs' sizes (files/store.ts `storedBytes`).
 	{ id: 13, sql: FOLDER_STORED_SIZE_SCHEMA },
-	// The facts' retention (docs/plans/chunk-15a-design.md, Facts and the floor): the lowest sequence still held, and when
+	// The facts' retention: the lowest sequence still held, and when
 	// Laravel acknowledged up to a sequence. What it acknowledged before this step is marked now, so it is kept 7 days from
 	// the deploy.
 	{
@@ -303,7 +303,7 @@ CREATE TABLE fact_acknowledgements (
 INSERT INTO fact_acknowledgements (seq, at) SELECT acknowledged, CAST(unixepoch('subsec') * 1000 AS INTEGER) FROM fact_delivery WHERE acknowledged > 0;
 `,
 	},
-	// A run's retention (docs/plans/chunk-15a-design.md, A run's retention state): null while its records are kept; `records`
+	// A run's retention: null while its records are kept; `records`
 	// once their deletion started (the snapshot emptied, `pruned_at` its time); `pi` once only its pi session's rows are left;
 	// `done`. The index finds the ended runs not yet done, oldest first.
 	{

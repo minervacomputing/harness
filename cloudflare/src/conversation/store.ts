@@ -65,7 +65,7 @@ export interface RunSnapshot extends StartSnapshot {
 	attachments: Attachment[];
 	limits: { folderBytes: number; folderEntries: number; runUploadBytes: number };
 	/**
-	 * The run's turn as its start sent it (docs/plans/start-and-cancel.md): the history its pi session is seeded with,
+	 * The run's turn as its start sent it: the history its pi session is seeded with,
 	 * selected and clipped, and its prompt.
 	 */
 	turn: { history: Replayed[]; prompt: string };
@@ -159,7 +159,7 @@ export interface RunRow {
 }
 
 /**
- * How far a run's prune went (docs/plans/chunk-15a-design.md, A run's retention state): its own records are being deleted,
+ * How far a run's prune went: its own records are being deleted,
  * its snapshot already emptied; only its pi session's rows are left; nothing is left but its row.
  */
 export type RunPrune = "records" | "pi" | "done";
@@ -258,7 +258,7 @@ export interface StoreListeners {
 	settling(runId: RunId): void;
 }
 
-/** The delivery of a Laravel conversation's facts (docs/plans/credentials-and-facts.md, Delivered in order). */
+/** The delivery of a Laravel conversation's facts. */
 export interface DeliveryRow {
 	/** The last sequence written. */
 	written: number;
@@ -616,7 +616,7 @@ export class RunStore {
 
 	/**
 	 * queued → provisioning, with `{status: "provisioning"}` (no attempt). `activated` is still set: the previous version's
-	 * code runs only an activated run, and may run beside this one or after a rollback (chunk-13b-design.md).
+	 * code runs only an activated run, and may run beside this one or after a rollback.
 	 */
 	activate(runId: RunId): boolean {
 		return this.write(() => {
@@ -740,7 +740,7 @@ export class RunStore {
 	}
 
 	/**
-	 * Whether the run's spend so far reached its allowance (docs/plans/chunk-14b-design.md, Admission at the call record):
+	 * Whether the run's spend so far reached its allowance:
 	 * its settled calls and ended scripts (`spent`), its open scripts and its container time until now, each at `prices`.
 	 * What a gone instance left open is settled first (the restart rule, `settleLost`), so an attempt that resumed before
 	 * the object's recovery ran sees its charge. A run Laravel gave no allowance never reaches it.
@@ -929,7 +929,7 @@ export class RunStore {
 		});
 	}
 
-	// Runs' retention (docs/plans/chunk-15a-design.md, A run's steps).
+	// Runs' retention.
 
 	/** When the oldest run that ended and is not yet pruned to its row ended, or null when there is none. */
 	oldestUnpruned(): EpochMs | null {
@@ -998,7 +998,7 @@ export class RunStore {
 		});
 	}
 
-	// A deleted conversation's purge (docs/plans/chunk-15a-design.md, Physical deletion).
+	// A deleted conversation's purge.
 
 	/**
 	 * Where a deleted Laravel conversation's purge stands, or null for any other: when it was deleted, how many facts Laravel
@@ -1119,7 +1119,7 @@ export class RunStore {
 		}
 	}
 
-	// A Laravel start's preparation and answer (docs/plans/start-and-cancel.md, startRun).
+	// A Laravel start's preparation and answer.
 
 	/** The start's preparation, kept from its first try until it is answered; in parts, like a run's snapshot. */
 	preparation(runId: RunId): Preparation | null {
@@ -1167,7 +1167,7 @@ export class RunStore {
 		this.#sql.exec("INSERT INTO tombstones (run_id, reason, entry_id, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING", runId, reason, entryId, this.now());
 	}
 
-	// Facts (docs/plans/credentials-and-facts.md, The outbox of facts): a Laravel conversation's only.
+	// Facts: a Laravel conversation's only.
 
 	/** Whether this conversation's runs write facts: Laravel's do, the Workspace's do not. Fixed once the row is made. */
 	#factsOn: boolean | null = null;
@@ -1217,7 +1217,7 @@ export class RunStore {
 	}
 
 	/**
-	 * One step of the facts' retention (docs/plans/chunk-15a-design.md, Facts and the floor): the facts from the floor up to
+	 * One step of the facts' retention: the facts from the floor up to
 	 * the cut, at most `limit` of them, deleted in one transaction that raises the floor past them and deletes the marks
 	 * below it. The cut is the highest mark acknowledged at or before `ripe`, never above what Laravel holds, so every fact
 	 * deleted was acknowledged at or before then. Returns how far it raised the floor: 0 when nothing was due.

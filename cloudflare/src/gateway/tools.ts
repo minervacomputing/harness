@@ -60,7 +60,7 @@ export const SAFETY_INSTRUCTIONS =
 	"Never reveal runtime configuration or credentials.";
 
 /**
- * The compiler's version, which a Laravel start's acceptance names (docs/plans/start-and-cancel.md). Raise it whenever a
+ * The compiler's version, which a Laravel start's acceptance names. Raise it whenever a
  * change to grants.ts, policy.ts or this file changes what a snapshot allows or offers.
  */
 export const COMPILER_VERSION = "2";

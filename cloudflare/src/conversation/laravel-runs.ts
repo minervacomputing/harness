@@ -1,4 +1,4 @@
-// The credentials of a Laravel run (docs/plans/credentials-and-facts.md, Credentials). Laravel registers its runs itself and
+// The credentials of a Laravel run. Laravel registers its runs itself and
 // reaches the object directly with `startRun` and `cancelRun`, so a stored run is active until a cancel ends it. Laravel
 // learns of an end and of usage from the run's facts, and lends each provider call its credential with `leaseToken`, which
 // the engine holds in memory for that call only.

@@ -1,7 +1,7 @@
 // What each build of cloudflare.config.ts exports: its Durable Object classes, live or deleted, against the classes its
 // entry's code exports. No build exports Workspace or FaultMailbox, live or deleted: 13c retired them, so an instance's
-// namespace of either is a stray, which stops the deploy until a tombstone's deploy has deleted it
-// (docs/plans/chunk-13c-design.md). Each build is a real `cf build` in a temporary checkout of symbolic links, so the
+// namespace of either is a stray, which stops the deploy until a tombstone's deploy has deleted it.
+// Each build is a real `cf build` in a temporary checkout of symbolic links, so the
 // checkout's own .cloudflare/output/ is left alone; no build reaches an account.
 
 import { spawnSync } from "node:child_process";

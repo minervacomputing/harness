@@ -1,4 +1,4 @@
-// The price table and its charges (src/budget/prices.ts; docs/plans/chunk-14b-design.md, The price table): each charge
+// The price table and its charges (src/budget/prices.ts): each charge
 // rounded up once, a call at its tier's rates, the table's version, and the build's table.
 
 import type { RoutePrices } from "@minerva/contract/internal";

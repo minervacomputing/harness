@@ -1,4 +1,4 @@
-// A finished run's pi session, deleted by hand (docs/plans/chunk-15a-design.md, pi's tables): pi-durable 1.2.0 has no
+// A finished run's pi session, deleted by hand: pi-durable 1.2.0 has no
 // delete call, so these statements remove a session's rows from pi's own tables (`pi_` plus its schema version 1,
 // node_modules/@earendil-works/pi-durable/dist/storage/sqlite/migrations.js) through the indexes pi made for them. Each
 // call is one bounded step for the caller's `transactionSync`, made outside any transaction of pi's (store.ts `outside`):

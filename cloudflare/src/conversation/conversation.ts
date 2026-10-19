@@ -1,7 +1,7 @@
 // The Conversation Durable Object (`ConversationApi`; ARCHITECTURE.md: Data placement, Protocols): one per chat.
 // It extends the Agents SDK's Agent and runs pi-durable through PiHarness, one pi session per run, with the
 // `minerva` extension's tools and the model wrapper of src/model/. It owns its runs, attempts, run events and
-// facts; Laravel starts and cancels its runs (docs/plans/start-and-cancel.md). Nothing routes to it but our own
+// facts; Laravel starts and cancels its runs. Nothing routes to it but our own
 // typed RPC and the stream's WebSocket (no `routeAgentRequest`).
 //
 // Every event that opens pi (an RPC, a request, an alarm) goes through PiHarness's harness factory, where
@@ -96,7 +96,7 @@ import { connectorTool, isWrite, REPLAY_REFUSED, REPLAYS_ALLOWED, RUN_ENDED_MESS
  */
 interface ConversationApi {
 	/**
-	 * Laravel's `startRun` (docs/plans/start-and-cancel.md), once the Worker has bound the conversation and the run in the
+	 * Laravel's `startRun`, once the Worker has bound the conversation and the run in the
 	 * recovery index; `workspace` is where the index addresses it. Binds the conversation on first use, and answers a
 	 * stored answer again; otherwise prepares the start once (its snapshot compiled), copies the attachments from
 	 * staging and stores the run with its acceptance, or stores a refusal. An error stores no answer. `deleted`: the index
@@ -109,7 +109,7 @@ interface ConversationApi {
 	 */
 	cancelInternal(command: CancelRun, workspace: WorkspaceRef, deleted: boolean): Promise<InternalAnswer<CancelRunResult>>;
 	/**
-	 * Laravel's `replayFacts` (docs/plans/credentials-and-facts.md): the facts after `after`, in order, read outside pi's
+	 * Laravel's `replayFacts`: the facts after `after`, in order, read outside pi's
 	 * transactions; the recovery index is raised to the page's last before it answers. An `after` below the floor less one is
 	 * refused with the floor, since the facts Laravel lacks are deleted. Never binds the conversation.
 	 */
@@ -298,7 +298,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 	}
 
-	// Laravel's commands (docs/plans/start-and-cancel.md).
+	// Laravel's commands.
 
 	async startInternal(command: StartRun, workspace: WorkspaceRef, deleted: boolean): Promise<InternalAnswer<StartRunResult>> {
 		if (!(await this.#bindInternal(command, workspace, deleted))) return SCOPE_MISMATCH;
@@ -423,7 +423,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * The conversation bound to the command's organization and the index's workspace, on first use; false for others.
 	 * `deleted`: the index holds it deleted, which is recorded in the same write, so an object made again after its purge, by
 	 * a command that read the index before the purge's mark, is only ever a deleted conversation, which purges itself after
-	 * its window (docs/plans/chunk-15a-design.md, Physical deletion).
+	 * its window.
 	 */
 	#bindInternal(command: StartRun | CancelRun | DeleteConversation, workspace: WorkspaceRef, deleted: boolean): Promise<boolean> {
 		const binding = { conversationId: command.conversation, organization: command.scope.organization, workspace, createdAt: this.#store.now() };
@@ -803,7 +803,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * A run's `run.settled` (docs/plans/chunk-14a-design.md, Decisions), once it ended: the calls and scripts a gone instance
+	 * A run's `run.settled`, once it ended: the calls and scripts a gone instance
 	 * left open settled first; then, once no record of the run is open, the run sealed in its Sandbox (no container starts for
 	 * it after) and its spans read, and once none is open short of its cutoff, the totals written once. Every step is asked
 	 * again from the start, so a reset anywhere leaves the job, which runs again, or `#recover` makes it again.

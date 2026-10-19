@@ -129,7 +129,7 @@ export class Conversation extends BaseConversation {
 	}
 
 	/**
-	 * The perf probe's start of retention (docs/plans/chunk-15a-design.md, Perf probe and rule): the plan's faults and periods
+	 * The perf probe's start of retention: the plan's faults and periods
 	 * replaced, and the `retain` job made due now.
 	 */
 	async faultRetainNow(faults: Fault[], retention: Partial<RetentionPeriods>): Promise<void> {
@@ -211,7 +211,7 @@ export class Conversation extends BaseConversation {
 	}
 
 	/**
-	 * The object's storage, as the retention probe reads it (docs/plans/chunk-15a-design.md, The measurement): `databaseSize`,
+	 * The object's storage, as the retention probe reads it: `databaseSize`,
 	 * and per table its rows and the summed length in bytes of its TEXT and BLOB columns, by their declared types. The
 	 * platform's own `_cf_` tables cannot be read.
 	 */

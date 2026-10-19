@@ -1,4 +1,4 @@
-// What the engine charges (docs/plans/chunk-14b-design.md, The price table), in integer micro-dollars (µ$): the route's
+// What the engine charges, in integer micro-dollars (µ$): the route's
 // token rates, which the deploy reads from models.dev and the build gets as MINERVA_MODEL_PRICES (config.ts), and container
 // and script time, which no catalog lists, from Cloudflare's pricing pages. List prices, without included allowances.
 //

@@ -1,4 +1,4 @@
-// Laravel's run stream (docs/plans/credentials-and-facts.md, The route): `GET /stream/v1`, a Laravel conversation's run
+// Laravel's run stream: `GET /stream/v1`, a Laravel conversation's run
 // read by the browser from Laravel's pages with a stream token (stream/token.ts) Laravel signed for that run. The token is
 // in `Authorization: Bearer` and the cursor in Last-Event-ID, so no id is in the URL. Off (404, as if nothing were here)
 // unless the internal API's settings, MINERVA_LARAVEL_URL and MINERVA_STREAM_KEYS are all set.

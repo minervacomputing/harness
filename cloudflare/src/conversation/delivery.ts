@@ -1,4 +1,4 @@
-// The delivery of a Laravel conversation's facts (docs/plans/credentials-and-facts.md, Delivered in order): the facts after
+// The delivery of a Laravel conversation's facts: the facts after
 // what Laravel acknowledged, in batches, each first raised in the recovery index and then sent with `deliverFacts`; Laravel's
 // answer checked rather than trusted; a failure backed off, and a conflict left for the operator. One delivery at a time per
 // object. Every read of the store and every change to the delivery's state is its own step outside pi's transactions

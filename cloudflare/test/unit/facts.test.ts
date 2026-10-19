@@ -1,4 +1,4 @@
-// A Laravel conversation's facts, their pure parts (docs/plans/credentials-and-facts.md): a tool call's arguments as its fact
+// A Laravel conversation's facts, their pure parts: a tool call's arguments as its fact
 // shows them, and how a delivery reads Laravel's answers.
 
 import { Fact, MAX_ARGUMENTS } from "@minerva/contract/internal";

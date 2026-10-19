@@ -1,4 +1,4 @@
-// The model's prices, read from models.dev by the deploy (docs/plans/chunk-14b-design.md, The price table) and given to
+// The model's prices, read from models.dev by the deploy and given to
 // the build as MINERVA_MODEL_PRICES (cloudflare.config.ts), which src/config.ts parses: one source and one code path for
 // every provider. models.dev is MIT-licensed. scripts/deploy.ts and scripts/reset.ts read them before they build; a deploy
 // without them stops, and the fake model's are in the test build's code (src/faults/).

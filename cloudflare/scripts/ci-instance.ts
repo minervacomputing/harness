@@ -1,4 +1,4 @@
-// Makes CI's instance directory from the workflow's secrets (docs/plans/ci-account-suites.md, The job):
+// Makes CI's instance directory from the workflow's secrets:
 //
 //   node scripts/ci-instance.ts --instance <name>
 //

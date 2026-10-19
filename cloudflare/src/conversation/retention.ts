@@ -1,4 +1,4 @@
-// What a conversation keeps, and for how long (docs/plans/chunk-15a-design.md): one Lifecycle job, `retain`, deletes what is
+// What a conversation keeps, and for how long: one Lifecycle job, `retain`, deletes what is
 // due in passes of bounded steps on the object's alarm, and only while no run is active. A pass runs its steps in order
 // until nothing is due or its budget is spent, then schedules itself for what is left. Each step is one transaction outside
 // pi's, deletes at most `rowsPerStep` rows and records how far it got in the same transaction, so a kill rolls back
@@ -78,7 +78,7 @@ export interface RetentionHost {
 }
 
 /**
- * A deleted conversation's purge (docs/plans/chunk-15a-design.md, Physical deletion), in this order. Each step is idempotent,
+ * A deleted conversation's purge, in this order. Each step is idempotent,
  * so a pass after a failure or a kill runs them again from the first.
  */
 export interface Purge {

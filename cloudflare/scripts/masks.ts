@@ -1,4 +1,4 @@
-// What CI's instance must not show in a public Actions log (docs/plans/ci-account-suites.md, The job), as GitHub
+// What CI's instance must not show in a public Actions log, as GitHub
 // Actions `::add-mask::` commands: GitHub then replaces each value with *** in every later step's output. Pure
 // apart from the fault token's HMAC, so that a unit test checks it (test/unit/ci-masks.test.ts).
 

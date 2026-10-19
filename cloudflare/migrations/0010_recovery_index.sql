@@ -1,4 +1,4 @@
--- The recovery index (docs/plans/start-and-cancel.md, The recovery index): the conversations and runs Laravel's commands
+-- The recovery index: the conversations and runs Laravel's commands
 -- named, bound to the scope and conversation of the first command that named them, so a later command naming others is
 -- refused before any object is reached, and the object is addressed by the jurisdiction recorded here, never the command's.
 -- A run's row is written before its Conversation object admits it, so no run executes without one. The rows outlive the

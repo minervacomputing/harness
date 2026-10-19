@@ -1,4 +1,4 @@
-// What the Conversation's store charges (docs/plans/chunk-14b-design.md, What a call and a run are charged): each call at
+// What the Conversation's store charges: each call at
 // the rates its record kept, each script as it ends, the run's `spent` equal to its records' charges after every change,
 // and `run.settled`'s charge. The store runs over node:sqlite with every schema step applied.
 
