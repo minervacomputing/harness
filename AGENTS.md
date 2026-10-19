@@ -2,9 +2,18 @@
 
 Operational notes for coding agents working in this repository: Minerva's open harness, the engine that runs agent turns on Cloudflare (`cloudflare/`), and the contract of the internal API between it and Laravel's private app (`contract/`). Self-hosting is not supported. For background, read [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md); for development, testing and deploys in detail, [cloudflare/README.md](cloudflare/README.md). Work in progress is planned in [docs/plans/](docs/plans/): the current plan is [docs/plans/product-and-engine.md](docs/plans/product-and-engine.md), with its remaining chunks in [docs/plans/remaining-chunks.md](docs/plans/remaining-chunks.md).
 
-## Delete a chunk's design once the chunk is built
+## Where docs go
 
-`docs/plans/` holds the plans, the designs of chunks not yet built, and [contract.md](docs/plans/contract.md), the internal API's design, which stays. Once a chunk is built, move what later chunks inherit into their sections of the plan and what stays true into ARCHITECTURE.md or cloudflare/README.md. Then delete the chunk's design. Git history keeps it, and `git log --diff-filter=D --name-only -- docs/plans/` lists the deleted designs.
+Each kind of doc has one home and one lifetime. The code is the source of truth, so a doc says what the code cannot: why it is shaped this way, what was decided against, and what was accepted.
+
+- `AGENTS.md` (this file): what every session needs, which is the environment, the commands, the settings and the rules. Every session loads it, so keep it short and put detail in the doc it points to.
+- [ARCHITECTURE.md](ARCHITECTURE.md): what stays true about the engine and why, its protocols with their decisions, the alternatives they beat and what was accepted unfixed. A change to a protocol updates its section in the same commit.
+- [cloudflare/README.md](cloudflare/README.md): how to develop, test and deploy the engine, and the procedures the operator follows by hand.
+- `docs/`: one doc per topic that outgrew ARCHITECTURE.md, [connectors.md](docs/connectors.md) and [data-processing.md](docs/data-processing.md).
+- `docs/plans/`: the plans, the designs of chunks not yet built, and [contract.md](docs/plans/contract.md), the internal API's design, which stays. Once a chunk is built, move what later chunks inherit into their sections of the plan and what stays true into ARCHITECTURE.md or cloudflare/README.md. Then delete the chunk's design. Git history keeps it, and `git log --diff-filter=D --name-only -- docs/plans/` lists the deleted designs.
+- Laravel's designs are in the app's `docs/architecture/`, one doc per built feature.
+
+A lesson learned while building goes where the next agent meets it. One about how the code must behave becomes a test where it can. Any other goes into the doc that owns its topic, or into this file when every session needs it. There is no file of learnings.
 
 Code never cites a file in `docs/plans/`, because a design goes away. A comment gives its reason itself or cites ARCHITECTURE.md.
 
