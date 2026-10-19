@@ -1,10 +1,11 @@
 // The Conversation Durable Object in local workerd, as Laravel's commands reach it (startRun, cancelRun, deleteConversation
 // through the internal mount) with the fake Laravel: the start, runs and their events, cancels, the deadline, the stream's
-// WebSocket, tools through a fake executor, the history replay, fencing, model calls, compaction, and restarts and recovery
-// through the attempt gate with the fake model.
+// WebSocket, tools through a fake executor, the history replay, fencing, model calls, compaction, one pi conversation per
+// conversation across its runs, and restarts and recovery through the attempt gate with the fake model.
 
 import { abortAllDurableObjects, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import type { TranscriptContext } from "@earendil-works/pi-ai";
+import { collapseSystemMessages, getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai/utils/transcript";
 import type { RunEvent } from "@minerva/contract";
 import type { CancelReason, Fact, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
@@ -24,7 +25,7 @@ import type { DispatchResult } from "../../src/gateway/ledger.ts";
 import type { ToolResult } from "../../src/gateway/results.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import { countedFails, FAKE_OVERFLOW, type FakeOptions, type FakeScript, fakeUpstream, SUMMARY_OUTPUT, SUMMARY_START } from "../../src/model/fake.ts";
+import { countedFails, FAKE_OVERFLOW, type FakeOptions, type FakeScript, type FakeTurn, fakeUpstream, SUMMARY_OUTPUT, SUMMARY_START } from "../../src/model/fake.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../../src/model/route.ts";
 import { PROVIDER_ERROR } from "../../src/model/tap.ts";
 import type { RunId } from "../../src/shared/rpc.ts";
@@ -809,6 +810,214 @@ describe("compaction", () => {
 		const { compactions, calls } = (await long.stub.faultView(long.start.run, 0, 0)).internals;
 		expect(compactions.map((compaction) => compaction.reason)).toEqual(["overflow"]);
 		expect(calls.map((call) => call.summary)).toEqual([false, false, true, false]);
+	});
+
+	/** A run that reads the large result and answers, its answer's usage such that the next run's message passes the threshold. */
+	const READ_THEN = (answer: Partial<FakeTurn> = {}) => scripted({ turns: [READ, { text: "Read it.", usage: { input: 110_000, output: 10 }, ...answer }] });
+
+	/** The conversation a summary call was asked to summarize: the text of its request's last user message. */
+	function summarized(fakes: Fakes): string {
+		const texts = fakes.contexts.map((context) => {
+			const content = context.messages.findLast((item) => item.role === "user")?.content ?? "";
+			return typeof content === "string" ? content : content.map((part) => (part.type === "text" ? part.text : "")).join("");
+		});
+		return texts.find((text) => text.includes("<conversation>")) ?? "";
+	}
+
+	test("the next run compacts the earlier round whole, its result clipped to 2,000 characters for the summarizer, and answers", async () => {
+		const { start, stub, fakes } = await started(READ_THEN(), LARGE);
+		expect(await settled(stub, start.run)).toMatchObject({ status: "completed" });
+		expect((await stub.faultView(start.run, 0, 0)).internals.compactions).toEqual([]);
+		const later = next(start, { message: message("What did it say?") });
+		await accepted(later);
+		expect(await settled(stub, later.run)).toMatchObject({ status: "completed" });
+		const { compactions, calls } = (await stub.faultView(later.run, 0, 0)).internals;
+		expect([compactions.map((compaction) => compaction.reason), calls.map((call) => call.summary)]).toEqual([["threshold"], [true, false]]);
+		// The cut moved forward past the result: the earlier message, its call and its result were summarized, the result clipped.
+		const request = summarized(fakes);
+		expect(request).toContain(`[User]: ${start.message.content}`);
+		expect(request).toMatch(/\[Tool result\]: [^\n]{2000}\n\n\[\.\.\. \d+ more characters truncated\]/);
+		const last = (fakes.contexts.at(-1) as TranscriptContext).messages.filter((item) => item.role !== "system");
+		expect(last.map((item) => item.role)).toEqual(["user", "assistant", "user"]);
+		expect(JSON.stringify(last[0])).toContain(SUMMARY_START);
+		expect(JSON.stringify(last[2])).toContain("What did it say?");
+	});
+
+	test.each([
+		[1, ["failed", "completed"]],
+		[2, ["failed", "failed"]],
+	])("after %d failed summaries, the next runs fail compaction_failed until one compacts and answers", async (failures, ends) => {
+		const { start, stub } = await started(READ_THEN({ failSummaries: failures }), { ...LARGE, model: { fails: countedFails() } });
+		expect(await settled(stub, start.run)).toMatchObject({ status: "completed" });
+		const runs: RunHead[] = [];
+		for (const content of ["Go on.", "Go on again."]) {
+			const later = next(start, { message: message(content) });
+			await accepted(later);
+			runs.push(await settled(stub, later.run));
+			const { compactions, calls } = (await stub.faultView(later.run, 0, 0)).internals;
+			const ok = runs.at(-1)?.status === "completed";
+			expect([compactions.length, calls.map((call) => call.summary)]).toEqual(ok ? [1, [true, false]] : [0, [true]]);
+		}
+		expect(runs.map((run) => run.status)).toEqual(ends);
+		for (const run of runs.filter((ended) => ended.status === "failed")) expect(run.errorMessage).toBe(COMPACTION_FAILED.message);
+	});
+});
+
+describe("one pi conversation per conversation", () => {
+	/** The conversation's pi conversation and provider session, as its row names them. */
+	function piSessionOf(stub: Stub) {
+		return runInDurableObject(stub, (_instance, state) => state.storage.sql.exec<{ pi_session: string | null; pi_provider_session: string | null }>("SELECT pi_session, pi_provider_session FROM conversation").one());
+	}
+
+	const answerOf = async (stub: Stub, runId: RunId) => ((await eventsOf(stub, runId)).find((event) => event.type === "message")?.data as { content: string } | undefined)?.content;
+
+	/** The messages Laravel's transcript holds of a run, its message at `at` and its answer a second later, as a later start's history. */
+	function transcribed(start: StartRun, answer: string, at: number): StartRun["history"] {
+		return [
+			{ id: start.message.id, role: "user", content: start.message.content, attachments: [], run: start.run, createdAt: new Date(at).toISOString(), changes: null },
+			{ id: uuid7(), role: "assistant", content: answer, attachments: [], run: start.run, createdAt: new Date(at + 1000).toISOString(), changes: null },
+		];
+	}
+
+	test("twelve runs continue one pi conversation, so the twelfth recalls what the first said after Laravel's history dropped it", async () => {
+		const begun = conversation({}, { message: message("Remember the code word HERON-42.") });
+		const { stub } = begun;
+		const history: StartRun["history"] = [];
+		const runs: RunId[] = [];
+		for (let turn = 1; turn <= 12; turn++) {
+			const content = turn === 12 ? scripted({ turns: [{ recall: "code word" }] }) : `Turn ${turn}.`;
+			// Each start carries what Laravel sends: the newest 20 messages of the earlier runs.
+			const start = turn === 1 ? begun.start : next(begun.start, { message: message(content), history: history.slice(-20) });
+			await accepted(start);
+			expect(await settled(stub, start.run)).toMatchObject({ status: "completed" });
+			history.push(...transcribed(start, (await answerOf(stub, start.run)) ?? "", Date.now() + turn * 10_000));
+			runs.push(start.run);
+		}
+		expect(JSON.stringify(history.slice(-22, -2))).not.toContain("HERON-42");
+		expect(await answerOf(stub, runs[11] as RunId)).toBe("Remember the code word HERON-42.");
+		const { pi_session } = await piSessionOf(stub);
+		expect(await Promise.all(runs.map(async (run) => (await row(stub, run)).session))).toEqual(runs.map(() => pi_session));
+		// pi holds the twelve runs' inputs in that one conversation, besides its root, and nothing seeded later.
+		const pi = await runInDurableObject(stub, (_instance, state) => ({
+			conversations: state.storage.sql.exec("SELECT id FROM pi_conversations ORDER BY id").toArray(),
+			submissions: state.storage.sql.exec("SELECT conversation_id AS id, count(*) AS n FROM pi_submissions WHERE request_id LIKE '\"run:%' GROUP BY conversation_id").toArray(),
+			users: state.storage.sql.exec("SELECT count(*) AS n FROM pi_entries WHERE conversation_id = ? AND json_extract(record, '$.kind') = 'pi.user'", Number(pi_session)).one().n,
+		}));
+		expect(pi).toEqual({ conversations: [{ id: 1 }, { id: Number(pi_session) }], submissions: [{ id: Number(pi_session), n: 12 }], users: 12 });
+	});
+
+	test("a conversation from before: its runs keep their own sessions, one in flight at the switch too, and the next run seeds the conversation's from Laravel's history", async () => {
+		let release = () => {};
+		const hold = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const begun = conversation(waiting(hold), { message: message("The first code word is ALPHA.") });
+		const { stub, fakes } = begun;
+		// As before runs shared one: the conversation names no pi conversation, so each run's is its own.
+		const unshare = () => runInDurableObject(stub, (_instance, state) => void state.storage.sql.exec("UPDATE conversation SET pi_session = NULL, pi_provider_session = NULL"));
+		await accepted(begun.start);
+		await settled(stub, begun.start.run);
+		await unshare();
+		const second = next(begun.start, { message: message(`The second code word is BRAVO.\n\n${WAIT}`) });
+		await accepted(second);
+		await until(() => row(stub, second.run), (run) => run.session !== null && fakes.invocations.length === 1);
+		await unshare();
+		release();
+		expect(await settled(stub, second.run)).toMatchObject({ status: "completed" });
+
+		const third = next(begun.start, {
+			message: message(scripted({ turns: [{ recall: "code word" }] })),
+			history: [...transcribed(begun.start, "Done.", Date.now()), ...transcribed(second, "Done.", Date.now() + 10_000)],
+		});
+		await accepted(third);
+		expect(await settled(stub, third.run)).toMatchObject({ status: "completed" });
+		expect(await answerOf(stub, third.run)).toBe("The first code word is ALPHA.");
+		const sessions = await Promise.all([begun.start, second, third].map(async (start) => (await row(stub, start.run)).session));
+		expect(new Set(sessions).size).toBe(3);
+		expect((await piSessionOf(stub)).pi_session).toBe(sessions[2]);
+		// Seeded from the history's texts: both earlier messages, and none of the second run's tool round.
+		const context = fakes.contexts.at(-1) as TranscriptContext;
+		expect(JSON.stringify(context)).toContain("The second code word is BRAVO.");
+		expect(context.messages.filter((item) => item.role !== "system").map((item) => item.role)).toEqual(["user", "assistant", "user", "assistant", "user"]);
+	});
+
+	test("a run whose snapshot lost a tool since the earlier run continues with the earlier call to it, and completes", async () => {
+		const read = scripted({ turns: [{ tools: [{ name: "fake_read", arguments: { key: "a" } }] }, { text: "Read." }] });
+		const { start, stub, fakes } = await started(read, { declarations: [declaration("fake_read", true)] });
+		expect(await settled(stub, start.run)).toMatchObject({ status: "completed" });
+		const offered = () => getCurrentTools((fakes.contexts.at(-1) as TranscriptContext).messages).map((tool) => tool.name);
+		expect(offered()).toContain("fake_read");
+		// A revocation between the runs: the next run's snapshot has no tool of that connection.
+		fakes.declarations = [];
+		const later = next(start, { message: message("And now?") });
+		await accepted(later);
+		expect(await settled(stub, later.run)).toMatchObject({ status: "completed" });
+		expect(offered()).not.toContain("fake_read");
+		const messages = (fakes.contexts.at(-1) as TranscriptContext).messages.filter((item) => item.role !== "system");
+		expect(messages.map((item) => item.role)).toEqual(["user", "assistant", "toolResult", "assistant", "user"]);
+		expect(JSON.stringify(messages[1])).toContain("fake_read");
+	});
+
+	test("a later run's edited instructions replace the earlier run's in the one system message, and equal ones add no system entry", async () => {
+		const { start, stub, fakes } = await started("One");
+		await settled(stub, start.run);
+		const systemEntries = async () =>
+			runInDurableObject(stub, (_instance, state) => state.storage.sql.exec("SELECT count(*) AS n FROM pi_entries WHERE json_extract(record, '$.kind') = 'pi.system'").one().n);
+		const edited = next(start, { message: message("Two"), agent: { ...start.agent, instructions: "Be thorough." } });
+		await accepted(edited);
+		expect(await settled(stub, edited.run)).toMatchObject({ status: "completed" });
+		// pi patches the instructions' section; a provider that takes no system message mid-conversation collapses them into one.
+		const context = fakes.contexts.at(-1) as TranscriptContext;
+		const collapsed = collapseSystemMessages(context).messages;
+		expect([collapsed[0]?.role, collapsed.filter((item) => item.role === "system").length]).toEqual(["system", 1]);
+		expect(getCurrentSystemPrompt(context.messages)).toContain("Be thorough.");
+		expect(JSON.stringify(collapsed)).not.toContain("Be brief.");
+		const entries = await systemEntries();
+		const same = next(start, { message: message("Three"), agent: { ...edited.agent } });
+		await accepted(same);
+		expect(await settled(stub, same.run)).toMatchObject({ status: "completed" });
+		expect(await systemEntries()).toBe(entries);
+	});
+
+	test("every call of a conversation, across a reset, sends its provider session as the cache key and affinity, the same instructions and tools, and a growing input", async () => {
+		const route = (provider: ModelRoute["provider"]): ModelRoute => ({ provider, name: provider === "workers-ai" ? "@cf/zai-org/glm-5.3-flash" : "gpt-test", gateway: "acme", api: "responses", cap: 1000, reasoningEffort: "", reasoningSummary: "" });
+		// A 401 for every request, so each run fails, and its failed answer stays out of the next run's context.
+		const refused = () => new Response(JSON.stringify({ error: { message: "No key.", type: "invalid_request_error", code: "invalid_api_key" } }), { status: 401, headers: { "content-type": "application/json" } });
+		for (const provider of ["openai", "workers-ai"] as const) {
+			const sent: { key: unknown; input: unknown[]; tools: unknown }[] = [];
+			const binding = {
+				aiGatewayLogId: null,
+				run: async (_model: string, input: { messages: unknown[]; tools?: unknown }, options: { extraHeaders?: { [name: string]: string } }) => {
+					sent.push({ key: options.extraHeaders?.["x-session-affinity"], input: input.messages, tools: input.tools });
+					return refused();
+				},
+				gateway: () => ({
+					run: async (request: { query: { prompt_cache_key?: string; input: unknown[]; tools?: unknown } }) => {
+						sent.push({ key: request.query.prompt_cache_key, input: request.query.input, tools: request.query.tools });
+						return refused();
+					},
+				}),
+			} as unknown as Ai;
+			const { start, stub } = await started("First", { upstream: upstreamOf(route(provider), binding) });
+			expect(await settled(stub, start.run)).toMatchObject({ status: "failed" });
+			for (const content of ["Second", "Third"]) {
+				if (content === "Third") await abortAllDurableObjects();
+				const later = next(start, { message: message(content) });
+				await accepted(later);
+				expect(await settled(objectOf(start), later.run)).toMatchObject({ status: "failed" });
+			}
+			const { pi_provider_session } = await piSessionOf(objectOf(start));
+			expect(sent.map((request) => request.key)).toEqual([pi_provider_session, pi_provider_session, pi_provider_session]);
+			expect(pi_provider_session).toEqual(expect.any(String));
+			// The instructions lead every input, so each input starting with the one before it holds them equal.
+			for (const [index, request] of sent.entries()) {
+				const before = sent[index - 1];
+				if (before === undefined) continue;
+				expect(request.tools).toEqual(before.tools);
+				expect(request.input.length).toBeGreaterThan(before.input.length);
+				expect(request.input.slice(0, before.input.length)).toEqual(before.input);
+			}
+		}
 	});
 });
 

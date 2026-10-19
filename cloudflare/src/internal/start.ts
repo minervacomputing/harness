@@ -22,7 +22,7 @@ export interface Preparation {
 	catalog: string;
 	compiler: string;
 	digest: string;
-	/** The earlier messages the run's pi session is seeded with, selected and clipped. */
+	/** The earlier messages, selected and clipped, that seed the conversation's pi conversation when this run creates it. */
 	history: Replayed[];
 }
 

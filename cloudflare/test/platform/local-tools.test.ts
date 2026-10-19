@@ -19,7 +19,7 @@ import { filesBucket } from "../../src/addressing.ts";
 import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { RunHead } from "../../src/conversation/store.ts";
-import type { Conversation } from "../../src/faults/index.ts";
+import type { Conversation, RunInternals } from "../../src/faults/index.ts";
 import { FakeLaravel } from "../../src/faults/laravel.ts";
 import type { Fault } from "../../src/faults/plan.ts";
 import { faultConversationPorts } from "../../src/faults/ports.ts";
@@ -177,13 +177,26 @@ async function waits(w: World, runId: RunId): Promise<void> {
 	expect([run.entered, run.run?.session]).toEqual([{ model: 0, tool: 0 }, null]);
 }
 
-/** The run completes in its first attempt, its first model call begun once the held run's `bash` task ended, on one clock. */
+/**
+ * The run completes in its first attempt, its first model call begun once the held run's `bash` task ended, on one clock. It
+ * ran in the held run's pi session, the conversation's, and none of the held run's tasks is its.
+ */
 async function completesAfter(w: World, runId: RunId, held: RunId): Promise<void> {
 	expect((await settled(w, runId)).status).toBe("completed");
 	const run = await w.conversation.faultRun(runId);
 	expect(run.attempts).toEqual([{ attempt: 1, ended: "completed" }]);
-	const bash = (await w.conversation.faultRun(held)).piTasks.find((task) => task.kind === "pi.tool");
+	const earlier = await w.conversation.faultRun(held);
+	const bash = earlier.piTasks.find((task) => task.kind === "pi.tool");
 	expect(run.marks[0]?.begin).toBeGreaterThanOrEqual(bash?.endedAt ?? Number.POSITIVE_INFINITY);
+	sharesSession(run, earlier);
+}
+
+/** Two runs of one conversation in one pi session, each with only its own tasks. */
+function sharesSession(run: RunInternals, earlier: RunInternals): void {
+	expect(run.run?.session).toEqual(expect.any(String));
+	expect(run.run?.session).toBe(earlier.run?.session);
+	expect(run.piTasks.length).toBeGreaterThan(0);
+	expect(run.piTasks.filter((task) => earlier.piTasks.some((other) => other.id === task.id))).toEqual([]);
 }
 
 /** The console's warnings while `body` runs. */
@@ -403,6 +416,7 @@ describe("the local tools in the conversation", () => {
 				{ model: 1, tool: 1 },
 				{ model: 1, tool: 1 },
 			]);
+			sharesSession(await w.conversation.faultRun(b), left);
 		});
 	});
 

@@ -1,7 +1,7 @@
-// History replay: what the model sees of a conversation's earlier turns. Only final
-// texts and file notes are replayed, from the history Laravel sends with a start (internal/start.ts), never pi's
-// transcript, so pi's aborted partial entries never reach the next turn (ARCHITECTURE.md: Events and the stream). Each run is
-// a fresh pi session seeded with this history when it is created; a resumed attempt keeps what its session holds.
+// History replay: what the model sees of a conversation's turns from before its pi conversation. Only final texts and file
+// notes are replayed, from the history Laravel sends with a start (internal/start.ts). The history seeds the conversation's
+// pi conversation once, when its first run creates it; every later run continues that pi conversation, where pi keeps a
+// stopped turn's aborted partial entries out of the model's context (ARCHITECTURE.md: Events and the stream).
 
 import { sliceText } from "../lib/text.ts";
 import type { Attachment, FolderChanges } from "@minerva/contract";

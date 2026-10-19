@@ -98,8 +98,10 @@ describe.concurrent("retention with periods of a minute", () => {
 		const tables = (await storage(w)).tables;
 		const rows = (table: string) => tables[table]?.rows ?? 0;
 		expect(["run_events", "run_snapshots", "attempts", "tool_executions", "call_records", "run_writes"].map(rows)).toEqual([0, 0, 0, 0, 0, 0]);
-		expect(["pi_entries", "pi_tasks", "pi_submissions"].map(rows)).toEqual([0, 0, 0]);
-		expect(rows("pi_conversations"), "only pi's root conversation").toBe(1);
+		// Both runs share the conversation's pi conversation, which only the purge deletes: it keeps its rows beside pi's root.
+		expect((await run(w, second)).internals.run?.session).toBe((await run(w, first)).internals.run?.session);
+		expect(["pi_entries", "pi_tasks", "pi_submissions"].map(rows).every((count) => count > 0), "the conversation's pi rows").toBe(true);
+		expect(rows("pi_conversations"), "pi's root and the conversation's").toBe(2);
 		expect(rows("runs")).toBe(2);
 
 		// Laravel lacks every fact above its watermark, and the engine holds each of them.

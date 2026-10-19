@@ -9,7 +9,8 @@
 // pass's start and end (`retain:pass`) and after each step (`retain:step`). Once no `retain` job is left it reads
 // `databaseSize` again.
 //
-// The rule: every pass under 1 s of wall time, and `databaseSize` after under 10% of before, for the turns and the large turn.
+// The rule: every pass under 1 s of wall time, and `databaseSize` after under 10% of before for the large turn. The turns'
+// conversation keeps its pi conversation, every turn's entries in it, until the conversation is deleted.
 // A pass's wall time is its end note's time less its start's, on the object's clock. That clock stands still through SQL and
 // a timer moves it only by its delay; the pass syncs the storage after each step, which moves it to the real time, so the end
 // counts every step and only the pass's last reads, after its last sync, are left out.
@@ -181,10 +182,9 @@ describe("retention's perf probe", () => {
 				expect(pruned.unfinished, "no pass failed").toBe(0);
 				expect(pruned.after.tables.run_events?.rows).toBe(0);
 				expect(pruned.after.tables.facts?.rows).toBe(0);
-				expect(pruned.after.tables.pi_conversations?.rows, "only pi's root conversation is left").toBe(1);
+				// The conversation's pi conversation, with every turn's entries, stays until the conversation is deleted.
+				expect(pruned.after.tables.pi_conversations?.rows, "pi's root and the conversation's are left").toBe(2);
 				expect.soft(pruned.passes.filter((pass) => pass.ms >= RULE_PASS_MS).map((pass) => pass.ms)).toEqual([]);
-				// Below the full size, the floor every pruned conversation keeps (about 550 kB) is more than 10% of before.
-				if (TURNS === FULL_TURNS) expect.soft(pruned.after.databaseSize).toBeLessThan(pruned.before.databaseSize * RULE_AFTER);
 			}
 		},
 		4 * 60 * 60_000,

@@ -1,7 +1,7 @@
 // A model call's admission: before each call the store
 // compares the run's spend so far (its settled calls and ended scripts, its open scripts and its container time until
-// now) with its allowance, and a run that reached it ends with `budget_reached` in the same change, recording nothing. The
-// store runs over node:sqlite with every schema step applied.
+// now) with its allowance, and a run that reached it ends with `budget_reached` in the same change, recording nothing. And a
+// run's claim of the conversation's pi conversation. The store runs over node:sqlite with every schema step applied.
 
 import type { Fact, RoutePrices } from "@minerva/contract/internal";
 import { beforeEach, expect, test } from "vitest";
@@ -123,4 +123,26 @@ test("a call record says whether the call made a compaction's summary", () => {
 	const calls = [store.recordModelCall(FENCE, REQUEST, prices), store.recordModelCall(FENCE, { ...REQUEST, summary: true }, prices)];
 	const summary = (call: string | null) => (db.prepare("SELECT summary FROM call_records WHERE call = ?").all(call)[0] as { summary: number }).summary;
 	expect(calls.map(summary)).toEqual([0, 1]);
+});
+
+test("a run claims the conversation's pi conversation: a creator's ids become the conversation's, later runs copy them, and a claim is kept", () => {
+	const [second, third] = ["0190a000-0000-7000-8000-000000000002", "0190a000-0000-7000-8000-000000000003"];
+	for (const id of [second, third]) db.prepare("INSERT INTO runs (id, status, attempt_started_at, snapshot, created_at, metered) VALUES (?, 'running', 0, '{}', 0, 1)").all(id);
+	const ids = (id: string) => db.prepare("SELECT session, provider_session FROM runs WHERE id = ?").all(id)[0];
+	const conversation = () => db.prepare("SELECT pi_session, pi_provider_session FROM conversation").all()[0];
+	expect(store.conversationSession()).toBeNull();
+
+	// The conversation's first run created pi conversation 7: its ids are the conversation's and the run's, in one write.
+	expect(store.claimSession(RUN, { session: "7", providerSession: "p7" })).toBe("7");
+	expect([conversation(), ids(RUN), store.conversationSession()]).toEqual([{ pi_session: "7", pi_provider_session: "p7" }, { session: "7", provider_session: "p7" }, "7"]);
+	// A later run creates nothing and copies the conversation's.
+	expect(store.claimSession(second, null)).toBe("7");
+	expect(ids(second)).toEqual({ session: "7", provider_session: "p7" });
+	// A second creator, which the lane rules out, gets the conversation's ids, and its own pi conversation is an orphan.
+	expect(store.claimSession(third, { session: "9", providerSession: "p9" })).toBe("7");
+	expect([conversation(), ids(third)]).toEqual([{ pi_session: "7", pi_provider_session: "p7" }, { session: "7", provider_session: "p7" }]);
+	// A run that already holds a session, as a run from before they were shared does, keeps it.
+	db.prepare("UPDATE runs SET session = '3', provider_session = 'p3' WHERE id = ?").all(second);
+	expect(store.claimSession(second, null)).toBe("3");
+	expect(ids(second)).toEqual({ session: "3", provider_session: "p3" });
 });

@@ -17,7 +17,7 @@
 //   the deletion of its storage and its `destroy()`, a fault taken before the deletion and logged again after it);
 // - `retain:pass`: at a retention pass's start and end (detail: `start` or `end`; no end for a pass that destroyed the object),
 //   whose notes time a pass on the object's clock (the perf probe);
-// - `loop:created`: a run's pi session created, before the run claims it (detail: the session's id);
+// - `loop:created`: the conversation's pi conversation created by its first run, before the run claims it (detail: its id);
 // - `pi:stop`: a run's end, before it marks pi's orphaned work (detail: the run's id); no other stop reaches it;
 // - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
@@ -159,8 +159,9 @@ export interface Calibration {
 }
 
 /**
- * The newest run that names a session: its provider session for a model call, its pi session for a tool. While each run has
- * sessions of its own (chunk 19a), that is the call's own run, active or not.
+ * The newest run that names a session: its provider session for a model call, its pi session for a tool. The runs of a
+ * conversation share its sessions, and a run names them only once it claims them, after its start's wait has left no live
+ * work of an earlier run, so that is the call's own run, active or not.
  */
 function runNaming(context: PortsContext, kind: "model" | "tool", session: string): string | null {
 	const column = kind === "model" ? "provider_session" : "session";

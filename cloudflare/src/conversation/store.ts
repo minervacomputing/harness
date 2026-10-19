@@ -65,8 +65,8 @@ export interface RunSnapshot extends StartSnapshot {
 	attachments: Attachment[];
 	limits: { folderBytes: number; folderEntries: number; runUploadBytes: number };
 	/**
-	 * The run's turn as its start sent it: the history its pi session is seeded with,
-	 * selected and clipped, and its prompt.
+	 * The run's turn as its start sent it: the history that seeds the conversation's pi conversation when this run creates
+	 * it, selected and clipped, and its prompt.
 	 */
 	turn: { history: Replayed[]; prompt: string };
 }
@@ -597,10 +597,27 @@ export class RunStore {
 		this.#sql.exec(`UPDATE runs SET ${entries.map(([key]) => `${key} = ?`).join(", ")} WHERE id = ?`, ...entries.map(([, value]) => value), runId);
 	}
 
-	/** Sets the session once; another one already set wins and is returned. */
-	claimSession(runId: RunId, session: string, providerSession: string | null): string | null {
-		this.#sql.exec("UPDATE runs SET session = ?, provider_session = ? WHERE id = ? AND session IS NULL", session, providerSession, runId);
-		return this.run(runId)?.session ?? null;
+	/** The conversation's pi conversation, null until a run creates it. */
+	conversationSession(): string | null {
+		return this.conversation()?.pi_session ?? null;
+	}
+
+	/**
+	 * Sets the run's session once, in one write: the pi conversation the run `created` becomes the conversation's unless it
+	 * has one already, and the run takes the conversation's ids. A session the run already holds wins and is returned.
+	 */
+	claimSession(runId: RunId, created: { session: string; providerSession: string | null } | null): string | null {
+		return this.write(() => {
+			if (created) {
+				this.#sql.exec(
+					"UPDATE conversation SET pi_session = ?, pi_provider_session = ? WHERE singleton = 1 AND pi_session IS NULL",
+					created.session,
+					created.providerSession,
+				);
+			}
+			this.#sql.exec("UPDATE runs SET (session, provider_session) = (SELECT pi_session, pi_provider_session FROM conversation WHERE singleton = 1) WHERE id = ? AND session IS NULL", runId);
+			return this.run(runId)?.session ?? null;
+		});
 	}
 
 	/** The revoked flag the executor checks before every provider request (ARCHITECTURE.md: Strict revocation). */

@@ -174,9 +174,10 @@ export function submissionCompactions(sql: SqlStorage, session: number, request:
 
 /**
  * The first pi conversation no run names, other than pi's root, the conversation's own and those in `skipped`, that
- * nothing owns: a session a reset left between its creation and its claim (conversation.ts `#startLoop`), or one a later
- * run's prune left part-deleted. Only while no run is active is such a session certain to be no one's: an acting run's
- * loop is what creates and claims sessions.
+ * nothing owns: one a reset left between its creation and its claim (conversation.ts `#startSection`), or one a later
+ * run's prune left part-deleted. The conversation's own is always named by the run that created it, and only the purge
+ * deletes it. Only while no run is active is such a session certain to be no one's: an acting run's loop is what creates
+ * and claims sessions.
  */
 export function orphanPiSession(sql: SqlStorage, skipped: readonly number[] = []): number | null {
 	if (schemaVersion(sql) !== PI_SCHEMA_VERSION) return null;

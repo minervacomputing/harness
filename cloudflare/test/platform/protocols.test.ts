@@ -192,6 +192,15 @@ async function provider(w: World) {
 	return providerOf(env, w.within.workspace).state();
 }
 
+/** Two runs of one conversation in one pi session, the conversation's, each with only its own tasks. */
+async function sharesSession(w: World, runId: RunId, earlier: RunId): Promise<void> {
+	const [run, before] = [await w.stub.faultRun(runId), await w.stub.faultRun(earlier)];
+	expect(run.run?.session).toEqual(expect.any(String));
+	expect(run.run?.session).toBe(before.run?.session);
+	expect(run.piTasks.length).toBeGreaterThan(0);
+	expect(run.piTasks.filter((task) => before.piTasks.some((other) => other.id === task.id))).toEqual([]);
+}
+
 const STOPPED_PERMISSIONS = "Stopped because permissions changed.";
 const LIST_INBOX: FakeTurn = { tools: [{ name: LIST, arguments: { folder: "inbox" } }] };
 const save = (title: string): FakeTurn => ({ tools: [{ name: SAVE, arguments: { folder: "inbox", title } }] });
@@ -300,6 +309,7 @@ describe("authority and revocation", () => {
 			expect((await w.stub.faultRun(a)).writes).toEqual([expect.objectContaining({ status: "succeeded" })]);
 			expect((await settled(w, b)).status).toBe("completed");
 			expect(toolCalls(await eventsOf(w, b))).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" })]);
+			await sharesSession(w, b, a);
 		} finally {
 			warned.mockRestore();
 		}
@@ -343,6 +353,7 @@ describe("authority and revocation", () => {
 			["pi.tool", false],
 			["pi.generation", false],
 		]);
+		await sharesSession(w, b, a);
 	});
 
 	test("a reset at a cancelled run's stop: the next instance marks the run's work before pi resumes, and pi runs none of it", async () => {

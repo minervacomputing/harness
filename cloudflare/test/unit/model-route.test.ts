@@ -235,9 +235,11 @@ describe("the fake model", () => {
 		const request = summarizing([`[User]: ${scripted([{ tools: [{ name: "read", arguments: {} }] }, { text: "After.", failSummaries: 2 }])}`]);
 		const fails = countedFails();
 		const calls: FakeCall[] = [];
-		const ends: string[] = [];
-		for (let i = 0; i < 3; i++) ends.push((await answer(request, { fails, onCall: (call) => calls.push(call) })).stopReason);
-		expect(ends).toEqual(["error", "error", "stop"]);
+		const answers: AssistantMessage[] = [];
+		for (let i = 0; i < 3; i++) answers.push(await answer(request, { fails, onCall: (call) => calls.push(call) }));
+		expect(answers.map((message) => message.stopReason)).toEqual(["error", "error", "stop"]);
+		// Once they are spent, the summary itself.
+		expect(textOf(answers[2] as AssistantMessage)).toMatch(/^## Goal\n/);
 		expect(calls.map(({ step, summary }) => ({ step, summary }))).toEqual(Array(3).fill({ step: 0, summary: true }));
 	});
 });

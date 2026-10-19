@@ -235,7 +235,7 @@ function summarizedParts(context: TranscriptContext): string[] {
 /**
  * The fake's summary under pi's headings. Its critical context keeps each user and tool result line, clipped, and the lines
  * an earlier summary kept; then the newest user line's script and the tool rounds done since it, which `scriptOf` and
- * `stepOf` read back. A script that asks for failed summaries gets that error instead.
+ * `stepOf` read back. A script that asks for failed summaries gets that error too, which the host's `fails` decides.
  */
 function summaryTurn(context: TranscriptContext): FakeTurn {
 	const parts = summarizedParts(context);
@@ -252,7 +252,6 @@ function summaryTurn(context: TranscriptContext): FakeTurn {
 	const failures = parseScript(script)
 		.turns.slice(rounds)
 		.find((turn) => turn.failSummaries)?.failSummaries;
-	if (failures) return { error: { message: "The fake model could not summarize.", times: failures } };
 	const text = [
 		"## Goal\nCarry on with the conversation.",
 		"## Constraints & Preferences\n- (none)",
@@ -263,7 +262,9 @@ function summaryTurn(context: TranscriptContext): FakeTurn {
 		...(script ? [script] : []),
 		`[fake: ${rounds} tool rounds done]`,
 	].join("\n\n");
-	return { text, usage: { input: inputTokens(context.messages), output: SUMMARY_OUTPUT } };
+	const summary: FakeTurn = { text, usage: { input: inputTokens(context.messages), output: SUMMARY_OUTPUT } };
+	// Once the host says its failures are spent, the turn answers its summary.
+	return failures ? { ...summary, error: { message: "The fake model could not summarize.", times: failures } } : summary;
 }
 
 /** A turn's text: its own or what it recalls, then its padding. */

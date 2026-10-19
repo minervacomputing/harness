@@ -1,7 +1,8 @@
 // Retention in local workerd: the `retain` job on the Conversation's alarm deletes a fact
 // only 7 days after Laravel acknowledged it, raising the floor, and a replay or a gap from below the floor is refused rather
-// than skipping what is gone (Facts and the floor); it deletes a run's own records and its pi session 30 days after the run
-// ended, keeping its row, its answer and its tombstone, and the pi sessions no run names (A run's steps, pi's tables); and it
+// than skipping what is gone (Facts and the floor); it deletes a run's own records 30 days after the run ended, with a pi
+// session of the run's own (from before runs shared the conversation's) but never the conversation's pi conversation,
+// keeping the run's row, its answer and its tombstone, and the pi sessions nothing names (A run's steps, pi's tables); and it
 // purges a deleted conversation 7 days after its deletion once Laravel holds every fact, after which the Worker answers its
 // commands from the recovery index (Physical deletion). The Conversation runs with the test build's ports (src/faults/), for
 // the fault points `retain:step` and `loop:created`, and its runs answer with the fake model.
@@ -124,6 +125,16 @@ async function settled(start: StartRun): Promise<void> {
 async function ran(start: StartRun): Promise<void> {
 	await commands.startRun(start);
 	await settled(start);
+}
+
+/** The conversation names no pi conversation: its next run creates one, as a run did before they were shared. */
+const unshare = (start: StartRun) => sql(start, "UPDATE conversation SET pi_session = NULL, pi_provider_session = NULL");
+
+/** Runs the start to its end in a pi session of its own, which the conversation does not name: a run from before runs shared one. */
+async function ranAlone(start: StartRun): Promise<void> {
+	await unshare(start);
+	await ran(start);
+	await unshare(start);
 }
 
 /** Waits until Laravel acknowledged every fact written. */
@@ -497,7 +508,8 @@ describe("runs' retention", () => {
 		const before = await runRow(start);
 		const kept = await records(start);
 		expect(Object.entries(kept).filter(([, count]) => count === 0)).toEqual([["run_snapshots", 0]]);
-		expect((await piRows(start, before.session)).every((count) => count > 0)).toBe(true);
+		const pi = await piRows(start, before.session);
+		expect(pi.every((count) => count > 0)).toBe(true);
 		const [{ finished_at } = { finished_at: 0 }] = await sql<{ finished_at: number }>(start, "SELECT finished_at FROM runs WHERE id = ?", start.run);
 		expect(await retainJob(start)).toBe(finished_at + RETENTION.runMs);
 
@@ -509,7 +521,8 @@ describe("runs' retention", () => {
 		await retain(start);
 		expect(await runRow(start)).toEqual({ status: "completed", prune: "done", snapshot: "", session: before.session, event_seq: before.event_seq });
 		expect(await records(start)).toEqual(NO_RECORDS);
-		expect(await piRows(start, before.session)).toEqual([0, 0, 0, 0, 0]);
+		// Its session is the conversation's pi conversation, which only the purge deletes.
+		expect(await piRows(start, before.session)).toEqual(pi);
 		expect((await sql<{ n: number }>(start, "SELECT count(*) AS n FROM internal_answers WHERE run_id = ?", start.run))[0]?.n).toBe(1);
 		expect(await sql(start, "SELECT run_id, reason FROM tombstones")).toEqual([{ run_id: tombstoned, reason: "cancelled" }]);
 
@@ -524,6 +537,26 @@ describe("runs' retention", () => {
 		}
 		// A conversation whose runs are pruned is still deleted.
 		expect(await commands.deleteConversation({ scope: start.scope, conversation: start.conversation })).toEqual({ outcome: "deleted" });
+	});
+
+	test("runs sharing the conversation's pi conversation leave it whole; a run from before, with a session of its own, has it deleted", async () => {
+		const alone = await next(null);
+		await ranAlone(alone);
+		const shared = [await next(alone), await next(alone)];
+		for (const start of shared) await ran(start);
+		const [own = null, first = null, second = null] = await Promise.all([alone, ...shared].map(async (start) => (await runRow(start)).session));
+		expect([first, second]).toEqual([expect.any(String), first]);
+		expect(own).not.toBe(first);
+		expect(await sql(alone, "SELECT pi_session FROM conversation")).toEqual([{ pi_session: first }]);
+		const pi = await piRows(alone, first);
+		expect((await piRows(alone, own)).every((count) => count > 0)).toBe(true);
+
+		await ageRuns(alone, RETENTION.runMs);
+		await retain(alone);
+		for (const start of [alone, ...shared]) expect([(await runRow(start)).prune, await records(start)]).toEqual(["done", NO_RECORDS]);
+		expect(await piRows(alone, own)).toEqual([0, 0, 0, 0, 0]);
+		expect(await piRows(alone, first)).toEqual(pi);
+		expect(await sql(alone, "SELECT id FROM pi_conversations ORDER BY id")).toEqual([{ id: 1 }, { id: Number(first) }]);
 	});
 
 	test("the test build's plan gives one conversation periods of its own, and notes each pass's start and end", async () => {
@@ -553,7 +586,7 @@ describe("runs' retention", () => {
 			{ point: "retain:pass", mode: "hold" },
 			{ point: "retain:pass", mode: "note", times: 10 },
 		]);
-		await ran(start);
+		await ranAlone(start);
 		await ageRuns(start, RETENTION.runMs);
 		const retained = retain(start);
 		await until(
@@ -631,11 +664,11 @@ describe("runs' retention", () => {
 	test("runs whose pi sessions have live work are aborted and skipped, and a later run is still pruned in the same pass", async () => {
 		RETENTION.passMs = 60_000;
 		const first = await next(null, [{ point: "retain:step", mode: "note", times: 100 }]);
-		await ran(first);
+		await ranAlone(first);
 		const blocked = [first, await next(first), await next(first)];
-		for (const start of blocked.slice(1)) await ran(start);
+		for (const start of blocked.slice(1)) await ranAlone(start);
 		const free = await next(first);
-		await ran(free);
+		await ranAlone(free);
 		const sessions: string[] = [];
 		const live: number[] = [];
 		for (const start of blocked) {
@@ -662,7 +695,7 @@ describe("runs' retention", () => {
 
 	test("a run of 10,000 events takes as many steps as a bound of the step's rows needs", async () => {
 		const start = await next(null, [{ point: "retain:step", mode: "note", times: 1000 }]);
-		await ran(start);
+		await ranAlone(start);
 		await runInDurableObject(objectOf(start), (_instance, state) => {
 			const { event_seq } = state.storage.sql.exec<{ event_seq: number }>("SELECT event_seq FROM runs WHERE id = ?", start.run).one();
 			state.storage.sql.exec(
@@ -692,7 +725,7 @@ describe("runs' retention", () => {
 	test("a run pruned right after its end; the next turn, reset mid-turn, starts again and completes", async () => {
 		RETENTION.runMs = 0;
 		const first = await next(null);
-		await ran(first);
+		await ranAlone(first);
 		const { session } = await runRow(first);
 		await retain(first);
 		expect([(await runRow(first)).prune, await piRows(first, session)]).toEqual(["done", [0, 0, 0, 0, 0]]);
@@ -713,8 +746,11 @@ describe("runs' retention", () => {
 		expect(JSON.parse(events.find((event) => event.type === "message")?.data ?? "null")).toMatchObject({ content: text });
 		expect((await objectOf(second).faultFired()).map((entry) => entry.point)).toEqual(["model:delta"]);
 
+		// The next turn made the conversation's pi conversation, which its run's prune keeps.
+		const shared = (await runRow(second)).session;
+		const pi = await piRows(second, shared);
 		await retain(second);
-		expect([(await runRow(second)).prune, await records(second), await piRows(second, (await runRow(second)).session)]).toEqual(["done", NO_RECORDS, [0, 0, 0, 0, 0]]);
+		expect([(await runRow(second)).prune, await records(second), await piRows(second, shared)]).toEqual(["done", NO_RECORDS, pi]);
 	});
 
 	test("a reset between a session's creation and its claim leaves an orphan, drained once the run has ended", async () => {

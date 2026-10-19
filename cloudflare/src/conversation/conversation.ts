@@ -1,5 +1,5 @@
 // The Conversation Durable Object (`ConversationApi`; ARCHITECTURE.md: Data placement, Protocols): one per chat.
-// It extends the Agents SDK's Agent and runs pi-durable through PiHarness, one pi session per run, with the
+// It extends the Agents SDK's Agent and runs pi-durable through PiHarness, one pi conversation per conversation, with the
 // `minerva` extension's tools and the model wrapper of src/model/. It owns its runs, attempts, run events and
 // facts; Laravel starts and cancels its runs. Nothing routes to it but our own
 // typed RPC and the stream's WebSocket (no `routeAgentRequest`).
@@ -564,8 +564,9 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/**
 	 * A start's section: `running` (once per attempt), then a wait until no live pi work is another run's, which the run's
-	 * end or the bound cuts short; then the run's tools installed, its pi session created with the history replay (only here,
-	 * never on resume), and its prompt submitted once, as `run:<id>`.
+	 * end or the bound cuts short; then the run's tools installed and the conversation's pi conversation claimed, which the
+	 * conversation's first run creates with the history replay (never a later run, never on resume); then the run's
+	 * instructions configured on it, and its prompt submitted once, as `run:<id>`.
 	 */
 	async #startSection(runId: RunId, section: Section): Promise<void> {
 		const run = this.#store.run(runId);
@@ -582,25 +583,33 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		let session = run.session;
 		// The turn came with its start, its history selected and clipped (internal/start.ts).
 		const { instructions, turn } = this.#store.snapshot(run);
+		const agent = { instructions: sessionInstructions(instructions, LOCAL_TOOLS) };
+		const pi = await this.harness.pi();
 		if (session === null) {
-			const pi = await this.harness.pi();
-			let providerSession: string | null = null;
-			const created = await pi.createConversation(
-				{
-					ownership: { kind: "ownerless" },
-					agent: { model: { ...MODEL_REF }, instructions: sessionInstructions(instructions, LOCAL_TOOLS) },
-					init: async (tx: Tx, id: PiConversationId) => {
-						providerSession = (await tx.doc(ProviderDoc, id)).sessionId;
-						await replay(tx, id, turn.history);
+			let created: { session: string; providerSession: string | null } | null = null;
+			if (this.#store.conversationSession() === null) {
+				let providerSession: string | null = null;
+				const conversation = await pi.createConversation(
+					{
+						ownership: { kind: "ownerless" },
+						agent: { model: { ...MODEL_REF }, ...agent },
+						init: async (tx: Tx, id: PiConversationId) => {
+							providerSession = (await tx.doc(ProviderDoc, id)).sessionId;
+							await replay(tx, id, turn.history);
+						},
 					},
-				},
-				BG,
-			);
-			// A reset here leaves a session no run names, which retention deletes once no run is active.
-			await this.#point("loop:created", String(created.id));
-			session = await this.#store.outside(() => this.#store.claimSession(runId, String(created.id), providerSession));
+					BG,
+				);
+				// A reset here leaves a session no run names, which retention deletes once no run is active.
+				await this.#point("loop:created", String(conversation.id));
+				created = { session: String(conversation.id), providerSession };
+			}
+			session = await this.#store.outside(() => this.#store.claimSession(runId, created));
 		}
-		if (session === null || !this.#store.isCurrent(fence)) return;
+		if (session === null) return;
+		// A later run's instructions replace the earlier run's in pi's next request; equal ones record nothing.
+		await (await pi.conversation(Number(session) as PiConversationId, BG))?.configure(agent, BG);
+		if (!this.#store.isCurrent(fence)) return;
 		this.#prepareLocal(run);
 		this.#showPhase(fence);
 		await this.harness.submit(turn.prompt, { session, operationId: `run:${runId}` });
@@ -1570,7 +1579,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 }
 
-/** The history replay, in the commit that creates the run's session: one timestamp for every entry. */
+/** The history replay, in the commit that creates the conversation's pi conversation: one timestamp for every entry. */
 async function replay(tx: Tx, id: PiConversationId, history: { role: "user" | "assistant"; content: string }[]): Promise<void> {
 	const timestamp = Date.now();
 	for (const message of history) {
