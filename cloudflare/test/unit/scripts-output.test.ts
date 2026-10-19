@@ -1,9 +1,9 @@
 // A long result cut as pi cuts it (src/scripts/output.ts): the head and sizes that cross from the guest
-// give exactly what pi-durable's own `boundOutput` gives for the whole text, compared with pi's code.
+// give exactly what pi-durable's `boundOutput` (from @earendil-works/chord) gives for the whole text, compared with pi's code.
 
 import { describe, expect, test } from "vitest";
-// pi-durable's bound of a tool result's text (harness/output.ts), which the package does not export.
-import { boundOutput } from "../../node_modules/@earendil-works/pi-durable/dist/harness/output.js";
+// The bound pi-durable puts on a tool result's text (harness/tool.ts `boundContent`); pi-durable does not export it.
+import { boundOutput } from "@earendil-works/chord/output";
 import { bound, headUnits, OutputRecord, piece, plus, sizeOf } from "../../src/scripts/output.ts";
 
 const encoder = new TextEncoder();

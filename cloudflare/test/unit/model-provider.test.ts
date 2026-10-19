@@ -3,7 +3,7 @@
 // reasoning-summary retry, metering of refused calls and read timeout go through createAI itself, over a
 // fake AI binding that answers as AI Gateway's universal endpoint and OpenAI's Responses API do.
 
-import { type AssistantMessage, type AssistantMessageEvent, createModels, type TranscriptContext, isContextOverflow, type Message, type Models, type SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type AssistantMessageEvent, createModels, type TranscriptContext, isContextOverflow, type Message, type Models, type SimpleStreamOptions, type Tool, validateToolArguments } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, test } from "vitest";
 import { type FakeOptions, type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
 import { COMPACTION_PROMPT_START, IMAGE_PLACEHOLDER, TOOL_IMAGE_PLACEHOLDER } from "../../src/model/policy.ts";
@@ -330,6 +330,19 @@ describe("tool calls", () => {
 		expect(host.texts).toEqual([[call && "id" in call ? call.id : "", '{"\\n": 1}']]);
 		expect(message.stopReason).toBe("toolUse");
 	});
+
+	test("arguments cut off mid-value, which the fake parses as pi-ai's streaming parse does, are refused", async () => {
+		const text = '{"key":"inb';
+		const { models } = setup();
+		const events = models.streamSimple(minervaModel(ROUTE), { messages: prompt({ turns: [{ tools: [{ name: "t", arguments: {} }], rawArguments: { "0": text } }] }) }, { sessionId: "s1" });
+		const ended: unknown[] = [];
+		for await (const event of events) if (event.type === "toolcall_end") ended.push([event.toolCall.arguments, event.toolCall.argumentsError]);
+		const message = await events.result();
+		const call = message.content.find((block) => block.type === "toolCall");
+		const error = `Unterminated string in JSON at position 11 (line 1 column 12)\n\nReceived arguments:\n${text}`;
+		expect(ended).toEqual([[{}, error]]);
+		expect(call && "arguments" in call ? [call.arguments, call.argumentsError] : null).toEqual([{}, error]);
+	});
 });
 
 /** AI Gateway's universal endpoint as createAI calls it (`env.AI.gateway(id).run`), answered by `answer`. */
@@ -369,6 +382,35 @@ function answered(text: string) {
 			{ type: "response.output_text.delta", output_index: 0, item_id: "msg_1", content_index: 0, delta: text },
 			{ type: "response.output_item.done", output_index: 0, item: { type: "message", id: "msg_1", role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] } },
 			{ type: "response.completed", response: { id: "resp_1", status: "completed", usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } } },
+		]);
+}
+
+/** A Responses stream that calls `save_note` with this argument text, sent in two deltas, with usage (5, 2). */
+function calling(text: string) {
+	const item = { type: "function_call", id: "fc_1", call_id: "call_1", name: "save_note" };
+	const half = Math.floor(text.length / 2);
+	return () =>
+		events([
+			{ type: "response.created", response: { id: "resp_1" } },
+			{ type: "response.output_item.added", output_index: 0, item: { ...item, arguments: "" } },
+			{ type: "response.function_call_arguments.delta", output_index: 0, item_id: "fc_1", delta: text.slice(0, half) },
+			{ type: "response.function_call_arguments.delta", output_index: 0, item_id: "fc_1", delta: text.slice(half) },
+			{ type: "response.function_call_arguments.done", output_index: 0, item_id: "fc_1", arguments: text },
+			{ type: "response.output_item.done", output_index: 0, item: { ...item, arguments: text, status: "completed" } },
+			{ type: "response.completed", response: { id: "resp_1", status: "completed", usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 } } },
+		]);
+}
+
+/** A chat-completions stream that calls `save_note` with this argument text, sent in two deltas, with usage (5, 2). */
+function chatCalling(text: string) {
+	const half = Math.floor(text.length / 2);
+	const chunk = (delta: object, finish: string | null = null) => ({ id: "chatcmpl_1", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason: finish }] });
+	return () =>
+		events([
+			chunk({ role: "assistant", tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "save_note", arguments: "" } }] }),
+			chunk({ tool_calls: [{ index: 0, function: { arguments: text.slice(0, half) } }] }),
+			chunk({ tool_calls: [{ index: 0, function: { arguments: text.slice(half) } }] }),
+			{ ...chunk({}, "tool_calls"), usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 } },
 		]);
 }
 
@@ -581,6 +623,81 @@ describe("over AI Gateway (createAI)", () => {
 		expect(host.logs.join("\n")).toContain("did not answer within");
 		// The provider never answered, and nothing stopped the call: unmetered, failed.
 		expect([host.counts, host.outcomes]).toEqual([1, ["failed"]]);
+	});
+});
+
+/** A write tool as pi validates its calls (pi-durable's harness/tool.ts calls validateToolArguments). */
+const SAVE_NOTE = {
+	name: "save_note",
+	description: "Saves a note.",
+	parameters: { type: "object", properties: { folder: { type: "string" }, title: { type: "string" } }, required: ["folder", "title"], additionalProperties: false } as unknown as Tool["parameters"],
+} satisfies Tool;
+
+/** The `save_note` call the model streamed with `text` over createAI, as each `toolcall_end` event and the final message carry it. */
+async function savedOver(api: ModelRoute["api"], text: string) {
+	const gateway = new FakeGateway();
+	gateway.answers = [api === "chat" ? chatCalling(text) : calling(text)];
+	const { host, streamed } = overGateway(gateway, { api, reasoningEffort: "" });
+	const { events, message } = await streamed();
+	const ended = events.flatMap((event) => (event.type === "toolcall_end" ? [event.toolCall] : []));
+	const call = message.content.find((block) => block.type === "toolCall");
+	if (!call) throw new Error("No tool call in the message.");
+	return { host, ended, call, message };
+}
+
+describe("tool calls over the Responses API (createAI)", () => {
+	const saved = (text: string) => savedOver("responses", text);
+
+	test("well-formed arguments reach the tool as the model sent them", async () => {
+		const text = '{"folder":"inbox","title":"Hello"}';
+		const { host, ended, call, message } = await saved(text);
+		const expected = { type: "toolCall", id: "call_1|fc_1", name: "save_note", arguments: { folder: "inbox", title: "Hello" } };
+		expect(message.stopReason).toBe("toolUse");
+		expect([ended, call]).toEqual([[expected], expected]);
+		expect(validateToolArguments(SAVE_NOTE, call)).toEqual({ folder: "inbox", title: "Hello" });
+		expect(host.texts).toEqual([["call_1|fc_1", text]]);
+	});
+
+	test("arguments cut off mid-value are refused, never salvaged into a plausible call", async () => {
+		const text = '{"folder":"inbox","title":"Hel';
+		const { ended, call } = await saved(text);
+		const error = `Unterminated string in JSON at position 30 (line 1 column 31)\n\nReceived arguments:\n${text}`;
+		const expected = { type: "toolCall", id: "call_1|fc_1", name: "save_note", arguments: {}, argumentsError: error };
+		expect([ended, call]).toEqual([[expected], expected]);
+		expect(() => validateToolArguments(SAVE_NOTE, call)).toThrow(`Invalid arguments for tool "save_note": ${error}`);
+	});
+
+	test("a value with an invalid escape, as LaTeX's \\usepackage, keeps every field", async () => {
+		const { call } = await saved('{"title":"\\usepackage{amsmath}","folder":"inbox"}');
+		expect(call).toEqual({ type: "toolCall", id: "call_1|fc_1", name: "save_note", arguments: { title: "\\usepackage{amsmath}", folder: "inbox" } });
+		expect(validateToolArguments(SAVE_NOTE, call)).toEqual({ title: "\\usepackage{amsmath}", folder: "inbox" });
+	});
+});
+
+describe("tool calls over the chat API (createAI), whose parse keeps a cut-off text's prefix", () => {
+	const saved = (text: string) => savedOver("chat", text);
+
+	test("well-formed arguments reach the tool as the model sent them", async () => {
+		const text = '{"folder":"inbox","title":"Hello"}';
+		const { host, ended, call, message } = await saved(text);
+		const expected = { type: "toolCall", id: "call_1", name: "save_note", arguments: { folder: "inbox", title: "Hello" } };
+		expect(message.stopReason).toBe("toolUse");
+		expect([ended, call]).toEqual([[expected], expected]);
+		expect(host.texts).toEqual([["call_1", text]]);
+	});
+
+	test("arguments cut off mid-value are refused, never salvaged into a plausible call", async () => {
+		const text = '{"folder":"inbox","title":"Hel';
+		const { ended, call } = await saved(text);
+		const error = `Unterminated string in JSON at position 30 (line 1 column 31)\n\nReceived arguments:\n${text}`;
+		const expected = { type: "toolCall", id: "call_1", name: "save_note", arguments: {}, argumentsError: error };
+		expect([ended, call]).toEqual([[expected], expected]);
+		expect(() => validateToolArguments(SAVE_NOTE, call)).toThrow(`Invalid arguments for tool "save_note": ${error}`);
+	});
+
+	test("a raw line break in a value, which pi-ai's repair escapes, is not refused", async () => {
+		const { call } = await saved('{"folder":"inbox","title":"Line 1\nLine 2"}');
+		expect(call).toEqual({ type: "toolCall", id: "call_1", name: "save_note", arguments: { folder: "inbox", title: "Line 1\nLine 2" } });
 	});
 });
 

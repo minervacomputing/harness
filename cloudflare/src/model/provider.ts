@@ -26,14 +26,20 @@
 //   one, so pi compacts and asks again; createAI's diagnostics, which copy that text, are dropped from every
 //   message; the operator's log gets the failure's kind, status, class and createAI's code, never its text.
 //
-// pi-ai parses tool-call arguments with `JSON.parse` (utils/json-parse.ts `parseStreamingJson`, through
-// `parseJsonWithRepair`, falling back to partial-json; agents' createAI does the same), which has the
+// pi-ai parses tool-call arguments with `JSON.parse` (utils/json-parse.ts, through `parseJsonWithRepair`;
+// agents' createAI does the same), which has the
 // runtime's escaped-key bug (lib/json.ts). The raw argument text is only in the stream's `toolcall_delta`
 // events. So the tap reads it again with `parseJson` and puts those arguments in the `toolcall_end` event and
 // the final message, before pi validates or stores the call, and hands the text to the host by call id
 // (`toolCallText`), so a read replayed after a restart can read it again too (conversation/tools.ts). What
 // remains exposed: pi reads its own stored rows with `JSON.parse`, so a call replayed from storage in an
 // isolate that already parsed a "\\" key may get a misread key back before our tool sees it.
+//
+// A finished text that is not a JSON object even after pi-ai's repair, such as one cut off mid-value, is refused in
+// the same two places, with pi-ai's `arguments` {} and `argumentsError`, which pi's validation refuses. pi-ai's own
+// stream parsers do that themselves (`parseToolCallArguments`), but agents' createAI chat path (Workers AI, OpenAI's
+// chat API) and the fake model keep partial-json's reading of the text's prefix (`parseStreamingJson`): a plausible
+// but wrong value the tool would run with.
 
 import {
 	type Api,
@@ -44,8 +50,10 @@ import {
 	createProvider,
 	type JsonObject,
 	type Model,
+	parseToolCallArguments,
 	type Provider,
 	type SimpleStreamOptions,
+	type ToolCall,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { parseJson } from "../lib/json.ts";
@@ -301,8 +309,8 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 	const out = createAssistantMessageEventStream();
 	const buffer = new DeltaBuffer();
 	const argumentText = new Map<number, string>();
-	/** Tool calls whose arguments were read again from the model's text, by call id. */
-	const reparsed = new Map<string, JsonObject>();
+	/** Tool calls whose arguments were read again from the model's text, or refused, by call id. */
+	const reparsed = new Map<string, Arguments>();
 	(async () => {
 		let recorded: string | null;
 		try {
@@ -383,10 +391,11 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 					const text = argumentText.get(event.contentIndex);
 					if (text !== undefined) {
 						options.host.toolCallText(fence, event.toolCall.id, text);
-						const fixed = reparse(text);
+						const reread = reparse(text);
+						const fixed = reread ? { arguments: reread } : event.toolCall.argumentsError === undefined ? malformed(text) : undefined;
 						if (fixed) {
 							reparsed.set(event.toolCall.id, fixed);
-							event = { ...event, toolCall: { ...event.toolCall, arguments: fixed } };
+							event = { ...event, toolCall: { ...event.toolCall, ...fixed } };
 						}
 					}
 				} else if (event.type === "done") event = { ...event, message: withArguments(event.message, reparsed) };
@@ -455,12 +464,20 @@ function reparse(text: string): JsonObject | undefined {
 	}
 }
 
-/** The message with the re-read arguments in its tool calls. */
-function withArguments(message: AssistantMessage, reparsed: ReadonlyMap<string, JsonObject>): AssistantMessage {
+type Arguments = Pick<ToolCall, "arguments" | "argumentsError">;
+
+/** pi-ai's refusal of a finished text that is not a JSON object its repair accepts; undefined for any other text. */
+function malformed(text: string): Arguments | undefined {
+	const parsed = parseToolCallArguments(text);
+	return parsed.argumentsError === undefined ? undefined : parsed;
+}
+
+/** The message with the re-read or refused arguments in its tool calls. */
+function withArguments(message: AssistantMessage, reparsed: ReadonlyMap<string, Arguments>): AssistantMessage {
 	if (!reparsed.size) return message;
 	return {
 		...message,
-		content: message.content.map((block) => (block.type === "toolCall" && reparsed.has(block.id) ? { ...block, arguments: reparsed.get(block.id) as JsonObject } : block)),
+		content: message.content.map((block) => (block.type === "toolCall" && reparsed.has(block.id) ? { ...block, ...(reparsed.get(block.id) as Arguments) } : block)),
 	};
 }
 

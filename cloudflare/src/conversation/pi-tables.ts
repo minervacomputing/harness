@@ -1,6 +1,6 @@
-// A finished run's pi session, deleted by hand: pi-durable 1.2.0 has no
+// A finished run's pi session, deleted by hand: pi-durable 1.3.0 has no
 // delete call, so these statements remove a session's rows from pi's own tables (`pi_` plus its schema version 1,
-// node_modules/@earendil-works/pi-durable/dist/storage/sqlite/migrations.js) through the indexes pi made for them. Each
+// node_modules/@earendil-works/pi-durable/dist/storage/sqlite/migrations.js and schema.js) through the indexes pi made for them. Each
 // call is one bounded step for the caller's `transactionSync`, made outside any transaction of pi's (store.ts `outside`):
 // it deletes at most `limit` rows and selects what it deletes in the same statements, so a step a reset rolls back is
 // simply done again. The conversation's own row goes last, so a session deleted in part is still found by its run, or as an

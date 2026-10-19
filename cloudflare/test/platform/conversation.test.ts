@@ -623,6 +623,22 @@ describe("tools", () => {
 		expect(fakes.invocations.map((request) => request.arguments)).toEqual([{ [first]: 1, "\n": 2 }]);
 	});
 
+	test("a write whose arguments the model cut off mid-value never reaches the executor, and the model gets an error result", async () => {
+		const text = '{"folder":"inbox","title":"Hel';
+		const save: ToolDeclaration = {
+			...declaration("notes_save_note", false),
+			inputSchema: { type: "object", properties: { folder: { type: "string" }, title: { type: "string" } }, required: ["folder", "title"], additionalProperties: false },
+		};
+		const { start, stub, fakes } = await started(scripted({ turns: [{ tools: [{ name: save.name, arguments: {} }], rawArguments: { "0": text } }, { text: "Done." }] }), { declarations: [save] });
+		expect((await settled(stub, start.run)).status).toBe("completed");
+		expect(fakes.invocations).toEqual([]);
+		expect((await eventsOf(stub, start.run)).filter((event) => event.type === "tool_call")).toEqual([]);
+		const results = (fakes.contexts.at(-1)?.messages ?? []).filter((item) => item.role === "toolResult");
+		expect(results.map((item) => [item.content, item.isError])).toEqual([
+			[[{ type: "text", text: `<harness>\n[error] Invalid arguments for tool "notes_save_note": Unterminated string in JSON at position 30 (line 1 column 31)\n\nReceived arguments:\n${text}\n</harness>` }], true],
+		]);
+	});
+
 	test("a call that ends RUN_ENDED is not recorded", async () => {
 		const { start, stub, fakes } = await started(scripted({ turns: [{ tools: [{ name: "fake_read", arguments: {} }] }] }), {
 			declarations: [declaration("fake_read", true)],
@@ -658,8 +674,8 @@ describe("the model", () => {
 			["assistant", [{ type: "text", text: "Done." }]],
 			["user", "Second question"],
 		]);
-		// pi adds the instructions as a positional system section; providers that take no mid-conversation
-		// system messages fold it into the leading one.
+		// pi writes the instructions after the replayed history and the run's input, and moves them to the front.
+		expect(context.messages.map((item) => item.role)).toEqual(["system", "user", "assistant", "user"]);
 		const system = context.messages.filter((item) => item.role === "system");
 		// With the local tools, the folder's paragraph follows the agent's instructions after a blank line.
 		expect(JSON.stringify(system)).toContain(JSON.stringify(`\n\n${start.agent.instructions}\n\n${FOLDER_INSTRUCTIONS}\n</instructions>`).slice(1, -1));

@@ -66,8 +66,8 @@ export function forModel(context: TranscriptContext, model: Model<Api>): Transcr
 }
 
 /**
- * The compaction prompt pi-durable 1.2.0 sends (harness/compaction.js, not exported): its summary is not an
- * answer, so its text is not published as deltas. test/unit/model-provider.test.ts checks that
+ * The compaction prompt pi-durable 1.3.0 sends (harness/compaction.js, not exported): its summary is not an
+ * answer, so its text is not published as deltas. test/unit/model-policy.test.ts checks that
  * the installed pi-durable still sends it.
  */
 export const COMPACTION_PROMPT_START = "You are a context summarization assistant.";
