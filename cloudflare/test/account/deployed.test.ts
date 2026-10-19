@@ -74,15 +74,16 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 		}
 	});
 
-	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys", { timeout: 120_000 }, async () => {
+	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys", { timeout: 360_000 }, async () => {
 		const expected = Object.fromEntries(
 			Object.entries({ conversation: CONVERSATION_MIGRATIONS, scripts: SCRIPTS_MIGRATIONS, sandbox: SANDBOX_MIGRATIONS }).map(([kind, steps]) => [kind, steps.map((step) => step.id)]),
 		);
 		// `cf deploy` returns before the new version settles everywhere. Right after it, an object can still be built
 		// by the previous version and answer that build's schema steps, a strict prefix of these (seen in CI, a probe
-		// 30 ms after the deploy), or the runtime can fail to reach it at all with its own internal error (seen in CI
-		// too, no invocation logged). An answer whose every object is this build's, the previous one's or unreached,
-		// and some not this build's, is asked again for about a minute; any other is checked at once.
+		// 30 ms after the deploy; the Sandbox class, which has a container, for more than a minute), or the runtime can
+		// fail to reach it at all with its own internal error (seen in CI too, no invocation logged). An answer whose
+		// every object is this build's, the previous one's or unreached, and some not this build's, is asked again for
+		// up to five minutes; any other is checked at once.
 		const settling = (objects: Record<string, unknown>) => {
 			const answers = Object.entries(expected).flatMap(([kind, migrations]) =>
 				([null, "eu"] as const).map((jurisdiction) => {
@@ -107,7 +108,7 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 				json: { native: number[]; parseJson: number[] };
 			};
 		};
-		const deadline = Date.now() + 60_000;
+		const deadline = Date.now() + 300_000;
 		let body = await ask();
 		while (settling(body.objects) && Date.now() < deadline) {
 			await new Promise((resolve) => setTimeout(resolve, 5_000));
