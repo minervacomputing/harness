@@ -1,5 +1,5 @@
 // What both halves of the internal API share: its prefix and body cap, ids, the scope every command names, times, and
-// its errors. docs/plans/contract.md has the design.
+// its errors.
 
 import { z } from 'zod'
 
@@ -36,7 +36,7 @@ export const Refused = z.object({ outcome: z.literal('refused'), code: z.string(
 
 /**
  * What either side answers when it does not give an outcome, by code, with its status. A code names one meaning and always has
- * the same status. A 5xx can be retried; a 4xx is a bug, a scope error or a misconfiguration (docs/plans/contract.md, Retries).
+ * the same status. A 5xx can be retried; a 4xx is a bug, a scope error or a misconfiguration.
  */
 export const INTERNAL_REFUSALS = {
   /** No credential, or one that does not verify. Nothing says why. */

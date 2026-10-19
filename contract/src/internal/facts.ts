@@ -1,5 +1,5 @@
 // Facts: what the engine tells Laravel about its runs, written to its outbox with the execution facts they describe and
-// delivered in order per conversation (product-and-engine.md, Decisions 7). Deltas and phases are not facts: the browser
+// delivered in order per conversation. Deltas and phases are not facts: the browser
 // streams them from the engine.
 
 import { z } from 'zod'

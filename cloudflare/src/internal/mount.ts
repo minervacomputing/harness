@@ -1,4 +1,4 @@
-// The internal API's routes (docs/plans/contract.md): the commands Laravel sends, under /internal/v1/, served by oRPC's
+// The internal API's routes: the commands Laravel sends, under /internal/v1/, served by oRPC's
 // OpenAPIHandler with our body reader and error shape (handler.ts `contractHandler`), its own codes and body cap. A
 // request reaches a command in this order, each step refusing before the next runs:
 //

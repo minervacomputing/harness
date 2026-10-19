@@ -1,4 +1,4 @@
-// The catalog Laravel reads (docs/plans/contract.md, The catalog): every connector the registry serves, with its OAuth
+// The catalog Laravel reads: every connector the registry serves, with its OAuth
 // descriptor, kinds, actions and operations' terms, and a version that names it, built from the declarations alone; and
 // the build's prices (budget/prices.ts), with their own version.
 

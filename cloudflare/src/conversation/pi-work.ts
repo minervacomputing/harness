@@ -1,4 +1,4 @@
-// What pi holds for a run, by its operation (docs/plans/chunk-19a-design.md, The data shape): the `run:<id>` submission
+// What pi holds for a run, by its operation: the `run:<id>` submission
 // the run sent to its session, and the tasks pi made for that submission. The active run's operation owns its work;
 // everything else pi holds is orphaned. The gate reads it here, and tool and model calls are admitted by it (Admission).
 // The settings the Conversation opens pi with are here too, since the rule rests on one of them: pi makes no background
@@ -104,7 +104,7 @@ export async function admitTool(deps: ToolAdmission, call: PiCall): Promise<{ fe
  * Whether a model call the wrapper began for `fence` may be recorded and sent: the fence's run is the active one and its
  * submission is placed. pi gives a model call no task, so the operation's state is the rule. It is enough because a
  * session's model calls come only from the generation holding its live run and the compactions that generation owns,
- * and no generation but the placed operation's is left live in its session (docs/plans/chunk-19a-design.md, Admission).
+ * and no generation but the placed operation's is left live in its session.
  */
 export async function admitModel(deps: Admission, fence: AttemptFence): Promise<boolean> {
 	const run = deps.store.activeRun();

@@ -1,4 +1,4 @@
-// Who may call the internal API: Laravel, with a Cloudflare Access service token (docs/plans/contract.md, Authentication).
+// Who may call the internal API: Laravel, with a Cloudflare Access service token.
 // Access checks the token at the edge, in front of /internal/*, and adds its signed assertion; the Worker checks that
 // assertion again before anything reads the request, so a route that Access does not cover, or a request that reaches the
 // Worker some other way, is refused all the same.

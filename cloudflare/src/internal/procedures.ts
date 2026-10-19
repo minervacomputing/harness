@@ -42,7 +42,7 @@ const inEnvironment = internal.middleware(async ({ context, next }, input: unkno
 /** A command declared before the chunk that implements it. */
 function notYet(chunk: number): () => never {
 	return () => {
-		throw internalRefusal("NOT_IMPLEMENTED", `This engine does not carry out this command yet (product-and-engine.md, chunk ${chunk}).`);
+		throw internalRefusal("NOT_IMPLEMENTED", `This engine does not carry out this command yet (chunk ${chunk}).`);
 	};
 }
 

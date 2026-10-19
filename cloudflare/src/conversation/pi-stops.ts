@@ -1,4 +1,4 @@
-// Stopping pi's work by its run (docs/plans/chunk-19a-design.md, Stopping and settling): every live task that the acting
+// Stopping pi's work by its run: every live task that the acting
 // run's operation does not own (pi-work.ts `belongs`) is orphaned, and a stop marks orphans one by one with `abortTask`. It
 // never aborts a whole pi conversation and never withdraws a submission, so the active run's work is never touched. Marking
 // and settling stay apart, as pi's calls do: `abortTask` resolves once its mark is committed and the run invocation it saw

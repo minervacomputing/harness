@@ -115,7 +115,7 @@ interface ConversationApi {
 	 */
 	replayInternal(command: ReplayFacts, workspace: WorkspaceRef): Promise<InternalAnswer<{ facts: Fact[]; more: boolean }>>;
 	/**
-	 * Laravel's `folder` (the app's docs/plans/conversations.md, 12a): the folder at a version, the current one for null; null
+	 * Laravel's `folder`: the folder at a version, the current one for null; null
 	 * when the conversation is deleted or has no such version. Never binds the conversation.
 	 */
 	folderInternal(command: ReadFolder, workspace: WorkspaceRef): Promise<InternalAnswer<Folder | null>>;
@@ -545,7 +545,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * The loop starts, in PiStops's lane (docs/plans/chunk-19a-design.md, The start's wait). Not awaited by the events that
+	 * The loop starts, in PiStops's lane. Not awaited by the events that
 	 * start it: its wait can last until the bound.
 	 */
 	#startLoop(runId: RunId): Promise<void> {

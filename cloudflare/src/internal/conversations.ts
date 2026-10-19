@@ -1,4 +1,4 @@
-// `folder`, `resolveDownload` and `deleteConversation` in the Worker (the app's docs/plans/conversations.md, 12a). The reads go
+// `folder`, `resolveDownload` and `deleteConversation` in the Worker. The reads go
 // through the recovery index without binding anything, as `replayFacts` does: an unknown conversation is `NOT_FOUND`, one
 // bound to another organization or workspace `SCOPE_MISMATCH`, and a deleted one answers as missing. A deletion is marked in
 // the index first, binding the conversation if no command named it, so a start that arrives later is refused; then its object

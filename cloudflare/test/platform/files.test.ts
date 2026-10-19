@@ -399,7 +399,7 @@ describe("fault rows: Files", () => {
 		hold.resolve();
 		expect(await inFlight).toEqual({ outcome: "refused", code: "CONVERSATION_DELETED", message: "This conversation was deleted." });
 		expect((await objectOf(late).faultView(late.run)).head).toBeNull();
-		// The copy landed, recorded loose; the run's blob stays until retention removes it (chunk 15 of product-and-engine.md).
+		// The copy landed, recorded loose; the run's blob stays until retention removes it (chunk 15).
 		expect(await blobs(first)).toHaveLength(2);
 		await sweepNow(first);
 		expect(await blobs(first)).toEqual([kept]);

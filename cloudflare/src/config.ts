@@ -60,7 +60,7 @@ export interface Settings {
 		messageAttachments: number;
 	};
 	/**
-	 * The internal API Laravel calls (api/internal/, docs/plans/contract.md): the environment its commands must name, and the
+	 * The internal API Laravel calls (api/internal/): the environment its commands must name, and the
 	 * Cloudflare Access application whose service tokens may call it. Null when unset: every /internal/ path is then 404.
 	 */
 	internal: { environment: string; access: AccessSettings } | null;

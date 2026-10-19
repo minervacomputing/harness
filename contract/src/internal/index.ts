@@ -1,4 +1,4 @@
-// The internal API between Laravel and the engine (docs/plans/contract.md): `engine` holds the commands the engine serves,
+// The internal API between Laravel and the engine: `engine` holds the commands the engine serves,
 // `laravel` the requests and deliveries Laravel serves. Both are described by the OpenAPI documents in contract/openapi/,
 // which Laravel keeps copies of.
 

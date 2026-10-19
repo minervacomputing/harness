@@ -1,4 +1,4 @@
-// The engine's client of Laravel (docs/plans/contract.md): oRPC's typed client of the `laravel` half of the internal
+// The engine's client of Laravel: oRPC's typed client of the `laravel` half of the internal
 // contract, at MINERVA_LARAVEL_URL with the Sanctum token MINERVA_LARAVEL_TOKEN. Its requests are the contract's by
 // construction. Leases and fact deliveries (chunk 7) are its first callers.
 
@@ -38,7 +38,7 @@ export class LaravelUnreachable extends Error {
 }
 
 /**
- * Whether a failed request to Laravel may be tried again (docs/plans/contract.md, Retries): no answer, a timeout or a 5xx, in
+ * Whether a failed request to Laravel may be tried again: no answer, a timeout or a 5xx, in
  * the contract's shape or not. A 4xx in the contract's shape is a bug or a scope error, and a redirect a misconfiguration.
  */
 export function retryable(error: unknown): boolean {

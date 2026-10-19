@@ -1,5 +1,5 @@
 // The commands: the half the engine serves and Laravel calls. Each says in brackets the chunk that implements it; until
-// then the engine answers 501 `NOT_IMPLEMENTED`. docs/plans/contract.md has what each does.
+// then the engine answers 501 `NOT_IMPLEMENTED`.
 
 import { oc } from '@orpc/contract'
 import { z } from 'zod'

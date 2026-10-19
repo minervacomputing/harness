@@ -11,7 +11,7 @@ import type { ListConversations, ListConversationsResult, Scope } from "@minerva
 import { isoTime } from "../lib/dates.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
 
-/** Where Laravel's conversations are created (product-and-engine.md, Decisions 11); a row keeps the one it was created with. */
+/** Where Laravel's conversations are created; a row keeps the one it was created with. */
 export const INTERNAL_JURISDICTION = "eu";
 
 export interface RunBinding {
@@ -121,7 +121,7 @@ export async function conversationOf(db: D1Database, conversation: string): Prom
 }
 
 /**
- * `deleteConversation`'s mark (the app's docs/plans/conversations.md, 12a): the conversation bound to the scope if no command
+ * `deleteConversation`'s mark: the conversation bound to the scope if no command
  * named it before, so a start that arrives later finds it deleted, then deleted unless it was, only through the row bound to
  * that scope; in one batch, read back. A conversation bound to another organization or workspace changes nothing.
  */

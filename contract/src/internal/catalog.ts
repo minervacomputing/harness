@@ -1,5 +1,5 @@
 // The catalog: every connector the engine serves, with what Laravel needs to connect it and to store what users allow on it,
-// without interpreting any of it (product-and-engine.md, Decisions 3). Its version names it in a run's acceptance.
+// without interpreting any of it. Its version names it in a run's acceptance.
 
 import { z } from 'zod'
 
@@ -8,7 +8,7 @@ export const CatalogVersion = z.string().regex(/^[0-9a-f]{16}$/)
 
 /**
  * How Laravel runs a connector's OAuth flow. Refresh has no field: every connector follows the same rules today, which
- * chunk 9 ports with their fixtures (docs/plans/contract.md, The catalog).
+ * chunk 9 ports with their fixtures.
  */
 export const OAuthDescriptor = z.object({
   type: z.literal('oauth2'),

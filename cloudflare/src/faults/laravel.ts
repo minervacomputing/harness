@@ -1,4 +1,4 @@
-// The fake Laravel (docs/plans/contract.md): the `laravel` half of the internal contract, implemented with oRPC over state a
+// The fake Laravel: the `laravel` half of the internal contract, implemented with oRPC over state a
 // test sets, behind the same bearer check Laravel's Sanctum routes make. One implementation over two backings: `FakeLaravel`
 // keeps its state in memory for the platform tests, whose `install()` routes the engine's client (src/laravel/client.ts) to it
 // in process; `SqlLaravel` keeps it in rows of the test build's FaultProvider (provider.ts), which hosts it per workspace at

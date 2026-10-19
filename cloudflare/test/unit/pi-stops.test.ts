@@ -1,4 +1,4 @@
-// Stopping pi's work by its run, and the starts' lane (src/conversation/pi-stops.ts; docs/plans/chunk-19a-design.md, U5): the
+// Stopping pi's work by its run, and the starts' lane (src/conversation/pi-stops.ts): the
 // production class over pi-durable's own Harness on PiHarness's session store, opened and resumed as PiHarness does with the
 // Conversation's settings, and tools and a task kind of the test's own. Runs share one session, as chunk 19b makes every turn
 // of a conversation do, and the acting run's operation is read as the Conversation reads it (pi-work.ts `operationOf`).

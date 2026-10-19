@@ -219,6 +219,27 @@ test("no code names one of our instances: an instance is chosen by name (scripts
 	expect(offenders).toEqual([]);
 });
 
+test("no code cites docs/plans/: a chunk's design is deleted once the chunk is built, so a comment gives its reason itself or cites ARCHITECTURE.md", () => {
+	const plans = readdirSync(join(ROOT, "..", "docs", "plans")).map((name) => `\\b${name.replaceAll(".", "\\.")}`);
+	const cites = new RegExp(["docs/plans/", "-design\\.md", ...plans].join("|"));
+	const listed = (dir: string, extension: string) =>
+		readdirSync(join(ROOT, dir), { recursive: true, encoding: "utf8" })
+			.filter((path) => path.endsWith(extension) && !path.includes("node_modules"))
+			.map((path) => join(dir, path));
+	const paths = [
+		...["src", "scripts", "test", "reset-worker", join("..", "contract", "src"), join("..", "contract", "openapi")].flatMap((dir) => listed(dir, ".ts")),
+		...listed("migrations", ".sql"),
+		...listed(join("..", ".github", "workflows"), ".yml"),
+	].filter((path) => path !== join("test", "unit", "sources.test.ts"));
+	const offenders = paths.flatMap((path) =>
+		readFileSync(join(ROOT, path), "utf8")
+			.split("\n")
+			.flatMap((line, index) => (cites.test(line) ? [`${path}:${index + 1}`] : [])),
+	);
+	expect(paths.length).toBeGreaterThan(100);
+	expect(offenders).toEqual([]);
+});
+
 test("the sandbox image tag that `pnpm sandbox:image` builds is the one the Docker tests run", () => {
 	const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
 	expect(pkg.scripts["sandbox:image"]).toBe(`docker build -t ${LOCAL_SANDBOX_IMAGE} container`);

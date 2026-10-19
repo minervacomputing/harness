@@ -1,6 +1,5 @@
 // Writes the internal API's OpenAPI documents from the contract (src/internal/), or with `--check` fails when the committed
-// ones differ, so every change to the interface shows in review. Laravel keeps copies of both and validates against them
-// (docs/plans/contract.md, The documents).
+// ones differ, so every change to the interface shows in review. Laravel keeps copies of both and validates against them.
 
 import { readFile, writeFile } from 'node:fs/promises'
 import { OpenAPIGenerator } from '@orpc/openapi'

@@ -1,4 +1,4 @@
-// Laravel's `folder`, `resolveDownload` and `deleteConversation` in workerd (the app's docs/plans/conversations.md, 12a):
+// Laravel's `folder`, `resolveDownload` and `deleteConversation` in workerd:
 // through the internal mount behind an Access assertion, the recovery index in D1 and the Conversation object, with the fake
 // model and the fake Laravel that takes the conversation's facts.
 

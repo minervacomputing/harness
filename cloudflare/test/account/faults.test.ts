@@ -23,7 +23,7 @@
 // - a kill between a cancel and the next start, while the cancelled run's command is past its checkpoint: the
 //   cancelled run's tasks end abort-marked, it enters one model call and one tool call in all and has no tool_call
 //   event, its command ran once, the provider got only the next run's read, and the next run completes in its first
-//   attempt (docs/plans/chunk-19a-design.md, F1).
+//   attempt.
 //
 // The memory-limit resets are resets.test.ts's, the sandbox itself sandbox.test.ts's and
 // sandbox-faults.test.ts's. Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.

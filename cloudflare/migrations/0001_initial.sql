@@ -27,8 +27,8 @@ CREATE TABLE emails (
 CREATE INDEX emails_user ON emails (user_id);
 CREATE UNIQUE INDEX emails_one_primary ON emails (user_id) WHERE is_primary = 1;
 
--- No row means no usable password (`has_usable_password: false`). `hash` is versioned (`scrypt$…`, the
--- removed docs/plans/cloudflare.md, The web API; 0007 drops this format). `fingerprint` is an HMAC of the hash that sessions copy: a password change or reset
+-- No row means no usable password (`has_usable_password: false`). `hash` is versioned (`scrypt$…`;
+-- 0007 drops this format). `fingerprint` is an HMAC of the hash that sessions copy: a password change or reset
 -- changes it, which ends every other session on its next request (web-api 3.1).
 CREATE TABLE passwords (
 	user_id TEXT NOT NULL PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,

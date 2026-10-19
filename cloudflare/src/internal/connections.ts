@@ -1,4 +1,4 @@
-// The settings calls Laravel makes with a credential it holds (docs/plans/contract.md, Credentials in settings calls): the
+// The settings calls Laravel makes with a credential it holds: the
 // credential arrives in the command, is used for this call only, and is never stored or logged. A provider's refusal of it
 // is `CREDENTIAL_REFUSED`, which Laravel acts on; a resource id or a page token the provider cannot take is
 // `INVALID_RESOURCE_ID` or `INVALID_CURSOR`; any other failure is `PROVIDER_FAILED`.

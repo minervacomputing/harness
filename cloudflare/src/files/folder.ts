@@ -11,7 +11,7 @@ import type { Bucket } from "./objects.ts";
 import { measureStaged } from "./staging.ts";
 import { type AttachmentPlan, type ByteCounter, FolderStore } from "./store.ts";
 
-/** A conversation's byte counter: none yet, since storage is counted against allowances in chunk 14 of product-and-engine.md. */
+/** A conversation's byte counter: none yet, since storage is counted against allowances in chunk 14. */
 const UNCOUNTED: ByteCounter = { setConversationBytes: async () => ({ ok: true }) };
 
 export const FOLDER_PORTS: { bucket(context: PortsContext): Bucket } = {

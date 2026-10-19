@@ -2,6 +2,12 @@
 
 Operational notes for coding agents working in this repository: Minerva's open harness, the engine that runs agent turns on Cloudflare (`cloudflare/`), and the contract of the internal API between it and Laravel's private app (`contract/`). Self-hosting is not supported. For background, read [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md); for development, testing and deploys in detail, [cloudflare/README.md](cloudflare/README.md). Work in progress is planned in [docs/plans/](docs/plans/): the current plan is [docs/plans/product-and-engine.md](docs/plans/product-and-engine.md), with its remaining chunks in [docs/plans/remaining-chunks.md](docs/plans/remaining-chunks.md).
 
+## Delete a chunk's design once the chunk is built
+
+`docs/plans/` holds the plans, the designs of chunks not yet built, and [contract.md](docs/plans/contract.md), the internal API's design, which stays. Once a chunk is built, move what later chunks inherit into their sections of the plan and what stays true into ARCHITECTURE.md or cloudflare/README.md. Then delete the chunk's design. Git history keeps it, and `git log --diff-filter=D --name-only -- docs/plans/` lists the deleted designs.
+
+Code never cites a file in `docs/plans/`, because a design goes away. A comment gives its reason itself or cites ARCHITECTURE.md. `cloudflare/test/unit/sources.test.ts` fails on such a citation in the engine, the contract or the workflows.
+
 ## Environment
 
 Prerequisites: Node 24 and pnpm 10 (`pnpm install` at the root installs the whole workspace); Docker only to run the sandbox locally; the `cf` CLI, signed in, only for anything on the account.
@@ -98,7 +104,7 @@ Reviews report more than is worth fixing. opencode, review subagents, and advers
 
 A fix for one of these adds code to read, a test to keep and another review to pass, and no user notices it. Record each finding you leave under "Accepted, not fixed" in the design or plan you work from, in one line that says why it is unlikely and what happens if it occurs. A reviewer still reports such a finding, marked improbable, so that it is recorded. Wrong docs and a flaky test that has actually failed are still fixed.
 
-For example, chunk 19a's review found that the bound's reset could hit a run that had just submitted. That needed an orphan to end within milliseconds of the 30 s bound and an alarm to run inside one storage sync, and the run still completed in its second attempt. It is the first item under "Accepted, not fixed" in [docs/plans/chunk-19a-design.md](docs/plans/chunk-19a-design.md), not a fix.
+For example, chunk 19a's review found that the bound's reset could hit a run that had just submitted. That needed an orphan to end within milliseconds of the 30 s bound and an alarm to run inside one storage sync, and the run still completed in its second attempt. It was recorded under "Accepted, not fixed" in chunk 19a's design, not fixed.
 
 ## Checks
 

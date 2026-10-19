@@ -8,7 +8,7 @@
 //   output gate's wait for them, and one round trip;
 // - M2, this call's `host.begin` to its request answered: what happens between them, and the same round trip.
 //
-// Per turn (20 samples), for chunk 19a (docs/plans/chunk-19a-design.md, Perf probe and rule):
+// Per turn (20 samples), for chunk 19a:
 //
 // - S, the run's `created_at`, which the start's final transaction writes, to its first call's request answered: what the
 //   start does after it (the attempt, pi's session and submit), pi's first step, the call's admission, the output gate's

@@ -1,4 +1,4 @@
-// What pi holds for a run, by its operation (src/conversation/pi-work.ts; docs/plans/chunk-19a-design.md, U1 to U4):
+// What pi holds for a run, by its operation (src/conversation/pi-work.ts):
 // the gate's reader and the admission of tool and model calls over pi-durable's own Harness on PiHarness's session store,
 // opened and resumed as PiHarness does with the Conversation's settings, so every submission and task they read is one pi
 // made. Runs share one session, as chunk 19b makes every turn of a conversation do.
