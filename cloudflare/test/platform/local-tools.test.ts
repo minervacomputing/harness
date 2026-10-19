@@ -3,7 +3,8 @@
 // PiHarness with the fake model calling pi's read, write, edit and bash, the folder's store on the object's SQLite and the
 // EU bucket, and a conversation's container played by test/platform/sandbox-memory.ts (local workerd has no containers).
 // Covered: results held until a checkpoint saved them and their cards after, phases, the final rehash, the folder version
-// published with the run's changes and warnings, a turn that only reads, the run's container destroyed at its end, a cancelled
+// published with the run's changes and warnings, a turn that only reads, the run's container parked at its end for the next
+// run, which acquires it, a container started only when a turn needs one, deleting a conversation with a parked container, a cancelled
 // run's end marking the work of a command pi's abort does not end, a deletion that waits for such a command, the next start
 // waiting for it (and its bound, a start cancelled while it waits, and one cancelled in the lane, whose bound resets
 // nothing), a folder over its limits (folder_limit and its message), a container that fails its hardening (worker_failed)
@@ -251,8 +252,8 @@ describe("the local tools in the conversation", () => {
 		// Three changing calls, three checkpoints (each after its strays were killed), none for the read, then the final rehash.
 		const steps = w.sandbox.log.filter((line) => line === "kill" || line.startsWith("scan") || line.startsWith("checkpoint"));
 		expect(steps).toEqual(["kill", "scan", "checkpoint 1", "kill", "scan", "checkpoint 1", "kill", "scan", "kill", "scan rehash"]);
-		expect(w.sandbox.log[0]).toBe("start 1");
-		expect(w.sandbox.log[1]).toBe("hydrate 0");
+		// The folder is empty, so the first call prepared the container: nothing was parked, so it started one.
+		expect(w.sandbox.log.slice(0, 3)).toEqual(["acquire 1", "start 1", "hydrate 0"]);
 		expect(run.resultVersionId).not.toBeNull();
 		expect(run.folderChanges).toMatchObject({ added: [{ path: "notes.txt", size: 9 }], counts: { added: 1 } });
 		expect(run.folderWarnings).toEqual({ total: 0, items: [] });
@@ -262,10 +263,12 @@ describe("the local tools in the conversation", () => {
 		const facts = await factsOf(w, runId);
 		expect(localToolFacts(facts)).toEqual(cards(events));
 		expect(finishedFact(facts)).toMatchObject({ status: "completed", folder: { base: null, result: run.resultVersionId, changes: run.folderChanges, warnings: { total: 0, items: [] } } });
-		// The run's container is destroyed when it ends.
-		await until(async () => w.sandbox.log, (log) => log.some((line) => line.startsWith("destroy")));
+		// The run's container is parked for the next run once the final checkpoint saved it, and nothing destroys it.
+		expect(w.sandbox.log).toContain("park version");
+		expect((await w.sandbox.status()).state).toBe("parked");
 
-		// The next turn starts from the folder; a turn that only reads saves nothing.
+		// The next turn starts from the folder in the parked container, acquired with no start or hydration; a turn that
+		// only reads saves nothing, and parks the container again.
 		const before = w.sandbox.log.length;
 		const next = await post(w, [call("read", { path: "notes.txt" }), DONE]);
 		const second = await settled(w, next);
@@ -273,7 +276,8 @@ describe("the local tools in the conversation", () => {
 		expect(cards(await eventsOf(w, next))).toEqual([{ tool: "read", summary: "notes.txt", ok: true, excerpt: "apples 4\n" }]);
 		const log = w.sandbox.log.slice(before);
 		expect(log.filter((line) => line.startsWith("scan") || line.startsWith("checkpoint"))).toEqual([]);
-		expect(log).toContain("hydrate 1");
+		expect(log.filter((line) => /^(acquire|start|hydrate|park|destroy)/.test(line))).toEqual(["acquire 1", "park version"]);
+		expect(phases(await eventsOf(w, next))).not.toContain("Preparing files");
 		expect([second.baseVersionId, second.resultVersionId, second.folderChanges]).toEqual([run.resultVersionId, run.resultVersionId, null]);
 		expect(finishedFact(await factsOf(w, next))?.folder).toMatchObject({ base: run.resultVersionId, result: run.resultVersionId, changes: null });
 	});
@@ -478,6 +482,54 @@ describe("the local tools in the conversation", () => {
 			message,
 			sent,
 		]);
+	});
+});
+
+describe("the container between turns", () => {
+	const lifecycle = (log: string[]) => log.filter((line) => /^(acquire|start|hydrate|park|destroy)/.test(line));
+
+	test("a turn on an empty folder that only answers starts no container", async () => {
+		const w = await world();
+		const run = await settled(w, await post(w, [DONE]));
+		expect(run.status).toBe("completed");
+		expect(lifecycle(w.sandbox.log)).toEqual([]);
+	});
+
+	test("on an empty folder the first local call prepares the container, behind Preparing files", async () => {
+		const w = await world({ faults: [{ point: "model:recorded", mode: "hold" }] });
+		const runId = await post(w, [bash("put a.txt a"), DONE]);
+		await reached(w, "model:recorded");
+		await sleep(200);
+		expect(lifecycle(w.sandbox.log)).toEqual([]);
+		await w.conversation.faultRelease("model:recorded");
+		expect((await settled(w, runId)).status).toBe("completed");
+		expect(lifecycle(w.sandbox.log)).toEqual(["acquire 1", "start 1", "hydrate 0", "park version"]);
+		expect(phases(await eventsOf(w, runId))).toContain("Preparing files");
+	});
+
+	test("with files and no parked container, the attempt starts one and hydrates the folder before the model's first call", async () => {
+		const w = await world();
+		expect((await settled(w, await post(w, [bash("put a.txt a"), DONE]))).status).toBe("completed");
+		const parked = await w.sandbox.status();
+		await w.sandbox.destroy({ runId: parked.runId as string, attempt: parked.attempt as number, incarnation: parked.incarnation as string }, "test");
+		await w.conversation.faultPlan([{ point: "model:recorded", mode: "hold" }]);
+		const before = w.sandbox.log.length;
+		const runId = await post(w, [bash("cat a.txt"), DONE]);
+		await reached(w, "model:recorded");
+		await until(async () => lifecycle(w.sandbox.log.slice(before)), (log) => log.length === 3);
+		expect(lifecycle(w.sandbox.log.slice(before))).toEqual(["acquire 1", "start 1", "hydrate 1"]);
+		await w.conversation.faultRelease("model:recorded");
+		expect((await settled(w, runId)).status).toBe("completed");
+		expect(cards(await eventsOf(w, runId))).toEqual([{ tool: "bash", summary: "cat a.txt", ok: true, excerpt: "a" }]);
+	});
+
+	test("deleting the conversation destroys its parked container", async () => {
+		const w = await world();
+		expect((await settled(w, await post(w, [bash("put a.txt a"), DONE]))).status).toBe("completed");
+		expect((await w.sandbox.status()).state).toBe("parked");
+		expect(await commands.deleteConversation({ scope: w.within, conversation: w.conversationId })).toEqual({ outcome: "deleted" });
+		expect((await w.sandbox.status()).state).toBe("none");
+		expect(w.sandbox.log.at(-1)).toBe("destroy The conversation was deleted.");
 	});
 });
 

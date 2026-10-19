@@ -921,8 +921,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		}
 		if (submission.status !== "done" || submission.type !== "input") return;
 		const entry = entries.get(submission.answer) ?? (await this.#entry(run, submission.answer));
-		// The folder as the turn left it, before the turn counts as complete.
+		// The folder as the turn left it, before the turn counts as complete; then its container is left for the next run,
+		// whose folder is that version however this run ends.
 		if (!(await this.#finishLocal(fence))) return;
+		await this.#parkLocal(fence);
 		await this.#complete(fence, answerOf(entry));
 	}
 
@@ -974,7 +976,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		);
 	}
 
-	/** After a run ended, outside its transaction: its calls cut, its stream ended, pi's orphaned work marked, its container destroyed. */
+	/**
+	 * After a run ended, outside its transaction: its calls cut, its stream ended, pi's orphaned work marked, its container
+	 * destroyed unless the run parked it for the conversation's next run.
+	 */
 	#afterFinish(runId: RunId): void {
 		this.#controllers.get(runId)?.abort(new Error(RUN_ENDED_MESSAGE));
 		this.#controllers.delete(runId);
@@ -1104,23 +1109,26 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * At the start of an attempt its container is prepared (started, hardened, verified, hydrated from the
-	 * run's last checkpoint, else its base version) while the model starts, so it is usually ready before the
-	 * first local call; a failure surfaces only when a call needs it.
+	 * At the start of an attempt its container is prepared while the model starts (the parked one acquired, or one
+	 * started, hardened, verified and hydrated from the run's last checkpoint, else its base version) when there is a
+	 * folder to hydrate or a parked container, so it is usually ready before the first local call. Otherwise the first
+	 * local call prepares it, and a turn that makes none starts no container. A failure surfaces only when a call needs it.
 	 */
 	#prepareLocal(run: RunRow): void {
-		this.#localOf({ runId: run.id, attempt: run.attempt })?.prepare();
+		void this.#localOf({ runId: run.id, attempt: run.attempt })?.warm();
 	}
 
 	/** A local call's environment; "Preparing files" shows while a call waits for the container. */
 	async #waitFor(fence: AttemptFence, local: LocalRun, signal: AbortSignal | undefined) {
+		// Asked for first: it starts a preparation not started yet, which the call then waits for.
+		const env = local.env();
 		const waits = local.preparing;
 		if (waits) {
 			this.#waiting.set(fence.runId, (this.#waiting.get(fence.runId) ?? 0) + 1);
 			this.#showPhase(fence);
 		}
 		try {
-			return await untilAborted(local.env(), signal);
+			return await untilAborted(env, signal);
 		} finally {
 			if (waits) {
 				const left = (this.#waiting.get(fence.runId) ?? 1) - 1;
@@ -1141,12 +1149,24 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	async #finishLocal(fence: AttemptFence): Promise<boolean> {
 		const local = this.#locals.get(fence.runId);
 		if (!local || local.fence.attempt !== fence.attempt) return true;
+		await this.#point("local:finishing", fence.runId);
 		try {
 			await local.finish();
 			return true;
 		} catch {
 			return false;
 		}
+	}
+
+	/**
+	 * Parks the attempt's container after its last checkpoint (local-run.ts `park`). An instance without the attempt's
+	 * LocalRun parks nothing, and the run's end destroys the container.
+	 */
+	async #parkLocal(fence: AttemptFence): Promise<void> {
+		const local = this.#locals.get(fence.runId);
+		if (!local || local.fence.attempt !== fence.attempt) return;
+		await this.#point("local:parking", fence.runId);
+		await local.park();
 	}
 
 	/** A local call's card, after its result was released; outside pi's transactions, for the attempt only. */
@@ -1208,7 +1228,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		return this.#ports.sandbox(this.#portsContext() as PortsContext);
 	}
 
-	/** Destroys a container a run that ended left running (its end's destroy failed, or a reset lost it); retried until done. */
+	/**
+	 * Destroys a container a run that ended left running (its end's destroy failed, or a reset lost it), but not one it
+	 * parked, which waits for the conversation's next run; retried until done.
+	 */
 	async #cleanSandbox(): Promise<{ rescheduleAt: number } | undefined> {
 		if (!this.#store.conversation()) return undefined;
 		try {

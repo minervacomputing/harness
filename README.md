@@ -50,7 +50,7 @@ Each conversation also has a folder. Attach files to a message, and the agent re
 
 ### The sealed sandbox
 
-Each answer runs its commands in a fresh microVM (Cloudflare Containers), which is destroyed when the answer is finished. It has:
+Each conversation runs its commands in a microVM of its own (Cloudflare Containers), started when an answer needs it and destroyed a few minutes after the answer is finished, unless the next answer takes it over. Between answers it keeps only the conversation's folder as it was saved. It has:
 
 - no network at all: no internet, no DNS, no other containers;
 - no credential and no token of any kind;

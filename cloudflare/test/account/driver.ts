@@ -6,7 +6,7 @@
 // behind Access. A run is held by the fake Laravel before its start, as Laravel holds a run before it sends one.
 //
 // Every world and run made here is remembered, so each file can `drain()` in its afterAll: stop the runs still
-// going and wait until every conversation's container is gone. The memory-limit resets (resets.test.ts) take
+// going and wait until every conversation's container is gone or parked. The memory-limit resets (resets.test.ts) take
 // every object of their isolate with them, so they run only after every other file has finished
 // (vitest.faults.config.ts): by then those files' results are in, and a reset can only cut short what a
 // failed test left behind.
@@ -402,13 +402,22 @@ export async function file(w: World, path: string): Promise<{ size: number | nul
 	return driver("object", { ...base(w), key: resolved.key });
 }
 
-/** Waits until the conversation's container is gone (the run's end destroys it); how long that took. */
-export async function destroyed(w: World, timeoutMs = 120_000): Promise<number> {
+/** Waits until the conversation's container is gone (the end of a run that did not complete destroys it); how long that took. */
+export function destroyed(w: World, timeoutMs = 120_000): Promise<number> {
+	return containerIs(w, ["none"], timeoutMs);
+}
+
+/** Waits until the conversation's container is parked for its next run (a completed turn parks it); how long that took. */
+export function parked(w: World, timeoutMs = 120_000): Promise<number> {
+	return containerIs(w, ["parked"], timeoutMs);
+}
+
+async function containerIs(w: World, states: string[], timeoutMs: number): Promise<number> {
 	const started = Date.now();
 	for (;;) {
 		const answer = await driver<{ status: { state: string }; running: boolean }>("conversation-sandbox", base(w));
-		if (answer.status.state === "none" && !answer.running) return Date.now() - started;
-		if (Date.now() - started > timeoutMs) throw new Error(`The container was not destroyed: ${JSON.stringify(answer)}`);
+		if (states.includes(answer.status.state) && answer.running === (answer.status.state !== "none")) return Date.now() - started;
+		if (Date.now() - started > timeoutMs) throw new Error(`The container is not ${states.join(" or ")}: ${JSON.stringify(answer)}`);
 		await sleep(1000);
 	}
 }
@@ -425,7 +434,7 @@ const DRAIN_AT_ONCE = 50;
 /**
  * Cleanup, each file's afterAll (`finish`): stops every run this file started that has not ended (a failed or
  * timed-out test leaves them going), waits for each to end, then until every conversation's container is
- * gone. Every one is tried; the failures are reported together.
+ * gone or parked. Every one is tried; the failures are reported together.
  */
 async function drain(): Promise<string[]> {
 	const stop = async ({ w, runId }: { w: World; runId: string }) => {
@@ -435,7 +444,8 @@ async function drain(): Promise<string[]> {
 	};
 	const stopped: PromiseSettledResult<void>[] = [];
 	for (let at = 0; at < runs.length; at += DRAIN_AT_ONCE) stopped.push(...(await Promise.allSettled(runs.slice(at, at + DRAIN_AT_ONCE).map(stop))));
-	const gone = await Promise.allSettled([...worlds].map((w) => destroyed(w)));
+	// A parked container is destroyed by its Sandbox a few minutes later, when no run takes it.
+	const gone = await Promise.allSettled([...worlds].map((w) => containerIs(w, ["none", "parked"], 120_000)));
 	return [...stopped, ...gone].filter((outcome) => outcome.status === "rejected").map((outcome) => String(outcome.reason));
 }
 

@@ -19,7 +19,7 @@
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
 //   turn's container; a detached writer, a FIFO and a symlink at the checkpoint; five attachments of 50 MiB
 //   (the folder's limit) copied, hydrated and kept in the version; crashes between a checkpoint's upload,
-//   record, release and pi's commit; the container destroyed at the run's end;
+//   record, release and pi's commit; the container parked at the end of a completed turn, and taken by the next;
 // - a kill between a cancel and the next start, while the cancelled run's command is past its checkpoint: the
 //   cancelled run's tasks end abort-marked, it enters one model call and one tool call in all and has no tool_call
 //   event, its command ran once, the provider got only the next run's read, and the next run completes in its first
@@ -33,7 +33,6 @@ import {
 	cancel,
 	cards,
 	delivered,
-	destroyed,
 	file,
 	finish,
 	finished,
@@ -45,6 +44,7 @@ import {
 	local,
 	modelDeadline,
 	outcome,
+	parked,
 	post,
 	provider,
 	reads,
@@ -288,13 +288,13 @@ describe.concurrent("the local tools in the container", () => {
 		expect(head?.folderChanges?.added?.map((file) => file.path).sort()).toEqual(["notes.txt", "py.txt"]);
 		expect((await folder(w)).versionId).toBe(head?.resultVersionId);
 		expect((await file(w, "py.txt")).text).toBe("from python\n");
-		const destroyMs = await destroyed(w);
-		console.info(`local tools: ${view.seconds} s for the turn, container gone ${destroyMs} ms after`);
+		const parkMs = await parked(w);
+		console.info(`local tools: ${view.seconds} s for the turn, container parked ${parkMs} ms after`);
 
-		// The next turn's container starts from the published folder.
+		// The next turn takes the parked container, which holds the published folder.
 		const next = await settled(w, await post(w, script([sh("cat notes.txt"), { text: "Read." }])));
 		expect(cards(next.events)).toEqual([{ tool: "bash", summary: "cat notes.txt", ok: true, excerpt: "apples 4\n" }]);
-		console.info(`second turn with hydration: ${next.seconds} s`);
+		console.info(`second turn on the parked container: ${next.seconds} s`);
 	});
 
 	test("a detached writer dies at the checkpoint; a FIFO and a symlink are reported with the run", async () => {

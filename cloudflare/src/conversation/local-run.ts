@@ -1,7 +1,8 @@
 // One attempt's folder in its container (ARCHITECTURE.md: Checkpoints, The sandbox lifecycle): the
-// Sandbox prepared for the attempt (started, hardened, verified) and hydrated from the run's last
-// checkpoint, else its base version; the checkpoint barrier (local.ts `LocalCalls`) whose checkpoints run
-// against it; and the ExecutionEnv each local call gets.
+// Sandbox prepared for the attempt, either the container the conversation's previous run parked, acquired
+// when it holds the version the attempt starts from, or one started, hardened, verified and hydrated from
+// the run's last checkpoint, else its base version; the checkpoint barrier (local.ts `LocalCalls`) whose
+// checkpoints run against it; and the ExecutionEnv each local call gets.
 //
 // A checkpoint: kill the agent's processes and check the cgroup is empty, scan the folder as the agent's
 // user, validate the scan and record the keys of the contents the run may not read yet, let the Sandbox
@@ -10,16 +11,19 @@
 // released. Any failure ends the attempt through `fail` before a result is released; a folder over
 // its limits fails the turn.
 //
-// Preparation starts when the attempt's loop starts, so the container is usually ready by the first local
-// call; a failure surfaces only when a local call needs the container. A run that never changes its folder
-// takes no checkpoint, and its container is destroyed when the run ends.
+// Preparation starts when the attempt's loop starts if there is a folder to hydrate or a parked container,
+// so the container is usually ready by the first local call; otherwise the first local call starts it, and
+// a turn that makes none starts no container. A failure surfaces only when a local call needs the
+// container. A run that never changes its folder takes no checkpoint. Once the turn's last checkpoint is
+// saved the container is parked for the conversation's next run; a run that ends any other way has it
+// destroyed.
 
 import type { ExecutionEnv } from "@earendil-works/pi-durable/env";
 import type { ExecOutputSink } from "../sandbox/commands.ts";
 import type { SandboxSpec } from "../sandbox/constants.ts";
 import type { Refused, SandboxApi, SandboxFence } from "../sandbox/core.ts";
 import { SandboxExecutionEnv } from "../sandbox/env.ts";
-import type { CheckpointUploadPlan, CheckpointUploadResult } from "../sandbox/folder.ts";
+import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
 import type { Delivered } from "../sandbox/output.ts";
 import { prepareSandbox } from "../sandbox/session.ts";
 import type { AttemptFence, EpochMs, VersionId } from "../shared/rpc.ts";
@@ -27,7 +31,10 @@ import { FolderOverLimit, FolderUnavailable, LocalCalls, type LocalToolEvent, Lo
 import type { FolderPort } from "./ports.ts";
 
 /** The Sandbox calls a conversation makes: an attempt's, `status` for the clean-up at a run's end, and `seal` for its settlement. */
-export type SandboxPort = Pick<SandboxApi, "start" | "harden" | "verify" | "exec" | "cancel" | "fs" | "hydrate" | "scan" | "checkpoint" | "killStrays" | "destroy" | "status" | "seal">;
+export type SandboxPort = Pick<
+	SandboxApi,
+	"start" | "harden" | "verify" | "acquire" | "exec" | "cancel" | "fs" | "hydrate" | "scan" | "checkpoint" | "killStrays" | "park" | "destroy" | "status" | "seal"
+>;
 
 export interface LocalRunDeps {
 	fence: AttemptFence;
@@ -56,6 +63,8 @@ function refused(value: unknown): value is Refused {
 
 /** How long each step of a preparation took, for the logs and the account tests' timings. */
 export interface Preparation {
+	/** A parked container was acquired: no start, hardening or hydration. */
+	acquired: boolean;
 	startMs: number;
 	hardenMs: number;
 	verifyMs: number;
@@ -69,6 +78,7 @@ export class LocalRun {
 	readonly #deps: LocalRunDeps;
 	#preparing: Promise<SandboxFence> | null = null;
 	#prepared: SandboxFence | null = null;
+	#plan: HydratePlan | null = null;
 	/** The version the working copy was built on: the hydrated one, then each accepted checkpoint's. */
 	#parent: VersionId | null = null;
 	#ended = false;
@@ -92,9 +102,23 @@ export class LocalRun {
 	}
 
 	/**
-	 * Starts, hardens and verifies the attempt's container and hydrates the folder; once per attempt. A
-	 * container that failed its hardening or its checks fails the turn at once (ARCHITECTURE.md: The sandbox lifecycle);
-	 * any other failure surfaces when a local call needs the container.
+	 * Prepares at once when the attempt has files or directories to hydrate, or a container is parked, which is
+	 * acquired whatever the folder holds; otherwise the first local call prepares, so a turn that makes none
+	 * starts no container. Never throws: what fails here is left to that first call.
+	 */
+	async warm(): Promise<void> {
+		try {
+			const plan = this.#planned();
+			if (plan.files.length > 0 || plan.dirs.length > 0 || (await this.#deps.sandbox().status()).state === "parked") void this.prepare();
+		} catch (error) {
+			this.#deps.log(`the sandbox was not prepared early: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	/**
+	 * Acquires the container the conversation's previous run parked, else starts, hardens and verifies one and
+	 * hydrates the folder; once per attempt. A container that failed its hardening or its checks fails the turn at
+	 * once (ARCHITECTURE.md: The sandbox lifecycle); any other failure surfaces when a local call needs the container.
 	 */
 	prepare(): Promise<SandboxFence> {
 		if (!this.#preparing) {
@@ -106,9 +130,23 @@ export class LocalRun {
 		return this.#preparing;
 	}
 
+	/** The version the attempt starts from, read once. */
+	#planned(): HydratePlan {
+		if (this.#plan) return this.#plan;
+		try {
+			this.#plan = this.#deps.folder.hydratePlan(this.fence.runId);
+		} catch (error) {
+			throw new FolderUnavailable(`The folder could not be planned: ${error instanceof Error ? error.message : String(error)}`);
+		}
+		return this.#plan;
+	}
+
 	async #prepare(): Promise<SandboxFence> {
 		if (this.#ended) throw new FolderUnavailable("The run ended.");
+		const plan = this.#planned();
 		await this.#deps.containerStarting();
+		const acquired = await this.#acquire(plan);
+		if (acquired) return acquired;
 		const sandbox = this.#deps.sandbox();
 		const prepared = await prepareSandbox(sandbox, this.fence, this.#deps.spec);
 		if (!prepared.ok) {
@@ -120,17 +158,11 @@ export class LocalRun {
 			await this.#destroy(prepared.fence, "The run ended while its sandbox was prepared.");
 			throw new FolderUnavailable("The run ended.");
 		}
-		let plan: ReturnType<LocalRunDeps["folder"]["hydratePlan"]>;
-		try {
-			plan = this.#deps.folder.hydratePlan(this.fence.runId);
-		} catch (error) {
-			throw new FolderUnavailable(`The folder could not be planned: ${error instanceof Error ? error.message : String(error)}`);
-		}
 		const started = Date.now();
 		const hydrated = await this.#deps.sandbox().hydrate(prepared.fence, plan);
 		if (refused(hydrated)) throw new FolderUnavailable(`The folder could not be prepared: ${hydrated.message}`);
 		if (!hydrated.ok) throw new FolderUnavailable(`The folder could not be prepared (${hydrated.reason}): ${hydrated.message}`);
-		this.preparation = { startMs: prepared.ms.start, hardenMs: prepared.ms.harden, verifyMs: prepared.ms.verify, hydrateMs: Date.now() - started, files: plan.files.length };
+		this.preparation = { acquired: false, startMs: prepared.ms.start, hardenMs: prepared.ms.harden, verifyMs: prepared.ms.verify, hydrateMs: Date.now() - started, files: plan.files.length };
 		this.#deps.log(
 			`sandbox ready: start ${prepared.ms.start} ms, harden ${prepared.ms.harden} ms, verify ${prepared.ms.verify} ms, hydrate ${this.preparation.hydrateMs} ms (${plan.files.length} files)`,
 		);
@@ -138,6 +170,37 @@ export class LocalRun {
 		this.#prepared = prepared.fence;
 		await this.#deps.point?.("local:prepared");
 		return prepared.fence;
+	}
+
+	/**
+	 * The parked container, when the Sandbox gives it to this attempt: its folder is the plan's version already. A
+	 * Sandbox still on the previous version has no `acquire`, so a call that fails counts as nothing parked.
+	 */
+	async #acquire(plan: HydratePlan): Promise<SandboxFence | null> {
+		let answer: Awaited<ReturnType<SandboxPort["acquire"]>>;
+		try {
+			answer = await this.#deps.sandbox().acquire(this.fence, this.#deps.spec, plan.versionId);
+		} catch (error) {
+			this.#deps.log(`no parked sandbox could be acquired: ${error instanceof Error ? error.message : String(error)}`);
+			return null;
+		}
+		// A refusal (a sealed run, a newer attempt) is left to the start, which the Sandbox refuses alike.
+		if (refused(answer)) return null;
+		if (!("incarnation" in answer)) {
+			this.#deps.log(`sandbox not acquired: ${answer.reason}`);
+			return null;
+		}
+		const fence: SandboxFence = { ...this.fence, incarnation: answer.incarnation };
+		if (this.#ended) {
+			await this.#destroy(fence, "The run ended while its sandbox was prepared.");
+			throw new FolderUnavailable("The run ended.");
+		}
+		this.preparation = { acquired: true, startMs: 0, hardenMs: 0, verifyMs: answer.verifyMs, hydrateMs: 0, files: plan.files.length };
+		this.#deps.log(`sandbox acquired: verify ${answer.verifyMs} ms`);
+		this.#parent = plan.versionId;
+		this.#prepared = fence;
+		await this.#deps.point?.("local:acquired");
+		return fence;
 	}
 
 	/** The container's fence once it is ready; a failed preparation ends the attempt (or fails the turn) and rejects. */
@@ -166,6 +229,23 @@ export class LocalRun {
 	/** The final checkpoint, rehashing every file, once the turn has its answer. */
 	finish(): Promise<void> {
 		return this.calls.finish();
+	}
+
+	/**
+	 * After the turn's last checkpoint: the container is left for the conversation's next run, with the version the
+	 * run's folder is now, its last checkpoint's, else the one it was prepared from. Nothing to park when it never
+	 * prepared. Never throws: a container not parked is destroyed at the run's end.
+	 */
+	async park(): Promise<void> {
+		const fence = this.#prepared;
+		if (!fence || this.#ended) return;
+		try {
+			const answer = await this.#deps.sandbox().park(fence, this.#parent);
+			if (refused(answer)) this.#deps.log(`the sandbox was not parked: ${answer.message}`);
+			else this.#deps.log(answer.parked ? "sandbox parked" : "the sandbox was destroyed instead of parked");
+		} catch (error) {
+			this.#deps.log(`the sandbox could not be parked: ${error instanceof Error ? error.message : String(error)}`);
+		}
 	}
 
 	/** The run ended: a preparation still running destroys its container once it has one. */
@@ -221,12 +301,14 @@ export class LocalRun {
 
 /**
  * Destroys the conversation's container when `whose` says its run's is to go (a run id: that run's; a
- * function: whichever run it accepts), whichever attempt or instance prepared it. The destroy names the
- * container's own incarnation, so it can never reach a later run's.
+ * function: whichever run it accepts; null: whatever runs, for the conversation's deletion), whichever attempt
+ * or instance prepared it. A parked container is the conversation's, not its run's, so only the deletion
+ * destroys it. The destroy names the container's own incarnation, so it can never reach a later run's.
  */
 export async function destroyRunSandbox(sandbox: Pick<SandboxApi, "status" | "destroy">, whose: string | null | ((runId: string) => boolean), reason: string): Promise<boolean> {
 	const status = await sandbox.status();
 	if (status.incarnation === null || status.runId === null || status.attempt === null || status.state === "none") return false;
+	if (status.state === "parked" && whose !== null) return false;
 	if (typeof whose === "string" && status.runId !== whose) return false;
 	if (typeof whose === "function" && !whose(status.runId)) return false;
 	const answer = await sandbox.destroy({ runId: status.runId, attempt: status.attempt, incarnation: status.incarnation }, reason);

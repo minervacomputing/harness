@@ -10,7 +10,7 @@ The agent **never holds a credential and never decides its own permissions**. Ea
 |---|---|
 | Runtime | One Worker (`minerva-cf`); a Durable Object per conversation, and per conversation's sandbox and scripts |
 | Agent loop | pi-durable through PiHarness in the Conversation object: durable across crashes, with Minerva's tools, history and code mode |
-| Sandbox | A Firecracker microVM per turn (Cloudflare Containers), no route out, hardened before any command runs |
+| Sandbox | A Firecracker microVM per conversation (Cloudflare Containers), kept a few minutes between turns, no route out, hardened before any command runs |
 | Code mode | Each script a Dynamic Worker with no network, no `env` and a CPU limit |
 | Permissions | Layers that only narrow: provider account ∩ ceiling ∩ user ∩ agent, deny wins; checked on every call |
 | Models | Workers AI, or OpenAI and Anthropic through the instance's AI Gateway (prompt logging off), behind our own request policy |
@@ -154,6 +154,8 @@ Laravel commits a change of authority (a grant or layer edit, a removed connecti
 
 The executor checks the local `revoked` flag and the run's state synchronously, with no await in between, immediately before it dispatches any provider request, and again before it returns a result. Once Laravel is told the cancel is done, no new provider request starts under the old permissions; a request already sent may complete ("no further effects", not rollback), and a write in flight settles and is recorded. Laravel refusing the run's next lease is a second guard, not the enforcement.
 
+A container parked for the conversation's next run (The sandbox lifecycle, Parking) is left parked by a revocation: it holds no credentials, and the next run's grants are compiled anew at its start. Deleting the conversation destroys it.
+
 **Emergency stop.** Busy objects keep running their old code for minutes after a deploy, so a security fix cannot rely on a deploy reaching running turns. The stop is Laravel's alone (chunk 14c): an instance admin's Emergency stop page in Laravel's admin, or `minerva:stop`, closes a one-row admission flag that every start reads before any other lock and every lease reads too, then requests a cancel with `emergency_stop` for every run starting or running and sends them through the cancel path above; reopening sends the engine nothing. The engine is unchanged: it ends each run as it ends any cancelled one. `admission` stays declared in the contract, answered 501 and unused, and `ADMISSION_CLOSED` is never sent.
 
 ### The harness
@@ -278,6 +280,8 @@ A second `exec` verifies each postcondition (mount options and sizes, `/tmp` not
 Every agent command runs through one wrapper: `echo $$ > /sys/fs/cgroup/agent/cgroup.procs || exit 125; exec setpriv --reuid=1000 --regid=1000 --clear-groups --inh-caps=-all --ambient-caps=-all --bounding-set=-all --no-new-privs timeout -k 5 <s> bash -c "$0"`, with the command as an argument, never interpolated. `cgroup.kill` ends leftover processes, `setsid` ones included. A kill first closes the gate to new wrapped processes and waits for those already starting to join the cgroup (or fail), so none joins after it was found empty. Commands run without network, with a timeout of 10 minutes unless the model asks for longer, never past the run's deadline, and with only the tools in the image (`container/`): Python with document, spreadsheet, plotting and data libraries, poppler, ripgrep, jq, sqlite3 and similar.
 
 **File operations run as the dropped user too.** pi's `read`, `write` and `edit` go through `minerva-fs`, a Python helper on the read-only root, run as `python3 -I -S /opt/minerva/minerva-fs …` through the same wrapper: isolated mode, so nothing the agent writes can change it; paths as arguments, never interpolated; bounded reads. Where a path must stay inside `/workspace` (the scan, hydration, checkpoint reads), it is walked one component at a time with `openat`-style calls relative to directory descriptors, each with `O_NOFOLLOW`, so a symlinked parent cannot lead outside; files are opened with `O_NONBLOCK` and accepted only if `fstat` says regular file. pi's own tools keep pi's semantics for paths the agent names, but run without privileges, so a link out of `/workspace` reaches only what uid 1000 may read on a read-only root. Root is used only for hardening, verification, `cgroup.kill` and parking. The SDK's `Files` (which runs as root) is not used on agent-controlled paths.
+
+**When a container starts.** An attempt prepares its container while the model starts (the parked one acquired, else one started, hardened, verified and hydrated from the run's last checkpoint, else its base version) when a container is parked or the folder it hydrates has files, attachments included. Otherwise its first local call prepares it and waits behind "Preparing files", which on an empty folder is the start, hardening and verification alone, and a turn that makes no local call starts no container.
 
 **The local tools** are pi's own, given an `ExecutionEnv` (`@earendil-works/pi-durable/env`, `FileSystem & Shell`) that forwards to the Sandbox DO; it passes pi's conformance suite (24 cases). `read` is wrapped to be replay-safe. If the Conversation DO restarts mid-turn it loses its `exec` handles: calls in flight come back as interrupted and the container is replaced from the last checkpoint.
 
@@ -429,7 +433,7 @@ Known limits: each turn submits once to the conversation's pi conversation (no s
 ## Open questions
 
 1. Move the executor to a separate Worker script with its own secrets, so the loop's isolate never holds a credential? (The product plan's leases narrow what the engine holds, but not where.)
-2. Warm containers: keep a conversation's container between turns for its idle timeout, or start one per turn?
+2. ~~Warm containers: keep a conversation's container between turns, or start one per turn?~~ Answered 2026-10-19 (chunk 20): a completed turn parks its container for 5 minutes, and the conversation's next turn takes it (The sandbox lifecycle, Parking).
 3. pi's state grows with the conversation. Since chunk 19b one pi conversation holds the whole conversation, every entry kept, compacted ones and tool results (up to 1 MiB each) included, until the conversation is deleted (Attempts and recovery). Its size against a Durable Object's 10 GB is not measured. A pi session of a run from before is about 64 kB and 75 rows once the history reaches its cap (measured), and retention deletes it 30 days after its run ended, with statements over pi-durable 1.3.0's schema that each pi-durable upgrade must be checked against.
 4. ~~A team's Workspace DO serializes its control plane.~~ Moot: Laravel holds the control plane.
 5. Retention, narrowed: a run's events, ledger and page tokens go 30 days after its end, facts 7 days after their acknowledgement, and the conversation's pi conversation only with the conversation (owner, 2026-10-19). Left open: version manifests and the Sandbox object's per-run rows, which only the conversation's deletion removes, and whether a very long turn approaches the 10,000 subrequests of one invocation.
@@ -441,4 +445,4 @@ Known limits: each turn submits once to the conversation's pi conversation (no s
 11. Agent files, later: whether a per-agent switch for commands (`bash`) is needed at launch, and whether file names with format characters (bidi overrides, zero-width) are refused or only escaped where the app shows them. Still intended:
     - images to the model as blob references the model wrapper inlines, re-encoded on upload without metadata, never stored as bytes in pi's state or the run's events;
     - connectors that upload files by path (Drive and OneDrive first, then mail attachments in Gmail and Outlook, and Slack files), each with its own permission checks;
-    - warm sandboxes (open question 2), lazy hydration of large files, zip downloads, previews of raster images, project folders that several conversations start from, and branches when a user edits an earlier message.
+    - lazy hydration of large files, zip downloads, previews of raster images, project folders that several conversations start from, and branches when a user edits an earlier message.

@@ -20,7 +20,6 @@ import { MAX_HISTORY } from "@minerva/contract/internal";
 import { afterAll, describe, expect, test } from "vitest";
 import {
 	delivered,
-	destroyed,
 	file,
 	finish,
 	finished,
@@ -32,6 +31,7 @@ import {
 	modelDeadline,
 	NO_CONNECTIONS,
 	outcome,
+	parked,
 	post,
 	type RunEvent,
 	type RunView,
@@ -125,9 +125,10 @@ describe.concurrent("an end-to-end turn: Python through bash, a script calling a
 		// The command's card comes before the script's phase and its call, as the model's turns do.
 		expect((out.local[0] as RunEvent).seq).toBeLessThan(out.phase.seq);
 		expect(out.phase.seq).toBeLessThan((out.scripted[0] as RunEvent).seq);
-		const destroyMs = await destroyed(w);
+		// The completed turn leaves its container parked for the conversation's next run.
+		const parkMs = await parked(w);
 		expect(view.internals.run).toMatchObject({ tool_calls: 1, model_calls: 3 });
-		record("fake model turn", { postMs, runMs: runMs(view.head as Head), goneCheckMs: destroyMs, events: view.events.length });
+		record("fake model turn", { postMs, runMs: runMs(view.head as Head), parkCheckMs: parkMs, events: view.events.length });
 	});
 
 	test("with Workers AI (@cf/zai-org/glm-5.3-flash): the protocol, not the words", async () => {
@@ -148,8 +149,8 @@ describe.concurrent("an end-to-end turn: Python through bash, a script calling a
 			// The model must have run a command, a script and the connector's tool through it; what it said does not matter.
 			if (!bash.length || !listed || !scripted) continue;
 			await expectPublished(w, view, "report.txt");
-			const destroyMs = await destroyed(w);
-			record("Workers AI turn", { attempt, runMs: runMs(view.head as Head), goneCheckMs: destroyMs, modelCalls: view.internals.run?.model_calls, tools: attempts.at(-1)?.tools });
+			const parkMs = await parked(w);
+			record("Workers AI turn", { attempt, runMs: runMs(view.head as Head), parkCheckMs: parkMs, modelCalls: view.internals.run?.model_calls, tools: attempts.at(-1)?.tools });
 			return;
 		}
 		record("Workers AI turn, tools not called", attempts);

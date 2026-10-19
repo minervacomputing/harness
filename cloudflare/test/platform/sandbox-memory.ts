@@ -1,7 +1,7 @@
 // A stand-in for a conversation's Sandbox in local workerd, which has no containers (ConversationPorts.sandbox):
 // a folder in memory with the Sandbox's fences, hydration from and checkpoints into the workspace's bucket
-// (with the SHA-256 R2 checks), a scan that reports limits, each start's span for a run's seal, and a tiny command
-// language for the bash tool.
+// (with the SHA-256 R2 checks), a scan that reports limits, each start's span for a run's seal, parking for the next
+// run and acquiring a parked folder of the run's version, and a tiny command language for the bash tool.
 // It lives in the tests' isolate, so it survives the conversation's resets as a container would; a start
 // for a new attempt replaces the folder, as a new container does. The real container is the unit tests'
 // (Docker) and the account's.
@@ -16,16 +16,17 @@ import { hex } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { ExecOutputSink, ExecRequest, ExecResult } from "../../src/sandbox/commands.ts";
 import type { SandboxSpec } from "../../src/sandbox/constants.ts";
-import type { Refused, SandboxFence, SandboxStatus } from "../../src/sandbox/core.ts";
+import type { Acquired, NotAcquired, Refused, SandboxFence, SandboxStatus } from "../../src/sandbox/core.ts";
 import type { FsRequest, FsResponse } from "../../src/sandbox/files.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan, HydrateResult } from "../../src/sandbox/folder.ts";
 import type { ScanResult } from "../../src/sandbox/scan.ts";
 import type { HardeningReport, VerificationReport } from "../../src/sandbox/hardening.ts";
 import type { ContainerSpan, SealedSpans } from "../../src/sandbox/store.ts";
-import type { AttemptFence, RunId } from "../../src/shared/rpc.ts";
+import type { AttemptFence, RunId, VersionId } from "../../src/shared/rpc.ts";
 
 const ROOT = "/workspace/";
 const STALE: Refused = { refused: "stale", message: "This sandbox belongs to another incarnation, run or attempt." };
+const NOT_VERIFIED: Refused = { refused: "not_verified", message: "The sandbox is not ready." };
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -73,6 +74,7 @@ export class MemorySandbox implements SandboxPort {
 	#spec: SandboxSpec | null = null;
 	#state: SandboxStatus["state"] = "none";
 	#startedAt: number | null = null;
+	#parkedVersion: VersionId | null = null;
 	/** Each start's span, by run: open while its folder is the one in use. */
 	readonly #spans: { runId: string; span: ContainerSpan }[] = [];
 	readonly #holds = new Map<string, (cancelled: boolean) => void>();
@@ -97,6 +99,12 @@ export class MemorySandbox implements SandboxPort {
 		return own !== null && own.incarnation === fence.incarnation && own.runId === fence.runId && own.attempt === fence.attempt && this.#state !== "none";
 	}
 
+	/** As the Sandbox refuses a call: another fence's is stale, and a parked container admits nothing. */
+	#refusal(fence: SandboxFence): Refused | null {
+		if (!this.#owns(fence)) return STALE;
+		return this.#state === "parked" ? NOT_VERIFIED : null;
+	}
+
 	async start(fence: AttemptFence, spec: SandboxSpec): Promise<{ incarnation: string } | Refused | { failed: string }> {
 		this.log.push(`start ${fence.attempt}`);
 		if (this.faults.start) return { failed: "The container did not become ready." };
@@ -114,7 +122,8 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async harden(fence: SandboxFence): Promise<HardeningReport | Refused> {
-		if (!this.#owns(fence)) return STALE;
+		const refusal = this.#refusal(fence);
+		if (refusal) return refusal;
 		if (this.faults.harden) {
 			this.#state = "none";
 			return { ok: false, failed: this.faults.harden, output: "" };
@@ -124,13 +133,15 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async verify(fence: SandboxFence): Promise<VerificationReport | Refused> {
-		if (!this.#owns(fence)) return STALE;
+		const refusal = this.#refusal(fence);
+		if (refusal) return refusal;
 		this.#state = "verified";
 		return { ok: true, checks: [] };
 	}
 
 	async exec(fence: SandboxFence, request: ExecRequest, sink: ExecOutputSink | null): Promise<ExecResult | Refused> {
-		if (!this.#owns(fence)) return STALE;
+		const refusal = this.#refusal(fence);
+		if (refusal) return refusal;
 		this.#state = "in_use";
 		const command = typeof request.command === "string" ? request.command : request.command.join(" ");
 		this.log.push(`exec ${command}`);
@@ -184,7 +195,8 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async fs(fence: SandboxFence, request: FsRequest): Promise<FsResponse | Refused> {
-		if (!this.#owns(fence)) return STALE;
+		const refusal = this.#refusal(fence);
+		if (refusal) return refusal;
 		this.log.push(`fs ${request.op}`);
 		const missing = () => failure("not_found", "No such file or directory");
 		switch (request.op) {
@@ -238,7 +250,8 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async hydrate(fence: SandboxFence, plan: HydratePlan): Promise<HydrateResult | Refused> {
-		if (!this.#owns(fence)) return STALE;
+		const refusal = this.#refusal(fence);
+		if (refusal) return refusal;
 		this.log.push(`hydrate ${plan.files.length}`);
 		if (this.files.size || this.dirs.size) return { ok: false, reason: "not_empty", message: "/workspace is not empty." };
 		for (const file of plan.files) {
@@ -253,7 +266,8 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async scan(fence: SandboxFence, options: { rehashAll: boolean }): Promise<ScanResult | Refused> {
-		if (!this.#owns(fence)) return STALE;
+		const refusal = this.#refusal(fence);
+		if (refusal) return refusal;
 		this.log.push(options.rehashAll ? "scan rehash" : "scan");
 		if (this.faults.limit) return { ok: false, limit: this.faults.limit };
 		const paths = [...this.files.keys()].sort();
@@ -274,7 +288,8 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async checkpoint(fence: SandboxFence, plan: CheckpointUploadPlan): Promise<CheckpointUploadResult | Refused> {
-		if (!this.#owns(fence)) return STALE;
+		const refusal = this.#refusal(fence);
+		if (refusal) return refusal;
 		this.log.push(`checkpoint ${plan.files.length}`);
 		if (this.faults.upload) return { ok: false, reason: "failed", path: plan.files[0]?.path ?? "", message: "A file could not be saved." };
 		const stored = [];
@@ -292,7 +307,8 @@ export class MemorySandbox implements SandboxPort {
 	}
 
 	async killStrays(fence: SandboxFence): Promise<{ ok: true } | { ok: false; message: string } | Refused> {
-		if (!this.#owns(fence)) return STALE;
+		const refusal = this.#refusal(fence);
+		if (refusal) return refusal;
 		this.log.push("kill");
 		if (this.faults.strays) return { ok: false, message: "Processes left by commands could not be stopped." };
 		return { ok: true };
@@ -307,10 +323,10 @@ export class MemorySandbox implements SandboxPort {
 		return { destroyed: true };
 	}
 
-	/** The run's spans, its folder destroyed first if it is the one in use. Later starts are not refused. */
+	/** The run's spans, its folder destroyed first if it is the one in use and not parked. Later starts are not refused. */
 	async seal(runId: RunId): Promise<SealedSpans> {
 		this.log.push("seal");
-		if (this.#fence?.runId === runId && this.#state !== "none") {
+		if (this.#fence?.runId === runId && this.#state !== "none" && this.#state !== "parked") {
 			this.release();
 			this.#end();
 			this.#state = "none";
@@ -318,10 +334,45 @@ export class MemorySandbox implements SandboxPort {
 		return { since: 0, spans: this.#spans.filter((entry) => entry.runId === runId).map((entry) => entry.span) };
 	}
 
-	/** The open span, if any, ends now, destroyed. */
-	#end(): void {
+	/** Parks the folder for the conversation's next run, or destroys it while a command is held. */
+	async park(fence: SandboxFence, versionId: VersionId | null): Promise<{ parked: boolean } | Refused> {
+		if (!this.#owns(fence)) return STALE;
+		this.log.push(`park ${versionId === null ? "none" : "version"}`);
+		if (this.#state === "parked") return { parked: this.#parkedVersion === versionId };
+		if (this.#holds.size > 0) {
+			await this.destroy(fence, "Work of the run was still running when it parked its sandbox.");
+			return { parked: false };
+		}
+		this.#end("parked");
+		this.#state = "parked";
+		this.#parkedVersion = versionId;
+		return { parked: true };
+	}
+
+	/** The parked folder for a new attempt when it is the version the attempt starts from; else it is destroyed. */
+	async acquire(fence: AttemptFence, spec: SandboxSpec, versionId: VersionId | null): Promise<Acquired | NotAcquired | Refused> {
+		this.log.push(`acquire ${fence.attempt}`);
+		if (this.#state !== "parked") return { acquired: false, reason: "Nothing is parked." };
+		if (this.#parkedVersion !== versionId) {
+			this.files.clear();
+			this.dirs.clear();
+			this.#state = "none";
+			this.log.push("destroy The parked folder is not the version the run starts from.");
+			return { acquired: false, reason: "The parked folder is not the version the run starts from." };
+		}
+		const incarnation = uuid7();
+		this.#fence = { ...fence, incarnation };
+		this.#spec = spec;
+		this.#state = "verified";
+		this.#startedAt = Date.now();
+		this.#spans.push({ runId: fence.runId, span: { startedAt: this.#startedAt, leaseUntil: this.#startedAt + 3_600_000, endedAt: null, ended: null } });
+		return { incarnation, verifyMs: 0 };
+	}
+
+	/** The open span, if any, ends now. */
+	#end(ended: "destroyed" | "parked" = "destroyed"): void {
 		const open = this.#spans.at(-1);
-		if (open && open.span.endedAt === null) open.span = { ...open.span, endedAt: Date.now(), ended: "destroyed" };
+		if (open && open.span.endedAt === null) open.span = { ...open.span, endedAt: Date.now(), ended };
 	}
 
 	async status(): Promise<SandboxStatus> {
