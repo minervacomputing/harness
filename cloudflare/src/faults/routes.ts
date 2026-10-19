@@ -89,7 +89,7 @@ async function laravelOperation(op: string, body: Body, env: Env, exports: Cloud
 			return { connectionId };
 		}
 		case "conversation":
-			// Before the conversation's first start: its faults, its model (`workers-ai`, `fake-remote`, or null for the fake), its
+			// Before the conversation's first start: its faults, its model (`workers-ai`, `fake-remote`, `route`, or null for the fake), its
 			// deadline, the perf probe's calibration and its retention's periods (ports.ts).
 			await conversationOf(env, euRef(scope), conversationId).faultPlan((body.faults ?? []) as unknown as Fault[], {
 				model: (body.model ?? null) as string | null,

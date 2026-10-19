@@ -11,6 +11,7 @@ import worker from "../index.ts";
 import { PRICE_SOURCE } from "../budget/prices.ts";
 import { CONNECTOR_SOURCE, servedConnectors } from "../connectors/index.ts";
 import { Conversation as BaseConversation } from "../conversation/conversation.ts";
+import { type PiCompaction, type PiTask, submissionCompactions, submissionTasks } from "../conversation/pi-tables.ts";
 import { defaultPorts, PORTS } from "../conversation/ports.ts";
 import { RETAIN_JOB, RETENTION, type RetentionPeriods } from "../conversation/retention.ts";
 import { PAGE_LIMIT, type RunHead, RunStore } from "../conversation/store.ts";
@@ -55,8 +56,21 @@ const aborts = new Map<string, Abort[]>();
 export interface RunInternals {
 	run: { [column: string]: SqlStorageValue } | null;
 	attempts: { attempt: number; ended: string | null }[];
-	/** Each counted model call's attempt and the instance that made it (store.ts `RunStore.instance`), in the order they were made. */
-	calls: { attempt: number; instance: string }[];
+	/**
+	 * Each counted model call in the order they were made: its attempt, the instance that made it (store.ts `RunStore.instance`),
+	 * its tokens, whether it made a summary, and when it was recorded and settled.
+	 */
+	calls: {
+		attempt: number;
+		instance: string;
+		input_tokens: number | null;
+		cached_tokens: number | null;
+		cache_write_tokens: number | null;
+		output_tokens: number | null;
+		summary: boolean;
+		created_at: number;
+		settled_at: number | null;
+	}[];
 	writes: { key: string; status: string; attempt: number }[];
 	executions: { call_id: string; executions: number }[];
 	/** The tools the run's snapshot offers. */
@@ -66,10 +80,12 @@ export interface RunInternals {
 	/** Each model call's marks, as this instance took them (ports.ts, `CallMarks`). */
 	marks: CallMarks[];
 	/**
-	 * The tasks of the run's pi session in id order, none before it has one: whether pi marked each for abort, and pi's own
-	 * `Date.now()` stamps of its first change to `running` and of its end, null until then.
+	 * The tasks pi ran for the run's submission in its session, in id order, none before it submits: whether pi marked each
+	 * for abort, and pi's own `Date.now()` stamps of its first change to `running` and of its end, null until then.
 	 */
-	piTasks: { id: number; kind: string; status: string; abortRequested: boolean; startedAt: number | null; endedAt: number | null }[];
+	piTasks: PiTask[];
+	/** The compactions pi placed for the run's submission, in id order. */
+	compactions: PiCompaction[];
 }
 
 /**
@@ -250,27 +266,23 @@ export class Conversation extends BaseConversation {
 		const sql = this.ctx.storage.sql;
 		const kept = sql.exec("SELECT 1 FROM runs WHERE id = ? AND prune IS NULL", runId).toArray().length > 0;
 		const tools = kept ? new RunStore(this.ctx.storage).snapshot({ id: runId }).tools.map((tool) => tool.name) : [];
-		// A run without a session has no tasks, and pi's tables exist only once pi was opened. pi's `kind` column holds the kind
-		// JSON-encoded, so it is read from the record.
 		const session = sql.exec<{ session: string | null }>("SELECT session FROM runs WHERE id = ?", runId).toArray()[0]?.session ?? null;
-		const piTasks =
-			session === null
-				? []
-				: sql
-						.exec<{ id: number; kind: string; status: string; abortRequested: number; startedAt: number | null; endedAt: number | null }>(
-								"SELECT id, json_extract(record, '$.kind') AS kind, status, abort_requested AS abortRequested, json_extract(record, '$.startedAt') AS startedAt, json_extract(record, '$.endedAt') AS endedAt FROM pi_tasks WHERE conversation_id = ? ORDER BY id",
-								Number(session),
-							)
-						.toArray()
-						.map((task) => ({ ...task, abortRequested: task.abortRequested === 1 }));
+		const request = `run:${runId}`;
 		return {
 			tools,
 			entered: planOf(this.ctx).entered(runId),
 			marks: marksOf(this.ctx, runId),
-			piTasks,
+			piTasks: session === null ? [] : submissionTasks(sql, Number(session), request),
+			compactions: session === null ? [] : submissionCompactions(sql, Number(session), request),
 			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance, prune, created_at, session FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
 			attempts: sql.exec<{ attempt: number; ended: string | null }>("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
-			calls: sql.exec<{ attempt: number; instance: string }>("SELECT attempt, instance FROM call_records WHERE run_id = ? ORDER BY attempt, created_at", runId).toArray(),
+			calls: sql
+				.exec<Omit<RunInternals["calls"][number], "summary"> & { summary: number }>(
+					"SELECT attempt, instance, input_tokens, cached_tokens, cache_write_tokens, output_tokens, summary, created_at, settled_at FROM call_records WHERE run_id = ? ORDER BY attempt, created_at",
+					runId,
+				)
+				.toArray()
+				.map((call) => ({ ...call, summary: call.summary === 1 })),
 			writes: sql.exec<{ key: string; status: string; attempt: number }>("SELECT key, status, attempt FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId).toArray(),
 			executions: sql.exec<{ call_id: string; executions: number }>("SELECT call_id, executions FROM tool_executions WHERE run_id = ? ORDER BY call_id", runId).toArray(),
 		};

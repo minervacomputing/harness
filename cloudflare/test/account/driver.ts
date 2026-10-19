@@ -66,15 +66,27 @@ export interface RunView {
 	internals: {
 		run: { [column: string]: unknown } | null;
 		attempts: { attempt: number; ended: string | null }[];
-		/** Each model call's attempt and the object instance that made it. */
-		calls: { attempt: number; instance: string }[];
+		/** Each model call's attempt, the object instance that made it, its tokens, whether it made a summary, and when it was recorded and settled. */
+		calls: {
+			attempt: number;
+			instance: string;
+			input_tokens: number | null;
+			cached_tokens: number | null;
+			cache_write_tokens: number | null;
+			output_tokens: number | null;
+			summary: boolean;
+			created_at: number;
+			settled_at: number | null;
+		}[];
 		writes: { key: string; status: string; attempt: number }[];
 		executions: { call_id: string; executions: number }[];
 		entered: { model: number; tool: number };
 		/** Each model call's marks, in the object's Date.now() milliseconds (src/faults/ports.ts, `CallMarks`). */
 		marks: { begin: number; answered: number | null; last: number | null }[];
-		/** The tasks of the run's pi session in id order (src/faults/index.ts, `RunInternals`). */
+		/** The tasks pi ran for the run's submission in id order (src/faults/index.ts, `RunInternals`). */
 		piTasks: { id: number; kind: string; status: string; abortRequested: boolean; startedAt: number | null; endedAt: number | null }[];
+		/** The compactions pi placed for the run's submission: the summary as the model reads it. */
+		compactions: { id: number; reason: string; firstKept: number; summary: string }[];
 	};
 	fired: { point: string; mode: string; at: number }[];
 	/** The resets (`ctx.abort()`) the conversation's object asked for, as the isolate that answered saw them (src/faults/index.ts). */
@@ -145,7 +157,7 @@ const runs: { w: World; runId: string }[] = [];
 
 /**
  * A workspace with the fake Notes connection Laravel holds, and a conversation with the faults asked for, its model
- * (`workers-ai`, `fake-remote`, or the fake by default) and the perf probe's calibration (src/faults/ports.ts).
+ * (`workers-ai`, `fake-remote`, `route`, or the fake by default) and the perf probe's calibration (src/faults/ports.ts).
  */
 export async function world(
 	options: { faults?: Fault[]; delays?: { [prefix: string]: number }; model?: string; calibrate?: { bytes: number; write: boolean }; retention?: Retention } = {},

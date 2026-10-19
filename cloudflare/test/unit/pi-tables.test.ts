@@ -6,10 +6,10 @@
 // exact, so a statement that took a wrong row would fail them.
 
 import { type AssistantMessage, createModels, type FauxProviderHandle, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall, Type } from "@earendil-works/pi-ai";
-import { AssistantEntry, type ConversationId, createRegistry, defineTool, type EntryRecord, Harness, type HarnessSettings, UserEntry } from "@earendil-works/pi-durable";
+import { AssistantEntry, CompactionEntry, type ConversationId, createRegistry, defineTool, type EntryRecord, Harness, type HarnessSettings, UserEntry } from "@earendil-works/pi-durable";
 import { openPiSessionStore } from "agents/harness/pi";
 import { afterEach, describe, expect, test } from "vitest";
-import { deletePiSession, orphanPiSession, type PiStep } from "../../src/conversation/pi-tables.ts";
+import { deletePiSession, orphanPiSession, type PiStep, submissionCompactions, submissionTasks } from "../../src/conversation/pi-tables.ts";
 import { MIGRATIONS } from "../../src/conversation/schema.ts";
 import { RunStore } from "../../src/conversation/store.ts";
 import { durableStorage, openDatabase, scratchDirectory } from "./sqlite.ts";
@@ -341,5 +341,39 @@ describe("the conversation's pi conversation", () => {
 		expect(orphanPiSession(pi.storage.sql)).toBeNull();
 		pi.db.exec("UPDATE conversation SET pi_session = NULL");
 		expect(orphanPiSession(pi.storage.sql)).toBe(shared);
+	});
+});
+
+describe("a run's work, as the test build reads it", () => {
+	test("is what pi did between the run's submission and the session's next one", async () => {
+		const pi = await openPi(databasePath(), { contextRetentionMs: 0 });
+		const shared = await session(pi, "run-1", []);
+		answers(pi, "First answer");
+		await turn(pi, shared, "run-1", "First question");
+		claim(pi.db, "run-2", shared);
+		answers(pi, "Second answer");
+		await turn(pi, shared, "run-2", "Second question");
+		// A compaction entry, as pi places one inside run 2's generation.
+		const kept = (await entries(pi, shared)).at(-2)?.id;
+		const conversation = await pi.harness.conversation(shared, BG);
+		if (kept === undefined || !conversation) throw new Error("No pi conversation with entries.");
+		await conversation.commit(
+			(tx) => tx.appendEntry(CompactionEntry, shared, { head: kept, data: { reason: "threshold" }, model: [{ role: "user", content: [{ type: "text", text: "The summary." }], timestamp: 1 }] }),
+			BG,
+		);
+
+		const tasks = (run: string) => submissionTasks(pi.storage.sql, shared, `run:${run}`);
+		const [first, second] = [tasks("run-1"), tasks("run-2")];
+		for (const run of [first, second]) {
+			expect(run.map(({ kind, status, abortRequested }) => [kind, status, abortRequested])).toEqual([
+				["pi.generation", "terminal", false],
+				["pi.tool", "terminal", false],
+				["pi.generation", "terminal", false],
+			]);
+		}
+		expect(Math.max(...first.map((task) => task.id))).toBeLessThan(Math.min(...second.map((task) => task.id)));
+		expect(tasks("run-3")).toEqual([]);
+		expect(submissionCompactions(pi.storage.sql, shared, "run:run-1")).toEqual([]);
+		expect(submissionCompactions(pi.storage.sql, shared, "run:run-2")).toEqual([{ id: expect.any(Number), reason: "threshold", firstKept: kept, summary: "The summary." }]);
 	});
 });

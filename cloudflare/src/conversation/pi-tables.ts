@@ -4,9 +4,10 @@
 // call is one bounded step for the caller's `transactionSync`, made outside any transaction of pi's (store.ts `outside`):
 // it deletes at most `limit` rows and selects what it deletes in the same statements, so a step a reset rolls back is
 // simply done again. The conversation's own row goes last, so a session deleted in part is still found by its run, or as an
-// orphan. The `retain` job's pi stage calls them (retention.ts).
+// orphan. The `retain` job's pi stage calls them (retention.ts). The test build reads a run's work with `submissionTasks` and
+// `submissionCompactions` (faults/index.ts).
 
-import { ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
+import { CompactionEntry, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 
 /** The version of pi's schema these statements are written for; any other stops the pi stage. */
 export const PI_SCHEMA_VERSION = 1;
@@ -110,6 +111,65 @@ export function deletePiSession(sql: SqlStorage, session: number, limit: number)
 		if (left <= 1) break;
 	}
 	return left === limit ? { kind: "gone" } : { kind: "deleted", rows: limit - left };
+}
+
+/** A task as the test build reads it: pi's abort mark, and pi's own `Date.now()` of its first `running` and of its end. */
+export type PiTask = {
+	id: number;
+	kind: string;
+	status: string;
+	abortRequested: boolean;
+	startedAt: number | null;
+	endedAt: number | null;
+};
+
+/** A compaction's entry: its reason, the first entry it keeps, and the summary as the model reads it. */
+export type PiCompaction = {
+	id: number;
+	reason: string;
+	firstKept: number;
+	summary: string;
+};
+
+// The work of `session`'s submission `request`: the records above it and below the session's next submission. pi's ids
+// ascend across its tables, and a run submits only once the earlier runs' work in the session has ended.
+const SUBMITTED = `WITH own AS (SELECT id FROM pi_submissions WHERE conversation_id = ? AND request_id = json_quote(?)),
+	next AS (SELECT min(later.id) AS id FROM pi_submissions AS later, own WHERE later.conversation_id = ? AND later.id > own.id)`;
+const WITHIN = "own.id < item.id AND (next.id IS NULL OR item.id < next.id)";
+
+/** The tasks pi ran for `session`'s submission `request`, in id order; none before it is submitted. */
+export function submissionTasks(sql: SqlStorage, session: number, request: string): PiTask[] {
+	if (schemaVersion(sql) !== PI_SCHEMA_VERSION) return [];
+	// pi's `kind` column holds the kind JSON-encoded, so it is read from the record.
+	return sql
+		.exec<Omit<PiTask, "abortRequested"> & { abortRequested: number }>(
+			`${SUBMITTED} SELECT item.id, json_extract(item.record, '$.kind') AS kind, item.status, item.abort_requested AS abortRequested,
+				json_extract(item.record, '$.startedAt') AS startedAt, json_extract(item.record, '$.endedAt') AS endedAt
+			FROM pi_tasks AS item, own, next WHERE item.conversation_id = ? AND ${WITHIN} ORDER BY item.id`,
+			session,
+			request,
+			session,
+			session,
+		)
+		.toArray()
+		.map((task) => ({ ...task, abortRequested: task.abortRequested === 1 }));
+}
+
+/** The compactions pi placed for `session`'s submission `request`, in id order. */
+export function submissionCompactions(sql: SqlStorage, session: number, request: string): PiCompaction[] {
+	if (schemaVersion(sql) !== PI_SCHEMA_VERSION) return [];
+	return sql
+		.exec<PiCompaction>(
+			`${SUBMITTED} SELECT item.id, json_extract(item.record, '$.data.reason') AS reason, item.head AS firstKept,
+				json_extract(item.record, '$.model[0].content[0].text') AS summary
+			FROM pi_entries AS item, own, next WHERE item.conversation_id = ? AND json_extract(item.record, '$.kind') = ? AND ${WITHIN} ORDER BY item.id`,
+			session,
+			request,
+			session,
+			session,
+			CompactionEntry.kind,
+		)
+		.toArray();
 }
 
 /**

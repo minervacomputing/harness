@@ -34,8 +34,8 @@
 // lets a start wait that long for pi's earlier work before it resets the object (the bound, pi-stops.ts), and one whose plan
 // sets `retention` keeps what it holds for those periods instead of RETENTION's,
 // such as minutes.
-// A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model. Never
-// part of the production Worker.
+// A conversation whose plan sets `model` to `workers-ai` gets Workers AI instead of the fake model, and one that sets it to
+// `route` the instance's configured route through its AI Gateway. Never part of the production Worker.
 //
 // `model` set to `fake-remote` gets the fake model with one request to FAKE_MODEL_HOST before each answer (the perf probe),
 // so each call sends a real outbound message, which the output gate holds until the object's
@@ -257,6 +257,7 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 			const plan = planOf(context.ctx);
 			const model = plan.config("model");
 			if (model === "workers-ai") return upstreamOf({ ...route, provider: "workers-ai" }, (context.env as { AI?: Ai }).AI);
+			if (model === "route") return base.upstream(route, context);
 			const onDelta: FakeOptions["onDelta"] = async (call, index) => {
 				await plan.at("model:delta", { step: call.step, delta: index });
 			};

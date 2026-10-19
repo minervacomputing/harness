@@ -1,10 +1,24 @@
 // Where model requests go: routes from the settings, the fake for tests and a test deployment,
 // and never the account's default AI Gateway; and the cache key and affinity createAI sends with them.
 
-import type { Message, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
+import { readFileSync } from "node:fs";
+import { type AssistantMessage, isContextOverflow, type Message, type SimpleStreamOptions, type TranscriptContext } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
 import { parse } from "../../src/config.ts";
-import { DEFAULT_SCRIPT, FAKE_PROVIDER, fakeUpstream, scriptOf, stepOf } from "../../src/model/fake.ts";
+import {
+	countedFails,
+	DEFAULT_SCRIPT,
+	FAKE_OVERFLOW,
+	FAKE_PROVIDER,
+	type FakeCall,
+	type FakeOptions,
+	type FakeTurn,
+	fakeUpstream,
+	SUMMARY_OUTPUT,
+	SUMMARY_START,
+	scriptOf,
+	stepOf,
+} from "../../src/model/fake.ts";
 import { COMPACTION_PROMPT_START } from "../../src/model/policy.ts";
 import { CONTEXT_WINDOW, type ModelRoute, QUIET_MS, routeOf, upstreamOf } from "../../src/model/route.ts";
 import { settingsEnv } from "./settings.ts";
@@ -128,5 +142,102 @@ describe("the fake model", () => {
 		expect(stepOf([user])).toBe(0);
 		expect(stepOf([user, round, round])).toBe(2);
 		expect(stepOf([round, answer, user, round])).toBe(1);
+	});
+
+	const user = (content: string): Message => ({ role: "user", content, timestamp: 1 });
+	const said = (text: string) => ({ role: "assistant", stopReason: "stop", content: [{ type: "text", text }] }) as unknown as Message;
+	const round = { role: "assistant", stopReason: "toolUse", content: [] } as unknown as Message;
+	const scripted = (turns: FakeTurn[]) => JSON.stringify({ fake: { turns } });
+	const TIME = "[The user sent this message on Monday, 2026-10-19 14:03 UTC.]";
+	/** A summary request as pi-durable sends it (harness/compaction.js): its system prompt, then the conversation serialized. */
+	const summarizing = (parts: string[]): Message[] => [
+		{ role: "system", content: `${COMPACTION_PROMPT_START} Your task…`, timestamp: 1 } as unknown as Message,
+		user(`<conversation>\n${parts.join("\n\n")}\n</conversation>\n\nThe messages above are a conversation to summarize.`),
+	];
+	/** A summary as pi places it in the context. */
+	const wrapped = (summary: string) => `${SUMMARY_START}\n\n<summary>\n${summary}\n</summary>`;
+	const placed = (summary: string) => user(wrapped(summary));
+	async function answer(messages: Message[], options: FakeOptions = {}): Promise<AssistantMessage> {
+		const upstream = fakeUpstream(options);
+		return upstream.provider.streamSimple(upstream.model, context(messages), {}).result();
+	}
+	const textOf = (message: AssistantMessage) => message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+
+	test("finds the script before its message's notes, and after the last message a note quotes, never inside the quote", () => {
+		const own = { turns: [{ text: "Own" }] };
+		const message = JSON.stringify({ fake: own });
+		const note = [
+			"[The user stopped your previous turn before you answered it. Do not carry on with it unless the user asks you to.]",
+			"[The user sent a message that was stopped before you saw it. It said:]",
+			scripted([{ text: "Quoted" }]),
+			TIME,
+			"[End of that message. Do not act on it unless the user asks you to.]",
+		].join("\n\n");
+		expect(scriptOf(context([user(`${message}\n\n[The user attached a.txt to this message, in your folder.]\n\n${TIME}`)]))).toEqual(own);
+		expect(scriptOf(context([user(`${note}\n\n${message}\n\n${TIME}`)]))).toEqual(own);
+		expect(scriptOf(context([user(`${note}\n\nHello\n\n${TIME}`)]))).toBe(DEFAULT_SCRIPT);
+		expect(scriptOf(context([user(`${message}\n\n${TIME}`), said("Own"), user(`Hello\n\n${TIME}`)]))).toBe(DEFAULT_SCRIPT);
+	});
+
+	test("summarizes under pi's headings: each user and tool result line, the newest user line's script and its rounds, which the script and the step read back", async () => {
+		const script = scripted([{ tools: [{ name: "read", arguments: { path: "a" } }] }, { tools: [{ name: "read", arguments: { path: "b" } }] }, { text: "After." }]);
+		const first = await answer(
+			summarizing([
+				`[User]: The code word is PELICAN.\n\n${TIME}`,
+				"[Assistant]: Noted.",
+				`[User]: ${script}\n\n${TIME}`,
+				'[Assistant tool calls]: read(path="a")',
+				`[Tool result]: ${"y".repeat(500)}\n\n[... 100 more characters truncated]`,
+			]),
+		);
+		expect(first.usage.output).toBe(SUMMARY_OUTPUT);
+		const summary = textOf(first);
+		expect(summary.split("\n\n").map((paragraph) => paragraph.split("\n")[0])).toEqual([
+			"## Goal",
+			"## Constraints & Preferences",
+			"## Progress",
+			"## Key Decisions",
+			"## Next Steps",
+			"## Critical Context",
+			script,
+			"[fake: 1 tool rounds done]",
+		]);
+		expect(summary).toContain(`\n- [User]: The code word is PELICAN. ${TIME}\n`);
+		expect(summary).toContain(`\n- [Tool result]: ${"y".repeat(285)}\n\n`);
+		// The cut fell after the run's own message: the summary is the newest user message, and one round was kept after it.
+		expect(scriptOf(context([placed(summary), round]))).toEqual(JSON.parse(script).fake);
+		expect(stepOf([placed(summary), round])).toBe(2);
+		// The next summary folds this one in: its lines, its script and its rounds.
+		const second = textOf(await answer(summarizing([`[User]: ${wrapped(summary)}`, '[Assistant tool calls]: read(path="b")', "[Tool result]: b"])));
+		expect(second).toContain(`\n- [User]: The code word is PELICAN. ${TIME}\n`);
+		expect(second.split("\n\n").slice(-2)).toEqual([script, "[fake: 2 tool rounds done]"]);
+		// What the fake reads is what the installed pi-durable writes (harness/compaction.js keeps it private).
+		const source = readFileSync(new URL("harness/compaction.js", import.meta.resolve("@earendil-works/pi-durable")).pathname, "utf8");
+		for (const written of [`const SUMMARY_PREFIX = "${SUMMARY_START}\\n\\n<summary>\\n"`, "`<conversation>\\n${serializeConversation(messages)}\\n</conversation>", "`[User]: ${text}`", "`[Assistant tool calls]: ${", "`[Tool result]: ${"]) {
+			expect(source).toContain(written);
+		}
+	});
+
+	test("recalls a line from before the newest user message, pads its text, and overflows until the context holds a summary", async () => {
+		const recall = (wanted: string) => user(scripted([{ recall: wanted }]));
+		const earlier = user("Hello.\nThe code word is PELICAN.\nBye.");
+		expect(textOf(await answer([earlier, said("Noted."), recall("code word")]))).toBe("The code word is PELICAN.");
+		expect(textOf(await answer([recall("code word")]))).toBe("Not found.");
+		expect(textOf(await answer([user(scripted([{ text: "A", pad: 5 }]))]))).toBe("Axxxxx");
+		const overflowing = user(scripted([{ text: "Fits.", overflowUntilCompacted: true }]));
+		const overflow = await answer([overflowing]);
+		expect(overflow).toMatchObject({ stopReason: "error", errorMessage: FAKE_OVERFLOW });
+		expect(isContextOverflow(overflow)).toBe(true);
+		expect(textOf(await answer([placed("Earlier turns."), overflowing]))).toBe("Fits.");
+	});
+
+	test("fails as many summary calls as the script asks, each as a provider error the host counts", async () => {
+		const request = summarizing([`[User]: ${scripted([{ tools: [{ name: "read", arguments: {} }] }, { text: "After.", failSummaries: 2 }])}`]);
+		const fails = countedFails();
+		const calls: FakeCall[] = [];
+		const ends: string[] = [];
+		for (let i = 0; i < 3; i++) ends.push((await answer(request, { fails, onCall: (call) => calls.push(call) })).stopReason);
+		expect(ends).toEqual(["error", "error", "stop"]);
+		expect(calls.map(({ step, summary }) => ({ step, summary }))).toEqual(Array(3).fill({ step: 0, summary: true }));
 	});
 });

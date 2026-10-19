@@ -549,7 +549,7 @@ describe("attempts", () => {
 		// Each attempt's read reached the provider and is recorded, the first one before its instance died.
 		expect(toolCalls(events)).toEqual([expect.objectContaining({ tool: LIST, decision: "allowed" }), expect.objectContaining({ tool: LIST, decision: "allowed" })]);
 		const [first, second] = internals.calls;
-		expect(internals.calls).toEqual([
+		expect(internals.calls).toMatchObject([
 			{ attempt: 1, instance: expect.any(String) },
 			{ attempt: 2, instance: expect.any(String) },
 		]);
@@ -566,7 +566,7 @@ describe("attempts", () => {
 		expect(restarts(await eventsOf(w, runId))).toEqual([2]);
 		const { internals, aborts } = await w.stub.faultView(runId, 0, 0);
 		const [first, second] = internals.calls;
-		expect(internals.calls).toEqual([
+		expect(internals.calls).toMatchObject([
 			{ attempt: 1, instance: expect.any(String) },
 			{ attempt: 2, instance: expect.any(String) },
 		]);
