@@ -6,7 +6,7 @@ Operational notes for coding agents working in this repository: Minerva's open h
 
 `docs/plans/` holds the plans, the designs of chunks not yet built, and [contract.md](docs/plans/contract.md), the internal API's design, which stays. Once a chunk is built, move what later chunks inherit into their sections of the plan and what stays true into ARCHITECTURE.md or cloudflare/README.md. Then delete the chunk's design. Git history keeps it, and `git log --diff-filter=D --name-only -- docs/plans/` lists the deleted designs.
 
-Code never cites a file in `docs/plans/`, because a design goes away. A comment gives its reason itself or cites ARCHITECTURE.md. `cloudflare/test/unit/sources.test.ts` fails on such a citation in the engine, the contract or the workflows.
+Code never cites a file in `docs/plans/`, because a design goes away. A comment gives its reason itself or cites ARCHITECTURE.md.
 
 ## Environment
 
