@@ -2,7 +2,6 @@
 // Pure functions: internal/start.ts compiles Laravel's start into the run's snapshot with `startSnapshot`
 // (ARCHITECTURE.md: Starting a run).
 
-import { runStartLabel } from "../lib/dates.ts";
 import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../shared/rpc.ts";
 import { consentGiven, nests, offered, operationOf, requiresOf } from "./connector.ts";
 import { effectivePolicy, type ProviderOf, type RunLayers } from "./grants.ts";
@@ -35,8 +34,9 @@ export interface StartSnapshot {
 	permissions: PolicySnapshot;
 	tools: ToolRef[];
 	/**
-	 * `SAFETY_INSTRUCTIONS`, `The run started on {Monday, 2026-10-10 14:03} UTC.`, a blank line and the
-	 * agent's instructions, stripped. The folder paragraph is appended at turn start.
+	 * `SAFETY_INSTRUCTIONS`, a blank line and the agent's instructions, stripped: the same from run to run, so a
+	 * conversation's requests keep their cached prefix. The start time is in the turn's message (internal/start.ts
+	 * `promptOf`). The folder paragraph is appended at turn start.
 	 */
 	instructions: string;
 	/** Always `default`. */
@@ -63,7 +63,7 @@ export const SAFETY_INSTRUCTIONS =
  * The compiler's version, which a Laravel start's acceptance names. Raise it whenever a
  * change to grants.ts, policy.ts or this file changes what a snapshot allows or offers.
  */
-export const COMPILER_VERSION = "2";
+export const COMPILER_VERSION = "3";
 
 /** The model may be offered at most this many tools in all. */
 export const MODEL_TOOLS_MAX = 128;
@@ -120,9 +120,9 @@ export function toolsFor(registry: Registry, connections: readonly ConnectionInf
 	return refs;
 }
 
-/** The run's instructions; models do not know the date, and calendar questions are relative to it. */
-export function runInstructions(agentInstructions: string, createdAt: EpochMs): string {
-	return `${SAFETY_INSTRUCTIONS}\nThe run started on ${runStartLabel(createdAt)} UTC.\n\n${agentInstructions}`.trim();
+/** The run's instructions, with no time in them: the turn's message carries it (internal/start.ts `promptOf`). */
+export function runInstructions(agentInstructions: string): string {
+	return `${SAFETY_INSTRUCTIONS}\n\n${agentInstructions}`.trim();
 }
 
 /**
@@ -197,7 +197,7 @@ function admitted(registry: Registry, connections: readonly ConnectionInfo[], po
 
 /**
  * Everything a run snapshots at start: the policy, the tools it is offered and their
- * contracts, the instructions with the start time, the model alias and the deadline. `connectionIds`
+ * contracts, the instructions, the model alias, the start time and the deadline. `connectionIds`
  * are the connections its tools use, and `tenants` the tenants a connection policy limits them to.
  */
 export function startSnapshot(registry: Registry, input: StartInput): StartSnapshot {
@@ -213,7 +213,7 @@ export function startSnapshot(registry: Registry, input: StartInput): StartSnaps
 		agentId: input.agent.id,
 		permissions: policy.toJson(),
 		tools,
-		instructions: runInstructions(input.agent.instructions, input.createdAt),
+		instructions: runInstructions(input.agent.instructions),
 		modelAlias: input.agent.modelAlias,
 		deadline: input.runTimeoutMs === null ? null : input.createdAt + input.runTimeoutMs,
 		createdAt: input.createdAt,

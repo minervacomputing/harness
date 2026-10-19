@@ -314,4 +314,17 @@ ALTER TABLE runs ADD COLUMN pruned_at INTEGER;
 CREATE INDEX runs_unpruned ON runs (finished_at) WHERE finished_at IS NOT NULL AND (prune IS NULL OR prune != 'done');
 `,
 	},
+	// The conversation's one pi conversation and its provider session, which every run copies onto its own row, so many runs
+	// name one session. Dropping the unique index is safe beside the previous version: it never wrote a duplicate, and it
+	// reads a shared session by the active run. A call record says whether it made a compaction's summary.
+	{
+		id: 16,
+		sql: `
+ALTER TABLE conversation ADD COLUMN pi_session TEXT;
+ALTER TABLE conversation ADD COLUMN pi_provider_session TEXT;
+ALTER TABLE call_records ADD COLUMN summary INTEGER NOT NULL DEFAULT 0 CHECK (summary IN (0, 1));
+DROP INDEX IF EXISTS runs_session;
+CREATE INDEX runs_by_session ON runs (session) WHERE session IS NOT NULL;
+`,
+	},
 ];

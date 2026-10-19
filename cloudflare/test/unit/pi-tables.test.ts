@@ -11,6 +11,7 @@ import { openPiSessionStore } from "agents/harness/pi";
 import { afterEach, describe, expect, test } from "vitest";
 import { deletePiSession, orphanPiSession, type PiStep } from "../../src/conversation/pi-tables.ts";
 import { MIGRATIONS } from "../../src/conversation/schema.ts";
+import { RunStore } from "../../src/conversation/store.ts";
 import { durableStorage, openDatabase, scratchDirectory } from "./sqlite.ts";
 
 const BG = Object.freeze({ abortSignal: undefined, value: () => undefined, toString: () => "[Context pi-tables test]" }) as never;
@@ -295,5 +296,50 @@ describe("orphans", () => {
 		expect(drain(pi, orphan.id, 500).map((step) => step.kind)).toEqual(["deleted", "gone"]);
 		expect(dump(pi.db)).toEqual(without(before, orphan.id));
 		expect(orphanPiSession(pi.storage.sql)).toBeNull();
+	});
+});
+
+describe("the conversation's pi conversation", () => {
+	test("is deleted by no run's prune and is never an orphan, while a run's own session still goes", async () => {
+		const pi = await openPi(databasePath(), { contextRetentionMs: 0 });
+		pi.db.prepare("INSERT INTO conversation (singleton, id, workspace_id, user_id, agent_id, created_at, updated_at, organization_id) VALUES (1, 'c', 'w', '', '', 0, 0, 'o')").all();
+		// Two runs on the conversation's pi conversation, and a run with its own session, as before chunk 19b.
+		const shared = await session(pi, "run-1", ["Earlier question", "Earlier answer"]);
+		pi.db.prepare("UPDATE conversation SET pi_session = ?").all(String(shared));
+		answers(pi, "First answer");
+		await turn(pi, shared, "run-1", "First question");
+		claim(pi.db, "run-2", shared);
+		answers(pi, "Second answer");
+		await turn(pi, shared, "run-2", "Second question");
+		const own = await session(pi, "run-3", []);
+		answers(pi, "Third answer");
+		await turn(pi, own, "run-3", "Third question");
+		pi.db.exec("UPDATE runs SET finished_at = 0");
+		const before = dump(pi.db);
+		const store = new RunStore(pi.storage);
+		const prune = () => pi.db.prepare("SELECT id, prune FROM runs ORDER BY id").all();
+
+		for (const run of ["run-1", "run-2", "run-3"]) store.pruneRecords(run, 500);
+		expect(prune()).toEqual([
+			{ id: "run-1", prune: "done" },
+			{ id: "run-2", prune: "done" },
+			{ id: "run-3", prune: "pi" },
+		]);
+		for (let step = store.prunePi("run-3", own, 5); step.kind !== "gone"; step = store.prunePi("run-3", own, 5)) expect(step.kind).toBe("deleted");
+		// A run naming the conversation's pi conversation that an older version left in its pi stage is done at once.
+		pi.db.exec("UPDATE runs SET prune = 'pi' WHERE id = 'run-2'");
+		expect(store.prunePi("run-2", shared, 5)).toEqual({ kind: "gone" });
+		expect(prune()).toEqual([
+			{ id: "run-1", prune: "done" },
+			{ id: "run-2", prune: "done" },
+			{ id: "run-3", prune: "done" },
+		]);
+		expect(dump(pi.db)).toEqual(without(before, own));
+
+		// Named by no run, it is still the conversation's, so never an orphan.
+		pi.db.exec("DELETE FROM runs");
+		expect(orphanPiSession(pi.storage.sql)).toBeNull();
+		pi.db.exec("UPDATE conversation SET pi_session = NULL");
+		expect(orphanPiSession(pi.storage.sql)).toBe(shared);
 	});
 });

@@ -113,10 +113,10 @@ export function deletePiSession(sql: SqlStorage, session: number, limit: number)
 }
 
 /**
- * The first pi conversation no run names, other than pi's root and those in `skipped`, that nothing owns: a session a reset
- * left between its creation and its claim (conversation.ts `#startLoop`), or one a later run's prune left part-deleted.
- * Only while no run is active is such a session certain to be no one's: an acting run's loop is what creates and claims
- * sessions.
+ * The first pi conversation no run names, other than pi's root, the conversation's own and those in `skipped`, that
+ * nothing owns: a session a reset left between its creation and its claim (conversation.ts `#startLoop`), or one a later
+ * run's prune left part-deleted. Only while no run is active is such a session certain to be no one's: an acting run's
+ * loop is what creates and claims sessions.
  */
 export function orphanPiSession(sql: SqlStorage, skipped: readonly number[] = []): number | null {
 	if (schemaVersion(sql) !== PI_SCHEMA_VERSION) return null;
@@ -126,6 +126,7 @@ export function orphanPiSession(sql: SqlStorage, skipped: readonly number[] = []
 			`SELECT id FROM pi_conversations AS pi
 			WHERE id != ? AND owner_conversation_id IS NULL AND owner_task_id IS NULL
 				AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.session = CAST(pi.id AS TEXT))
+				AND CAST(pi.id AS TEXT) IS NOT (SELECT pi_session FROM conversation)
 				AND id NOT IN (SELECT value FROM json_each(?))
 			ORDER BY id LIMIT 1`,
 			ROOT_CONVERSATION_ID,

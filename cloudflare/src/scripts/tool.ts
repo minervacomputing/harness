@@ -9,10 +9,11 @@
 // "The script printed and returned nothing."; `isError` when the script failed. A result past 1 MiB is cut
 // as pi cuts it, with pi's note (scripts/output.ts).
 //
-// `store()` values live in a pi document of the run's own pi conversation (one per run, so one per turn),
-// saved only when the script succeeded: committed with the turn's state, so a resumed attempt's scripts see
-// them. Its entries are `[key, JSON text]` pairs: pairs so a key such as `__proto__` stays a key, and text
-// so pi's own reading of its rows (JSON.parse, lib/json.ts) never meets a value's keys.
+// `store()` values live in a pi document of the conversation's pi conversation, tagged with the run that saved
+// them, so they last one turn: a script reads them only when the tag is its own run's, and a later run's first
+// save replaces them. Saved only when the script succeeded: committed with the turn's state, so a resumed
+// attempt's scripts see them. Its entries are `[key, JSON text]` pairs: pairs so a key such as `__proto__` stays
+// a key, and text so pi's own reading of its rows (JSON.parse, lib/json.ts) never meets a value's keys.
 
 import type { TSchema } from "@earendil-works/pi-ai";
 import { defineDoc, type ToolExecutionApi, type ToolExecutionResult, type ToolRegistration } from "@earendil-works/pi-durable";
@@ -35,8 +36,11 @@ import type { ScriptControl, ScriptTools } from "./target.ts";
 type Context = Parameters<ToolRegistration["execute"]>[2];
 
 
-/** The turn's `store()` values, in the run's pi conversation. */
-export const SCRIPT_STORE = defineDoc<{ entries: [string, string][] }>({
+/**
+ * The turn's `store()` values, in the conversation's pi conversation, and the run that saved them (none when an earlier
+ * version saved them).
+ */
+export const SCRIPT_STORE = defineDoc<{ entries: [string, string][]; run?: string }>({
 	kind: "minerva.script-store",
 	version: 1,
 	scope: "conversation",
@@ -80,9 +84,9 @@ const PARAMETERS = {
 } as const;
 
 /** The values earlier scripts of this run stored, as the guest gets them: `[key, JSON text]`. */
-export async function loadStore(api: Pick<ToolExecutionApi, "snapshot" | "conversationId">, context: Context): Promise<[string, string][]> {
+export async function loadStore(api: Pick<ToolExecutionApi, "snapshot" | "conversationId">, runId: RunId, context: Context): Promise<[string, string][]> {
 	const doc = await api.snapshot(SCRIPT_STORE, api.conversationId, context);
-	return (doc?.entries ?? []).map(([key, json]) => [key, json]);
+	return doc?.run === runId ? doc.entries.map(([key, json]) => [key, json]) : [];
 }
 
 class TooLarge extends Error {}
@@ -97,6 +101,7 @@ function storeBytes(entries: ReadonlyMap<string, string>): number {
 /** Saves what a script stored: deletes, then sets, each value's JSON written again as JavaScript writes it. Returns why it was not kept, if it was not. */
 export async function saveStore(
 	api: Pick<ToolExecutionApi, "commit" | "conversationId">,
+	runId: RunId,
 	writes: ScriptResult["storeWrites"],
 	context: Context,
 ): Promise<string | undefined> {
@@ -114,11 +119,12 @@ export async function saveStore(
 	try {
 		await api.commit(async (tx) => {
 			const doc = await tx.doc(SCRIPT_STORE, api.conversationId);
-			const values = new Map<string, string>(doc.entries.map(([key, json]) => [key, json]));
+			const values = new Map<string, string>(doc.run === runId ? doc.entries.map(([key, json]) => [key, json]) : []);
 			for (const key of writes.delete) values.delete(key);
 			for (const [key, json] of set) values.set(key, json);
 			if (storeBytes(values) > STORE_BYTES) throw new TooLarge();
 			doc.entries = [...values];
+			doc.run = runId;
 		}, context);
 	} catch (error) {
 		if (!(error instanceof TooLarge)) throw error;
@@ -165,7 +171,7 @@ export function scriptTool(listed: readonly ToolDeclaration[], host: ScriptToolH
 			if (run === null) return { output: [{ type: "text", text: RUN_ENDED_MESSAGE }], isError: true };
 			const { fence } = run;
 			const code = String((args as { code?: unknown } | null)?.code ?? "");
-			const store = await loadStore(api, context);
+			const store = await loadStore(api, fence.runId, context);
 			// The run may have ended while the store loaded: the record's fence check is the last before the script runs.
 			const script = { ...fence, scriptId: uuid7() };
 			const timeoutMs = scriptTimeoutMs(run.deadline);
@@ -194,7 +200,7 @@ export function scriptTool(listed: readonly ToolDeclaration[], host: ScriptToolH
 				} finally {
 					await host.end(script);
 				}
-				return await render(result, (writes) => saveStore(api, writes, context));
+				return await render(result, (writes) => saveStore(api, fence.runId, writes, context));
 			} finally {
 				host.ended(fence.runId, api.callId);
 			}

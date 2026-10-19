@@ -126,14 +126,14 @@ function userText(message: Message | undefined): string {
 	return typeof message.content === "string" ? message.content : message.content.map((part) => (part.type === "text" ? part.text : "")).join("");
 }
 
-/** The note a message with attachments ends with (history.ts `withFiles`), after the script. */
-const ATTACHED_NOTE = "\n\n[The user attached ";
+/** How the notes a run's message ends with start, after the script: its attachments' and its time's (internal/start.ts `promptOf`). */
+const NOTE = "\n\n[The user ";
 
-/** The script a prompt carries as `{"fake": …}` (before the note on a message's attachments), else the default. */
+/** The script a prompt carries as `{"fake": …}` (before the notes on a message's attachments and time), else the default. */
 export function scriptOf(context: TranscriptContext): FakeScript {
 	const last = [...context.messages].reverse().find((message) => message.role === "user");
 	const text = userText(last);
-	const noted = text.indexOf(ATTACHED_NOTE);
+	const noted = text.indexOf(NOTE);
 	let parsed: Json;
 	try {
 		parsed = parseJson(noted < 0 ? text : text.slice(0, noted));

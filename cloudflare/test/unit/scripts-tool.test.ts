@@ -10,7 +10,7 @@ import { HEAD_CHARS } from "../../src/scripts/limits.ts";
 import { piece } from "../../src/scripts/output.ts";
 import type { ScriptResult } from "../../src/scripts/run.ts";
 import { loadStore, render, saveStore, SCRIPT_STORE, scriptTool, type ScriptToolHost } from "../../src/scripts/tool.ts";
-import type { AttemptFence } from "../../src/shared/rpc.ts";
+import type { AttemptFence, RunId } from "../../src/shared/rpc.ts";
 import { declaration } from "./scripts-support.ts";
 
 /** The description pi-codemode's host gives, lines before the declarations. */
@@ -167,7 +167,7 @@ describe("what the model sees", () => {
 
 /** A pi conversation's documents as the tool's api sees them. */
 function api() {
-	let stored: { entries: [string, string][] } | null = null;
+	let stored: { entries: [string, string][]; run?: string } | null = null;
 	const context = {} as never;
 	return {
 		get stored() {
@@ -178,7 +178,7 @@ function api() {
 			expect(token).toBe(SCRIPT_STORE);
 			return stored ? structuredClone(stored) : undefined;
 		},
-		commit: async <T>(change: (tx: { doc: (token: unknown) => Promise<{ entries: [string, string][] }> }) => T | Promise<T>) => {
+		commit: async <T>(change: (tx: { doc: (token: unknown) => Promise<{ entries: [string, string][]; run?: string }> }) => T | Promise<T>) => {
 			const draft = stored ? structuredClone(stored) : { entries: [] as [string, string][] };
 			const answer = await change({ doc: async () => draft });
 			stored = draft;
@@ -189,28 +189,48 @@ function api() {
 }
 
 describe("the store", () => {
+	const RUN = "run-1" as RunId;
+
 	test("saved as pairs of JSON texts, deletes before sets, and read back as the guest gets it", async () => {
 		const a = api();
-		expect(await saveStore(a as never, { set: [["a", '{"n": 1.0}'], ["__proto__", "[1]"]], delete: [] }, a.context)).toBeUndefined();
-		expect(a.stored).toEqual({ entries: [["a", '{"n":1}'], ["__proto__", "[1]"]] });
-		expect(await saveStore(a as never, { set: [["b", "2"], ["a", "3"]], delete: ["a", "__proto__"] }, a.context)).toBeUndefined();
-		expect(await loadStore(a as never, a.context)).toEqual([
+		expect(await saveStore(a as never, RUN, { set: [["a", '{"n": 1.0}'], ["__proto__", "[1]"]], delete: [] }, a.context)).toBeUndefined();
+		expect(a.stored).toEqual({ entries: [["a", '{"n":1}'], ["__proto__", "[1]"]], run: RUN });
+		expect(await saveStore(a as never, RUN, { set: [["b", "2"], ["a", "3"]], delete: ["a", "__proto__"] }, a.context)).toBeUndefined();
+		expect(await loadStore(a as never, RUN, a.context)).toEqual([
 			["b", "2"],
 			["a", "3"],
 		]);
-		expect(await saveStore(a as never, EMPTY, a.context)).toBeUndefined();
+		expect(await saveStore(a as never, RUN, EMPTY, a.context)).toBeUndefined();
+	});
+
+	test("lasts one run in the conversation's one pi conversation: a later run reads nothing, and its save replaces the values", async () => {
+		const A = "run-a" as RunId;
+		const B = "run-b" as RunId;
+		const a = api();
+		expect(await saveStore(a as never, A, { set: [["a", "1"]], delete: [] }, a.context)).toBeUndefined();
+		expect(await loadStore(a as never, A, a.context)).toEqual([["a", "1"]]);
+		expect(await loadStore(a as never, B, a.context)).toEqual([]);
+		expect(await saveStore(a as never, B, { set: [["b", "2"]], delete: [] }, a.context)).toBeUndefined();
+		expect(a.stored).toEqual({ entries: [["b", "2"]], run: B });
+		expect(await loadStore(a as never, A, a.context)).toEqual([]);
+		// Values an earlier version saved, with no run, are no run's.
+		const untagged = api();
+		await untagged.commit(async (tx) => {
+			(await tx.doc(SCRIPT_STORE)).entries = [["old", "0"]];
+		});
+		expect(await loadStore(untagged as never, A, untagged.context)).toEqual([]);
 	});
 
 	test("refusals: a value that is not JSON, and more than 1 MiB of JSON in all", async () => {
 		const a = api();
-		expect(await saveStore(a as never, { set: [["a", "{"]], delete: [] }, a.context)).toBe("What the script passed to `store()` was not kept: a value could not be converted to JSON.");
+		expect(await saveStore(a as never, RUN, { set: [["a", "{"]], delete: [] }, a.context)).toBe("What the script passed to `store()` was not kept: a value could not be converted to JSON.");
 		const big = JSON.stringify("é".repeat(200_000));
 		const set: [string, string][] = [0, 1, 2].map((i) => [`k${i}`, big]);
-		expect(await saveStore(a as never, { set, delete: [] }, a.context)).toBe("What the script passed to `store()` was not kept: the stored values would take more than 1 MiB.");
+		expect(await saveStore(a as never, RUN, { set, delete: [] }, a.context)).toBe("What the script passed to `store()` was not kept: the stored values would take more than 1 MiB.");
 		expect(a.stored).toBeNull();
 		// Exactly 1 MiB of `{"k":"…"}` is kept.
 		const exact = JSON.stringify("x".repeat(1024 * 1024 - 8));
-		expect(await saveStore(a as never, { set: [["k", exact]], delete: [] }, a.context)).toBeUndefined();
+		expect(await saveStore(a as never, RUN, { set: [["k", exact]], delete: [] }, a.context)).toBeUndefined();
 		expect(new TextEncoder().encode(JSON.stringify({ k: JSON.parse(exact) })).length).toBe(1024 * 1024);
 	});
 });

@@ -102,6 +102,9 @@ export interface ConversationRow {
 	deleted_at: number | null;
 	/** The organization of a conversation Laravel's commands made; null for the Workspace's. */
 	organization_id: string | null;
+	/** The conversation's pi conversation, as `runs.session` names it, and its provider session; null until a run creates it. */
+	pi_session: string | null;
+	pi_provider_session: string | null;
 	[key: string]: SqlStorageValue;
 }
 
@@ -717,8 +720,8 @@ export class RunStore {
 			for (;;) {
 				const inserted = this.#sql
 					.exec<{ call: string }>(
-						`INSERT INTO call_records (run_id, call, attempt, instance, provider, model, reserved_input, reserved_output, created_at, rates, prices)
-						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING call`,
+						`INSERT INTO call_records (run_id, call, attempt, instance, provider, model, reserved_input, reserved_output, created_at, rates, prices, summary)
+						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING RETURNING call`,
 						fence.runId,
 						tokenHex(4),
 						fence.attempt,
@@ -730,6 +733,7 @@ export class RunStore {
 						this.now(),
 						price === null ? null : JSON.stringify(price.rates),
 						price?.version ?? null,
+						request.summary ? 1 : 0,
 					)
 					.toArray()[0];
 				if (!inserted) continue;
@@ -963,7 +967,7 @@ export class RunStore {
 	/**
 	 * One step of a run's own records' deletion, at most `limit` rows in RUN_RECORDS' order. The first empties its snapshot
 	 * and sets it `records`; the step that finds fewer than `limit` left has deleted the last, and moves it to `pi`, or
-	 * `done` when it has no pi session.
+	 * `done` when it has no pi session of its own: none, or the conversation's, which only the purge deletes.
 	 */
 	pruneRecords(runId: RunId, limit: number): void {
 		this.write(() => {
@@ -974,14 +978,23 @@ export class RunStore {
 				const query = `DELETE FROM ${table} WHERE run_id = ?1 AND ${key} IN (SELECT ${key} FROM ${table} WHERE run_id = ?1 ORDER BY ${key} LIMIT ?2) RETURNING 1`;
 				left -= this.#sql.exec(query, runId, left).toArray().length;
 			}
-			if (left > 0) this.#sql.exec("UPDATE runs SET prune = CASE WHEN session IS NULL THEN 'done' ELSE 'pi' END WHERE id = ? AND prune = 'records'", runId);
+			if (left > 0) {
+				this.#sql.exec(
+					"UPDATE runs SET prune = CASE WHEN session IS NULL OR session = (SELECT pi_session FROM conversation) THEN 'done' ELSE 'pi' END WHERE id = ? AND prune = 'records'",
+					runId,
+				);
+			}
 		});
 	}
 
-	/** One step of the deletion of a run's pi session (pi-tables.ts); the step that finds nothing left sets the run `done`. */
+	/**
+	 * One step of the deletion of a run's pi session (pi-tables.ts); the step that finds nothing left sets the run `done`. The
+	 * conversation's pi conversation is never deleted here, only by the purge: a run naming it, which an older version left
+	 * in `pi`, is set `done` at once.
+	 */
 	prunePi(runId: RunId, session: number, limit: number): PiStep {
 		return this.write(() => {
-			const step = deletePiSession(this.#sql, session, limit);
+			const step: PiStep = String(session) === this.conversation()?.pi_session ? { kind: "gone" } : deletePiSession(this.#sql, session, limit);
 			if (step.kind === "gone") this.#sql.exec("UPDATE runs SET prune = 'done' WHERE id = ? AND prune = 'pi'", runId);
 			return step;
 		});

@@ -255,6 +255,42 @@ describe("stopping pi's work by its run, on one session two runs share", () => {
 		expect(pi.logged).toEqual([]);
 	});
 
+	test("a settle whose first reading went stale, as A's generation handed its run to a successor, marks again until a mark finds nothing", async () => {
+		const pi = await openPi();
+		// A's successor calls the held tool again, so it stays live until it is marked.
+		pi.faux.setResponses([call("hold"), call("hold")]);
+		pi.act(A);
+		const aStarted = started();
+		await submit(pi, A, "Hold");
+		const held = await aStarted;
+		const generations = async () =>
+			(await pi.storage.scanTasks({ conversationId: pi.session, order: "ascending" }, 100, undefined, BG)).items.filter((task) => task.kind === "pi.generation");
+		const [first] = await generations();
+
+		// The first reading is taken while A's first generation is live, and returned only once a successor holds A's run.
+		pi.act(B);
+		let reads = 0;
+		const stale: Pick<Harness, "inspect" | "abortTask" | "waitForTask"> = {
+			inspect: async (context) => {
+				const reading = await pi.harness.inspect(context);
+				if (reads++ > 0) return reading;
+				expect(reading.tasks.map((task) => task.record.id)).toContain(first?.id);
+				held.release();
+				await expect.poll(async () => (await generations()).map((task) => task.state.status !== "terminal")).toEqual([false, true]);
+				return reading;
+			},
+			abortTask: (task, context) => pi.harness.abortTask(task, context),
+			waitForTask: (task, context) => pi.harness.waitForTask(task, context),
+		};
+		await pi.stops.settle(stale);
+
+		expect((await pi.harness.inspect(BG)).tasks.filter((task) => !task.record.background)).toEqual([]);
+		const [, successor] = await generations();
+		expect([successor?.state.status, successor?.abortRequested]).toEqual(["terminal", true]);
+		expect(await status(pi, A)).toBe("unanswered");
+		expect(pi.logged).toEqual([]);
+	});
+
 	test("deletion's settle waits for a held tool task an earlier stop already marked, and answers only once it is terminal", async () => {
 		const pi = await openPi();
 		pi.faux.setResponses([call("stubborn")]);

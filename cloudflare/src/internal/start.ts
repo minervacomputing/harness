@@ -10,7 +10,9 @@ import type { GrantRow, LayerRows, Level, RunLayers } from "../gateway/grants.ts
 import type { Registry } from "../gateway/registry.ts";
 import { COMPILER_VERSION, type ConnectionInfo, type StartSnapshot, startSnapshot } from "../gateway/tools.ts";
 import { hashInput } from "../lib/canonical.ts";
+import { runStartLabel } from "../lib/dates.ts";
 import { sha256Hex } from "../lib/hash.ts";
+import type { EpochMs } from "../shared/rpc.ts";
 import { catalogVersion } from "./catalog.ts";
 
 /** A start's compiled parts, kept from its first try until it is answered. */
@@ -132,9 +134,15 @@ export async function prepareStart(registry: Registry, command: StartRun, option
 	};
 }
 
-/** The run's prompt: the message with its note naming the attachments as the folder holds them. */
-export function promptOf(content: string, attachments: readonly Attachment[]): string {
-	return withFiles({ role: "user", content, attachments: [...attachments], changes: null });
+/**
+ * The run's prompt: the message with its note naming the attachments as the folder holds them, then a note with the run's
+ * start time. Models do not know the date, and calendar questions are relative to it; it is here and not in the
+ * instructions, which then stay the same from run to run.
+ */
+export function promptOf(content: string, attachments: readonly Attachment[], createdAt: EpochMs): string {
+	const message = withFiles({ role: "user", content, attachments: [...attachments], changes: null });
+	const sent = `[The user sent this message on ${runStartLabel(createdAt)} UTC.]`;
+	return message ? `${message}\n\n${sent}` : sent;
 }
 
 /** startRun's input as the recovery index records it: 64 hex of SHA-256 over its canonical JSON. */

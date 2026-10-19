@@ -13,7 +13,7 @@ import { durableStorage, openDatabase } from "./sqlite.ts";
 const GLM: RoutePrices = { provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash", input: 150_000, cachedInput: 30_000, cacheWrite: 150_000, output: 500_000 };
 const RUN = "0190a000-0000-7000-8000-000000000001";
 const FENCE = { runId: RUN, attempt: 1 };
-const REQUEST = { provider: GLM.provider, model: GLM.model, reserved: reservation(8192) };
+const REQUEST = { provider: GLM.provider, model: GLM.model, reserved: reservation(8192), summary: false };
 
 async function pricesFor(route: RoutePrices): Promise<Prices> {
 	const table = priceTable(route);

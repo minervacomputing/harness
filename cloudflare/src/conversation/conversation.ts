@@ -492,7 +492,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					baseVersionId,
 					attachments,
 					limits: { folderBytes: config.files.folderBytes, folderEntries: config.files.folderEntries, runUploadBytes: config.files.runUploadBytes },
-					turn: { history: preparation.history, prompt: internalPrompt(command.message.content, attachments) },
+					turn: { history: preparation.history, prompt: internalPrompt(command.message.content, attachments, preparation.snapshot.createdAt) },
 				};
 				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now, allowance: command.allowance ?? null });
 				this.#store.append(runId, statusEvent({ status: "queued" }));

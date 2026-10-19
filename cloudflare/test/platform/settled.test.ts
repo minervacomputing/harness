@@ -148,7 +148,7 @@ describe("run.settled", () => {
 		// by a store of their own; and a container that ran ten seconds. The test build charges the fake model 1 µ$ a token,
 		// and time 1 µ$ a millisecond and 1,000 µ$ a script (src/faults/prices.ts).
 		const fence = { runId: start.run, attempt: 1 };
-		const request = { provider: "fake", model: "fake-1", reserved: { input: 10, output: 5 } };
+		const request = { provider: "fake", model: "fake-1", reserved: { input: 10, output: 5 }, summary: false };
 		const prices = await pricesOf(env);
 		const at = Date.now();
 		await runInDurableObject(objectOf(start), (_instance, state) => {

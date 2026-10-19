@@ -261,7 +261,7 @@ describe("model call settlements", () => {
 		await commands.startRun(start);
 		await until(() => runStatus(start), (status) => status === "running");
 		const fence = { runId: start.run, attempt: 1 };
-		const request = { provider, model: "fake-1", reserved: { input: 10, output: 5 } };
+		const request = { provider, model: "fake-1", reserved: { input: 10, output: 5 }, summary: false };
 		// Recorded by a store other than the live instance's, which its run's settlement would settle as lost: the run owes none.
 		const call = await runInDurableObject(objectOf(start), (_instance, state) => {
 			state.storage.sql.exec("UPDATE runs SET metered = 0 WHERE id = ?", start.run);
@@ -302,7 +302,7 @@ describe("model call settlements", () => {
 		await commands.startRun(start);
 		await until(() => runStatus(start), (status) => status === "running");
 		const fence = { runId: start.run, attempt: 1 };
-		const request = { provider, model: "fake-1", reserved: { input: 10, output: 5 } };
+		const request = { provider, model: "fake-1", reserved: { input: 10, output: 5 }, summary: false };
 		const script = (scriptId: string) => ({ ...fence, scriptId });
 		// Two instances' records, as far as the rule can tell: `mine` stands for the instance that recovers. Of the gone
 		// instance's scripts, one started long enough ago that its clock ran out.

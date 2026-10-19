@@ -97,6 +97,8 @@ describe("the compile", () => {
 		expect(prepared.snapshot.connectionIds).toEqual([MINE]);
 		expect(prepared.catalog).toBe((await catalogOf(registry)).version);
 		expect(prepared.compiler).toBe(COMPILER_VERSION);
+		// Raised when the instructions lost the start time.
+		expect(COMPILER_VERSION).toBe("3");
 	});
 
 	test("its digest names the snapshot: the same compile has the same one, another compile another", async () => {
@@ -158,9 +160,15 @@ describe("the message", () => {
 		expect(messageRefusal(message("Hi", []), limits)).toBeNull();
 	});
 
-	test("prompts with a note naming its attachments as the folder holds them", () => {
-		expect(promptOf("Read these", [{ path: "a (2).txt", size: 1, mediaType: "text/plain" }])).toBe("Read these\n\n[The user attached a (2).txt to this message, in your folder.]");
-		expect(promptOf("Hello", [])).toBe("Hello");
+	test("prompts with a note naming its attachments as the folder holds them, then one with the run's start in UTC", () => {
+		// Monday, 2026-10-12 14:03:59 UTC.
+		const at = Date.UTC(2026, 9, 12, 14, 3, 59);
+		const sent = "[The user sent this message on Monday, 2026-10-12 14:03 UTC.]";
+		expect(promptOf("Read these", [{ path: "a (2).txt", size: 1, mediaType: "text/plain" }], at)).toBe(
+			`Read these\n\n[The user attached a (2).txt to this message, in your folder.]\n\n${sent}`,
+		);
+		expect(promptOf("Hello", [], at)).toBe(`Hello\n\n${sent}`);
+		expect(promptOf("", [{ path: "a.txt", size: 1, mediaType: "text/plain" }], at)).toBe(`[The user attached a.txt to this message, in your folder.]\n\n${sent}`);
 	});
 
 	test("the input's digest names the whole command", async () => {

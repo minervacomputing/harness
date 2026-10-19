@@ -168,7 +168,7 @@ describe("a call", () => {
 		const { host, models } = setup();
 		const message = await ask(models, prompt({ turns: [{ thinking: "Hm", text: "Hello", usage: { input: 7, output: 3 } }] }));
 		expect(message.content.filter((block) => block.type === "text")).toEqual([{ type: "text", text: "Hello" }]);
-		expect(host.records).toEqual([{ provider: "fake", model: "fake-1", reserved: { input: 128_000, output: 1000 } }]);
+		expect(host.records).toEqual([{ provider: "fake", model: "fake-1", reserved: { input: 128_000, output: 1000 }, summary: false }]);
 		const segments = host.published.flatMap(([, published]) => published);
 		expect(segments.filter(([kind]) => kind === "reasoning").map(([, text]) => text).join("")).toBe("Hm");
 		expect(segments.filter(([kind]) => kind === "text").map(([, text]) => text).join("")).toBe("Hello");
@@ -262,14 +262,14 @@ describe("a call", () => {
 		]);
 	});
 
-	test("a compaction's summary is not published as answer text, but is counted and metered", async () => {
+	test("a compaction's summary is not published as answer text, but is counted and metered, and recorded as a summary", async () => {
 		const { host, models } = setup({ script: () => ({ turns: [{ text: "Summary." }] }) });
 		await ask(models, [
 			{ role: "system", content: `${COMPACTION_PROMPT_START} Your task is…`, timestamp: 1 },
 			{ role: "user", content: "Summarize", timestamp: 1 },
 		]);
 		expect(host.published).toEqual([]);
-		expect(host.counts).toBe(1);
+		expect(host.records.map((request) => request.summary)).toEqual([true]);
 		expect(host.settlements.map(({ settlement }) => settlement.outcome)).toEqual(["reported"]);
 	});
 });

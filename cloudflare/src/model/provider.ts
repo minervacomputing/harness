@@ -118,6 +118,8 @@ export interface CallRequest {
 	model: string;
 	/** What the call is counted at if it settles unmetered (policy.ts `reservation`). */
 	reserved: { input: number; output: number };
+	/** The call writes a compaction's summary (policy.ts `isCompaction`). */
+	summary: boolean;
 }
 
 /**
@@ -314,7 +316,7 @@ function wrapped(context: TranscriptContext, streamOptions: SimpleStreamOptions 
 	(async () => {
 		let recorded: string | null;
 		try {
-			recorded = await options.host.record(fence, { provider: route.provider, model: upstream.model.id, reserved: reservation(cap) });
+			recorded = await options.host.record(fence, { provider: route.provider, model: upstream.model.id, reserved: reservation(cap), summary: !publish });
 		} catch (error) {
 			options.host.log(`A model call could not be recorded (${errorClass(error) ?? "an error"}).`);
 			return endWith(out, failed(PROVIDER_ERROR, self));

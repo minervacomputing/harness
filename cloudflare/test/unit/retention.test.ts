@@ -236,6 +236,22 @@ describe("a run's prune", () => {
 		// Due and blocked: looked at again a day later.
 		expect(host.scheduled).toEqual([30 * DAY + RETENTION.blockedMs]);
 	});
+
+	test("of a run naming the conversation's pi conversation ends with its records, and one with its own session goes on to pi", async () => {
+		db.prepare("UPDATE conversation SET pi_session = '7'").all();
+		ended("a", "7", 0, 2);
+		ended("b", "8", 0, 2);
+		now = 30 * DAY;
+		await retention.pass();
+		expect([host.steps, state(), events()]).toEqual([
+			["runs", "runs", "pi"],
+			[
+				{ id: "a", prune: "done", pruned_at: 30 * DAY, snapshot: "" },
+				{ id: "b", prune: "pi", pruned_at: 30 * DAY, snapshot: "" },
+			],
+			[],
+		]);
+	});
 });
 
 describe("a deleted conversation's purge", () => {

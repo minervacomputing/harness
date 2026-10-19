@@ -1,10 +1,11 @@
 // Where model requests go: routes from the settings, the fake for tests and a test deployment,
-// and never the account's default AI Gateway.
+// and never the account's default AI Gateway; and the cache key and affinity createAI sends with them.
 
-import type { Message, TranscriptContext } from "@earendil-works/pi-ai";
+import type { Message, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
 import { describe, expect, test } from "vitest";
 import { parse } from "../../src/config.ts";
 import { DEFAULT_SCRIPT, FAKE_PROVIDER, fakeUpstream, scriptOf, stepOf } from "../../src/model/fake.ts";
+import { COMPACTION_PROMPT_START } from "../../src/model/policy.ts";
 import { CONTEXT_WINDOW, type ModelRoute, QUIET_MS, routeOf, upstreamOf } from "../../src/model/route.ts";
 import { settingsEnv } from "./settings.ts";
 
@@ -61,6 +62,42 @@ describe("routes", () => {
 		for (const route of [{}, { provider: "anthropic", name: "claude-test" }, { provider: "openai", api: "chat" }, { provider: "openai", api: "responses" }] as Partial<ModelRoute>[]) {
 			expect(options(route)).toMatchObject({ streamIdleTimeoutMs: 120_000 });
 		}
+	});
+});
+
+describe("the cache key and affinity", () => {
+	test("createAI sends the call's session as Workers AI's affinity and as the Responses API's cache key, summary calls included", async () => {
+		// What createAI hands the binding: Workers AI's headers, and the body it sends through AI Gateway's universal endpoint.
+		const sent: { affinity?: string; key?: string }[] = [];
+		const refused = () => new Response(JSON.stringify({ error: { message: "No key.", type: "invalid_request_error", code: "invalid_api_key" } }), { status: 401, headers: { "content-type": "application/json" } });
+		const binding = {
+			aiGatewayLogId: null,
+			run: async (_model: string, _input: unknown, options: { extraHeaders?: { [name: string]: string } }) => {
+				sent.push({ affinity: options.extraHeaders?.["x-session-affinity"] });
+				return refused();
+			},
+			gateway: () => ({
+				run: async (request: { query: { prompt_cache_key?: string } }) => {
+					sent.push({ key: request.query.prompt_cache_key });
+					return refused();
+				},
+			}),
+		} as unknown as Ai;
+		const session = "0199a000-0000-7000-8000-0000000000f1";
+		const turn = { messages: [{ role: "user", content: "Hi", timestamp: 1 }] } as TranscriptContext;
+		// As pi's compaction asks for a summary (harness/compaction.js).
+		const summary = { messages: [{ role: "system", content: `${COMPACTION_PROMPT_START} Your task is…`, timestamp: 1 }, ...turn.messages] } as TranscriptContext;
+		const workersAI = routeOf(parse(settingsEnv()));
+		const responses = routeOf(parse(settingsEnv({ MINERVA_MODEL_PROVIDER: "openai", MINERVA_MODEL_NAME: "gpt-5-mini", MINERVA_MODEL_API: "responses" })));
+		for (const route of [workersAI, responses]) {
+			const upstream = upstreamOf(route, binding);
+			const calls: [TranscriptContext, SimpleStreamOptions][] = [
+				[turn, { sessionId: session }],
+				[summary, { sessionId: session, cacheRetention: "none" }],
+			];
+			for (const [context, options] of calls) await upstream.provider.streamSimple(upstream.model, context, { ...upstream.options, ...options }).result();
+		}
+		expect(sent).toEqual([{ affinity: session }, { affinity: session }, { key: session }, { key: session }]);
 	});
 });
 

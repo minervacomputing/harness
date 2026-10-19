@@ -276,12 +276,11 @@ const HOLD = fauxAssistantMessage(fauxToolCall("hold", {}), { stopReason: "toolU
 
 /**
  * pi and the Conversation's store on one storage, as the object holds them, with admission's reads built as the
- * Conversation builds them and an entry counter. Its runs share pi's session, which chunk 19b's schema allows.
+ * Conversation builds them and an entry counter. Its runs share pi's session, which the schema allows since step 16.
  */
 async function admission() {
 	const db = openDatabase();
 	for (const migration of MIGRATIONS) db.exec(migration.sql);
-	db.exec("DROP INDEX runs_session");
 	db.prepare("INSERT INTO conversation (singleton, id, workspace_id, user_id, agent_id, created_at, updated_at, organization_id) VALUES (1, 'c', 'w', '', '', 0, 0, 'o')").all();
 	const storage = durableStorage(db);
 	const store = new RunStore(storage);

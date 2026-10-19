@@ -15,7 +15,7 @@ import { durableStorage, openDatabase } from "./sqlite.ts";
 const ROUTE: RoutePrices = { provider: "fake", model: "fake-1", input: 1_000_000, cachedInput: 1_000_000, cacheWrite: 1_000_000, output: 1_000_000 };
 const RUN = "0190a000-0000-7000-8000-000000000001";
 const FENCE = { runId: RUN, attempt: 1 };
-const REQUEST = { provider: ROUTE.provider, model: ROUTE.model, reserved: reservation(8192) };
+const REQUEST = { provider: ROUTE.provider, model: ROUTE.model, reserved: reservation(8192), summary: false };
 const MESSAGE = "This conversation reached its budget.";
 
 let db: ReturnType<typeof openDatabase>;
@@ -117,4 +117,10 @@ test("a run without an allowance admits every call, whatever it spent", () => {
 	expect(store.recordModelCall(FENCE, REQUEST, prices)).not.toBeNull();
 	expect(run()).toMatchObject({ status: "running", model_calls: 2, spent: 1_000_000_000 });
 	expect(finished()).toEqual([]);
+});
+
+test("a call record says whether the call made a compaction's summary", () => {
+	const calls = [store.recordModelCall(FENCE, REQUEST, prices), store.recordModelCall(FENCE, { ...REQUEST, summary: true }, prices)];
+	const summary = (call: string | null) => (db.prepare("SELECT summary FROM call_records WHERE call = ?").all(call)[0] as { summary: number }).summary;
+	expect(calls.map(summary)).toEqual([0, 1]);
 });

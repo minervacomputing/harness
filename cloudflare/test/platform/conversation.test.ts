@@ -669,16 +669,19 @@ describe("the model", () => {
 		await settled(stub, start.run);
 		const context = fakes.contexts.at(-1) as TranscriptContext;
 		const turns = context.messages.filter((item) => item.role !== "system").map((item) => [item.role, item.role === "assistant" ? item.content : (item as { content: unknown }).content]);
+		// The run's message ends with its start time, which the instructions no longer hold, so they stay the same from run to run.
+		const time = /\d{4}-\d\d-\d\d \d\d:\d\d/;
 		expect(turns).toEqual([
 			["user", "First question"],
 			["assistant", [{ type: "text", text: "Done." }]],
-			["user", "Second question"],
+			["user", expect.stringMatching(new RegExp(`^Second question\\n\\n\\[The user sent this message on \\w+, ${time.source} UTC\\.\\]$`))],
 		]);
 		// pi writes the instructions after the replayed history and the run's input, and moves them to the front.
 		expect(context.messages.map((item) => item.role)).toEqual(["system", "user", "assistant", "user"]);
 		const system = context.messages.filter((item) => item.role === "system");
 		// With the local tools, the folder's paragraph follows the agent's instructions after a blank line.
 		expect(JSON.stringify(system)).toContain(JSON.stringify(`\n\n${start.agent.instructions}\n\n${FOLDER_INSTRUCTIONS}\n</instructions>`).slice(1, -1));
+		expect(JSON.stringify(system)).not.toMatch(time);
 	});
 
 	test("a provider's error text never reaches the run or Laravel, and the run fails", async () => {
