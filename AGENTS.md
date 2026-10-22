@@ -69,7 +69,7 @@ This project does not use pull requests. Commit directly to `main` (or merge a s
 
 `main` is the engine. A push to `main` that changes the engine (`cloudflare/`, `contract/`, `.github/workflows/`, `package.json`, `pnpm-lock.yaml` or `pnpm-workspace.yaml`) runs `.github/workflows/main.yml`: the contract's types and OpenAPI documents, the engine's types and unit tests (job `check`) and its platform tests (job `platform`). The account suites against the CI-only test instance `minerva-cf-ci` run in `.github/workflows/account.yml`, nightly when the engine changed that day and by hand (`gh workflow run account.yml`), not on every push (cloudflare/README.md, CI's test instance). Production and staging deploy only from a commit whose engine has green runs of `main.yml` and `account.yml`, which `pnpm run deploy` checks itself (`cloudflare/scripts/ci-gate.ts`), so a commit outside the engine's paths, such as one to `docs/` or `AGENTS.md`, needs no new run. `minerva-cf-test` is the test instance that `pnpm check` and the account suites deploy. When the workflow fails, read which job and step failed. Its logs are public: never add a step that prints a secret, an account identifier or an origin.
 
-The public demo runs from the `demo` branch, which keeps its own copy of the Django stack, frozen until the hosted product replaces it. Never merge `main` into `demo`, and do not copy changes from `main` to `demo`. A fix the demo itself needs is committed on `demo` only, and the demo is deployed only from `demo`.
+The public demo was shut down on 2026-10-22; the website now asks for early access instead. The `demo` branch keeps the demo's copy of the Django stack as history. Never merge `main` into `demo`, and do not deploy it.
 
 **This repository is public** (`github.com/minervacomputing/harness`). Everything you commit is published, history included. Never commit:
 
@@ -86,7 +86,7 @@ Use Cloudflare's [`cf` CLI](https://developers.cloudflare.com/cf/) (npm package 
 
 - The engine's own scripts (`pnpm run deploy`, `deploy:test`, `scripts/reset.ts`, the account suites) pin the instance's account and check its identity before they change anything; use them rather than `cf` by hand.
 - The test instance (`pnpm run deploy:test`, `pnpm test:faults`) is for the account suites a change needs (cloudflare/README.md, The test Worker).
-- **Ask first** before deploying or resetting production or staging (staging holds Laravel's staging conversations and is never reset), creating or deleting resources on the account, and any change to tunnels, Access policies or DNS. The demo sits behind a tunnel.
+- **Ask first** before deploying or resetting production or staging (staging holds Laravel's staging conversations and is never reset), creating or deleting resources on the account, and any change to tunnels, Access policies or DNS.
 
 ## Second opinions with opencode
 
