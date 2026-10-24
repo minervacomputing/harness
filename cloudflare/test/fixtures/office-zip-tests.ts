@@ -1,16 +1,16 @@
-// The limits and checks that are ours in OneDrive's zip reader (src/connectors/onedrive/zip.ts, over zip.js): the
+// The limits and checks that are ours in the Office reader's zip reader (src/connectors/office/zip.ts, over zip.js): the
 // number of entries, the output budget on what is actually inflated, a zip read as an entry, damaged archives and
 // the CRC-32. zip.js inflates through the runtime's DecompressionStream and checks each CRC-32 through its gzip
-// form, so these run in Node (test/unit/onedrive-zip.test.ts) and in workerd, where production runs
-// (test/platform/onedrive-zip.test.ts), with the runtime's decoding of parts. What zip.js parses is not retested
+// form, so these run in Node (test/unit/office-zip.test.ts) and in workerd, where production runs
+// (test/platform/office-zip.test.ts), with the runtime's decoding of parts. What zip.js parses is not retested
 // here; connectors-onedrive.test.ts reads the Office files.
 
 import { constants, crc32, deflateRawSync } from "node:zlib";
 import { configure } from "@zip.js/zip.js/lib/zip-core-custom.js";
 import { strToU8, zipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { extract, MAX_ENTRIES, MAX_EXPANDED, type Kind } from "../../src/connectors/onedrive/office.ts";
-import { BadZip, Zip } from "../../src/connectors/onedrive/zip.ts";
+import { extract, MAX_ENTRIES, MAX_EXPANDED, type Kind } from "../../src/connectors/office/office.ts";
+import { BadZip, Zip } from "../../src/connectors/office/zip.ts";
 
 const MIB = 1024 * 1024;
 const PACKAGE = "http://schemas.openxmlformats.org/package/2006/relationships";

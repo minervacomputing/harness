@@ -27,6 +27,7 @@ import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
 import { TENANCY, googleTenants, oauth } from "../google/index.ts";
 import { type DriveFile, FOLDER, GoogleDriveClient, SHORTCUT, isFolder, quoted } from "./client.ts";
 import { extend } from "../../lib/arrays.ts";
+import { OFFICE_TYPES, extract } from "../office/office.ts";
 
 export const FILE = "file";
 export const READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
@@ -42,6 +43,8 @@ export const MAX_LOOKUPS = 150;
 export const DESCRIBE_CONCURRENCY = 8;
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 export const MAX_EXPORT_BYTES = 10 * 1024 * 1024;
+/** As OneDrive's: what is inflated is bounded by the Office reader itself. */
+export const MAX_OFFICE_BYTES = 10 * 1024 * 1024;
 export const MAX_UPLOAD_BYTES = 1024 * 1024;
 export const GOOGLE_DOC = "application/vnd.google-apps.document";
 const EXPORTS: ReadonlyMap<string, string> = new Map([
@@ -74,6 +77,7 @@ export interface DriveLimits {
 	maxLookups: number;
 	maxExportBytes: number;
 	maxTextBytes: number;
+	maxOfficeBytes: number;
 }
 
 export interface DriveOptions {
@@ -224,12 +228,18 @@ function isText(mimeType: string): boolean {
 	return mimeType.startsWith("text/") || TEXT_TYPES.has(mimeType);
 }
 
-async function textOf(client: GoogleDriveClient, file: DriveFile, limits: DriveLimits): Promise<string> {
+/** The file's text, at most `limit` characters for Office files. */
+async function textOf(client: GoogleDriveClient, file: DriveFile, limits: DriveLimits, limit: number): Promise<string> {
 	if (file.mimeType === SHORTCUT) {
 		const target = file.shortcutDetails ? file.shortcutDetails.targetId : null;
 		throw new OperationError("UNSUPPORTED_FILE", target ? `This is a shortcut. Read its target instead: file id ${target}.` : "This is a shortcut to a file Minerva cannot see.");
 	}
 	if (file.capabilities && file.capabilities.canDownload === false) throw new OperationError("PROVIDER_FORBIDDEN", "The owner of this file does not allow downloading it.");
+	const office = OFFICE_TYPES.get(file.mimeType);
+	if (office !== undefined) {
+		if (file.size !== null && file.size > limits.maxOfficeBytes) throw new OperationError("FILE_TOO_LARGE", `Minerva reads files of this type up to ${limits.maxOfficeBytes} bytes.`);
+		return extract(office, await client.content(file.id, limits.maxOfficeBytes), limit);
+	}
 	const exported = EXPORTS.get(file.mimeType);
 	let body: Uint8Array;
 	if (exported !== undefined) {
@@ -238,7 +248,7 @@ async function textOf(client: GoogleDriveClient, file: DriveFile, limits: DriveL
 		if (file.size !== null && file.size > limits.maxTextBytes) throw new OperationError("FILE_TOO_LARGE", `Minerva reads text files up to ${limits.maxTextBytes} bytes.`);
 		body = await client.content(file.id, limits.maxTextBytes);
 	} else {
-		throw new OperationError("UNSUPPORTED_FILE", "Minerva can read Google Docs, Sheets, Slides, and text files, not this type of file.");
+		throw new OperationError("UNSUPPORTED_FILE", "Minerva can read Google Docs, Sheets and Slides, Word (.docx), PowerPoint (.pptx), Excel (.xlsx) and text files, not this type of file.");
 	}
 	return decodeText(body);
 }
@@ -330,6 +340,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 		maxLookups: MAX_LOOKUPS,
 		maxExportBytes: MAX_EXPORT_BYTES,
 		maxTextBytes: MAX_TEXT_BYTES,
+		maxOfficeBytes: MAX_OFFICE_BYTES,
 		...options.limits,
 	};
 	const treeOf = (client: GoogleDriveClient): Tree => (options.tree ? options.tree(client, limits) : new Tree(client, limits));
@@ -430,7 +441,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 			name: "read_file",
 			title: "Read a file",
 			description:
-				"Read the text of one Google Drive file: Google Docs and Slides as plain text, the first sheet of Google Sheets as CSV, and text files. Other types (PDF, images) are not supported. Long text is cut at max_chars and marked truncated.",
+				"Read the text of one Google Drive file: Google Docs and Slides as plain text, the first sheet of Google Sheets as CSV, uploaded Word documents and PowerPoint slides as plain text, the first sheet of an uploaded Excel workbook as CSV (stored values; dates as numbers), and text files. Other types (PDF, images, legacy .doc/.xls) are not supported. Long text is cut at max_chars and marked truncated.",
 			input: ReadFile,
 			needs: [[FILE, "read"]],
 			consent: READ_CONSENT,
@@ -441,7 +452,7 @@ export function googleDriveConnector(options: DriveOptions = {}): Connector<Goog
 					requirements: [{ need: resource, action: "read" }],
 					async execute(): Promise<ProviderOutput> {
 						const file = await tree.confirm(resource);
-						const text = await textOf(tree.client, file, limits);
+						const text = await textOf(tree.client, file, limits, data.max_chars + 1);
 						const truncated = text.length > data.max_chars;
 						return { records: [record(resource, file, { text: sliceText(text, 0, data.max_chars), truncated })] };
 					},

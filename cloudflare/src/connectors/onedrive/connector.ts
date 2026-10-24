@@ -42,7 +42,7 @@ import { TENANCY, accountLabel, consent, oauth, pageParam } from "../microsoft/i
 import { after, singleLineOf } from "../microsoft/inputs.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import { DriveClient, type DriveItem } from "./client.ts";
-import { type Kind, extract, isKind } from "./office.ts";
+import { type Kind, OFFICE_TYPES, extract, isKind } from "../office/office.ts";
 
 export const ITEM = "item";
 export const READ_CONSENT = consent("Files.Read.All", "Files.ReadWrite.All");
@@ -63,11 +63,6 @@ const ITEM_PART = "[A-Za-z0-9!_.=-]{1,200}";
 const DRIVE_FULL = new RegExp(`^${DRIVE_PART}$`);
 const ITEM_FULL = new RegExp(`^${ITEM_PART}$`);
 const ITEM_ID = new RegExp(`^(${DRIVE_PART}):(${ITEM_PART})$`);
-const OFFICE: ReadonlyMap<string, Kind> = new Map([
-	["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
-	["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"],
-	["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"],
-]);
 const TEXT_TYPES: ReadonlySet<string> = new Set([
 	"application/json",
 	"application/xml",
@@ -510,7 +505,7 @@ export function readable(item: DriveItem): Kind | "text" {
 	if (item.file === null) throw new OperationError("UNSUPPORTED_FILE", "This is not a file.");
 	const mime = ((item.file.mimeType || "").split(";")[0] as string).trim().toLowerCase();
 	const extension = extensionOf(item.name);
-	const office = OFFICE.get(mime);
+	const office = OFFICE_TYPES.get(mime);
 	if (office !== undefined) return office;
 	const bare = extension.startsWith(".") ? extension.slice(1) : extension;
 	if (isKind(bare)) return bare;

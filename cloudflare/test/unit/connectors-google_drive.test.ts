@@ -10,6 +10,7 @@ import type { Json } from "../../src/lib/json.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import { ceilingRow, requestOf, settingsClient, startRun, validated } from "./connector-runs.ts";
 import { jsonResponse } from "./executor-fakes.ts";
+import { officeFile } from "../fixtures/office-zip-tests.ts";
 
 const ROOT = "root0";
 const BASE_SCOPES = ["openid", "email", READ_SCOPE];
@@ -482,6 +483,38 @@ describe("runs through the executor", () => {
 			expect(google.uploads).toEqual([]);
 		});
 	}
+
+	test("uploaded Word, PowerPoint and Excel files are read as text, under a size limit, and PDFs are not", async () => {
+		const google = new FakeDrive();
+		const OOXML = "application/vnd.openxmlformats-officedocument";
+		const office: [id: string, name: string, mime: string, kind: "docx" | "pptx" | "xlsx"][] = [
+			["report", "Report.docx", `${OOXML}.wordprocessingml.document`, "docx"],
+			["deck", "Deck.pptx", `${OOXML}.presentationml.presentation`, "pptx"],
+			["sheet", "Sheet.xlsx", `${OOXML}.spreadsheetml.sheet`, "xlsx"],
+		];
+		const bytes = new Map(office.map(([id, , , kind]) => [id, officeFile(kind, 9)]));
+		for (const [id, name, mime] of office) google.files[id] = { ...file(id, name, mime, ["docs"]), size: String(bytes.get(id)?.length) };
+		google.files.huge = { ...file("huge", "Huge.docx", `${OOXML}.wordprocessingml.document`, ["docs"]), size: String(10 * 1024 * 1024 + 1) };
+		google.files.scan = { ...file("scan", "Scan.pdf", "application/pdf", ["docs"]), size: "10" };
+		const fetch: typeof globalThis.fetch = async (input, init) => {
+			const url = new URL(requestOf(input, init as RequestInit).url);
+			const id = /\/files\/([^/]+)$/.exec(url.pathname)?.[1] ?? "";
+			if (url.searchParams.get("alt") === "media" && bytes.has(id)) {
+				google.requests.push(url);
+				return new Response(bytes.get(id), { status: 200 });
+			}
+			return google.fetch(input, init);
+		};
+		const run = await startRun(googleDriveConnector(), fetch, { scopes: BASE_SCOPES, grants: grants({ docs: ["read"] }), ceiling: [] });
+		const texts = [];
+		for (const [id] of office) texts.push((await run.ok("google_drive_read_file", { file_id: id })).result.items[0]?.text);
+		expect(texts).toEqual(["hello\n", "Slide 1\nhello\n", "hello,3\n"]);
+		expect(google.requests.at(-1)?.searchParams.get("alt")).toBe("media");
+		const before = google.requests.length;
+		expect(await run.code("google_drive_read_file", { file_id: "huge" })).toBe("FILE_TOO_LARGE");
+		expect((await run.error("google_drive_read_file", { file_id: "scan" })).code).toBe("UNSUPPORTED_FILE");
+		expect(google.requests.slice(before).filter((request) => request.searchParams.get("alt") === "media")).toEqual([]);
+	});
 
 	test("cycles and deep trees are partial", async () => {
 		const google = new FakeDrive();

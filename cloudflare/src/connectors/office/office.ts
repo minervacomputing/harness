@@ -1,4 +1,5 @@
-// Text out of Word, PowerPoint and Excel files (Office Open XML), for reading only.
+// Text out of Word, PowerPoint and Excel files (Office Open XML), for reading only, as OneDrive and Google Drive
+// read them.
 //
 // These files are zip archives of XML parts (zip.ts), and only the parts that hold the text are read. Each
 // part is streamed through a SAX parser (saxes, with namespaces), which keeps no tree. A document type
@@ -29,6 +30,13 @@ export const CHUNK = 64 * 1024;
 const CELL = /^([A-Z]{1,3})\d+$/u;
 
 export type Kind = "docx" | "pptx" | "xlsx";
+
+/** The media types of the formats read. */
+export const OFFICE_TYPES: ReadonlyMap<string, Kind> = new Map([
+	["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+	["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"],
+	["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"],
+]);
 
 export function unreadable(): OperationError {
 	return new OperationError("UNSUPPORTED_FILE", "Minerva could not read this file: it is damaged, protected, or not a valid Office file.");

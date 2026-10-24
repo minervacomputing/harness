@@ -82,7 +82,9 @@ A read Google answers busy (429, a 5xx, or a 403 `rateLimitExceeded` or `userRat
 
 Folders are chosen in a tree. Access to a folder covers everything inside it.
 
-**Agents can:** list folders, search, read file details, read Google Docs, Sheets, Slides and text files as text, and create text files or Google Docs in a folder, their content kept as written, leading and trailing whitespace included. Creating files needs full Drive access, because Google's narrower scope cannot add files to folders Minerva did not create. Text is read as in [OneDrive](#onedrive-and-sharepoint): UTF-16 after a byte order mark, UTF-8, else Windows' Western code page (windows-1252), with one leading byte order mark dropped, as Google Docs exports start with one.
+**Agents can:** list folders, search, read file details, read Google Docs, Sheets, Slides, uploaded Word, PowerPoint and Excel files (first sheet, as CSV) and text files as text, and create text files or Google Docs in a folder, their content kept as written, leading and trailing whitespace included. Creating files needs full Drive access, because Google's narrower scope cannot add files to folders Minerva did not create. Text is read as in [OneDrive](#onedrive-and-sharepoint): UTF-16 after a byte order mark, UTF-8, else Windows' Western code page (windows-1252), with one leading byte order mark dropped, as Google Docs exports start with one.
+
+**Limits:** no PDFs, images or legacy Office formats (.doc, .xls, .ppt). Uploaded Office files are read as in OneDrive, by the same reader (stored values, no formulas evaluated, unpacked in Minerva's own process under size and entry limits), up to 10 MB; a Google Sheet's export holds only its first sheet.
 
 ### Gmail
 

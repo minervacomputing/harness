@@ -6,7 +6,7 @@ import { strToU8, zipSync } from "fflate";
 import { describe, expect, test } from "vitest";
 import { DriveItem, downloadAllowed } from "../../src/connectors/onedrive/client.ts";
 import { LIMITS, onedriveConnector, readable, searchCursor } from "../../src/connectors/onedrive/connector.ts";
-import { MAX_COLUMNS, MAX_ENTRIES, MAX_EXPANDED, MAX_SHARED_STRINGS, MAX_SHARED_TEXT, MAX_SLIDES, extract } from "../../src/connectors/onedrive/office.ts";
+import { MAX_COLUMNS, MAX_ENTRIES, MAX_EXPANDED, MAX_SHARED_STRINGS, MAX_SHARED_TEXT, MAX_SLIDES, extract } from "../../src/connectors/office/office.ts";
 import { OperationError } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import type { Json } from "../../src/lib/json.ts";
