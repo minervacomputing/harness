@@ -1,10 +1,11 @@
 // Microsoft Graph for files in OneDrive and SharePoint document libraries.
 //
 // Items are addressed by drive and item id (`/drives/{drive}/items/{item}`), never by path, except for the
-// name of a file being created. A file's content comes from the pre-authenticated download URL Graph gives
-// with the item: a second client that sends no token fetches it, only over HTTPS from Microsoft's file
-// hosts, and follows no redirect. Uploads send `conflictBehavior=fail`, so an existing file is never
-// replaced.
+// name of a file being created. A file's content is read through `/content`, which Graph answers with a
+// redirect to a pre-authenticated download URL; the item's `@microsoft.graph.downloadUrl` is not used, since
+// Graph left it out of a personal account's items on staging (docs/connectors.md). A second client that
+// sends no token fetches that URL, only over HTTPS from Microsoft's file hosts, and follows no further
+// redirect. Uploads send `conflictBehavior=fail`, so an existing file is never replaced.
 //
 // Microsoft Search (`/search/query`) covers what a work or school account can open; personal accounts search
 // their own OneDrive and what was shared with them (`/me/drive/search`).
@@ -17,7 +18,6 @@ import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, classify, errorCode,
 import { percentEncode } from "../../lib/text.ts";
 
 export const ITEM_FIELDS = "id,name,size,file,folder,root,package,remoteItem,parentReference,webUrl,lastModifiedDateTime";
-export const DOWNLOAD_FIELDS = `${ITEM_FIELDS},@microsoft.graph.downloadUrl`;
 export const DRIVE_FIELDS = "id,name,driveType,webUrl";
 /** Where Graph's download URLs point: SharePoint (work and school) and OneDrive's personal file hosts. */
 export const DOWNLOAD_HOSTS = [".sharepoint.com", ".1drv.com", ".microsoftpersonalcontent.com"];
@@ -45,7 +45,6 @@ export const DriveItem = z.object({
 	parentReference: ItemReference.nullable().default(null),
 	webUrl: z.string().nullable().default(null),
 	lastModifiedDateTime: z.string().nullable().default(null),
-	"@microsoft.graph.downloadUrl": z.string().nullable().default(null),
 });
 export type DriveItem = z.output<typeof DriveItem>;
 
@@ -74,8 +73,8 @@ export const driveClassify: Classify = (provider, response, body, bytes) => {
 };
 
 /**
- * Whether a download URL Graph gave is one Minerva fetches: HTTPS on Microsoft's file hosts, no user name or
- * password, the default port. The request goes where `fetch` (WHATWG) parses it to, so the URL as written must
+ * Whether a download URL Graph redirected to is one Minerva fetches: HTTPS on Microsoft's file hosts, no user
+ * name or password, the default port. The request goes where `fetch` (WHATWG) parses it to, so the URL as written must
  * already say the same: `https://` and an ASCII host that parsing does not change (no percent escapes,
  * full-width letters or extra slashes), and no ":" before an "@". Unicode hosts are refused.
  */
@@ -160,10 +159,8 @@ export class DriveClient extends Graph {
 		return this.parse(DriveItem, await this.get(`/drives/${segment(driveId)}/root`, { params: { $select: ITEM_FIELDS } }));
 	}
 
-	/** An item by id. With `download`, Graph includes a short-lived download URL for a file. */
-	async item(driveId: string, itemId: string, download = false): Promise<DriveItem> {
-		const params = { $select: download ? DOWNLOAD_FIELDS : ITEM_FIELDS };
-		return this.parse(DriveItem, await this.get(`/drives/${segment(driveId)}/items/${segment(itemId)}`, { params }));
+	async item(driveId: string, itemId: string): Promise<DriveItem> {
+		return this.parse(DriveItem, await this.get(`/drives/${segment(driveId)}/items/${segment(itemId)}`, { params: { $select: ITEM_FIELDS } }));
 	}
 
 	async children(driveId: string, itemId: string, limit: number, cursor: string | null): Promise<[DriveItem[], string | null]> {
@@ -220,7 +217,14 @@ export class DriveClient extends Graph {
 		return this.page(DriveItem, await this.get(`/me/drive/search(q='${literal}')`, { params }));
 	}
 
-	async content(url: string, limit: number): Promise<Uint8Array> {
+	/**
+	 * A file's bytes, at most `limit`. Graph documents only a 302 to the download URL for `/content`, so any
+	 * other success is an unexpected response, never a body read as the file.
+	 */
+	async content(driveId: string, itemId: string, limit: number): Promise<Uint8Array> {
+		const redirect = await this.http.request({ method: "GET", path: `/drives/${segment(driveId)}/items/${segment(itemId)}/content`, redirects: true });
+		const url = redirect.status >= 300 && redirect.status < 400 ? redirect.headers.get("location") : null;
+		if (url === null) throw this.unexpected();
 		if (!downloadAllowed(url)) throw new OperationError("PROVIDER_FAILED", "OneDrive offered this file from an address Minerva does not download from.");
 		const response = await this.files.download({ method: "GET", path: url }, limit);
 		return new Uint8Array(await response.arrayBuffer());

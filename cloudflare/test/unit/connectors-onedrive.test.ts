@@ -112,8 +112,6 @@ class FakeGraph {
 	readonly forbidden = new Set([`${OTHER}\u0000ghost`]);
 	readonly contents = new Map<string, Uint8Array>();
 	downloadHost = "contoso.sharepoint.com";
-	/** Whether items carry `@microsoft.graph.downloadUrl` when it is selected. */
-	downloadUrls = true;
 	pageSize: number | null = null;
 	requests: Received[] = [];
 	uploads: Received[] = [];
@@ -184,14 +182,6 @@ class FakeGraph {
 		return jsonResponse(status, { error: { code, message: "Secret item name" } });
 	}
 
-	#view(item: JsonObject, params: { [name: string]: string }): JsonObject {
-		const shown = { ...item };
-		if (this.downloadUrls && (params.$select ?? "").includes("@microsoft.graph.downloadUrl") && "file" in item) {
-			shown["@microsoft.graph.downloadUrl"] = `https://${this.downloadHost}/download/${item.id}?tempauth=t`;
-		}
-		return shown;
-	}
-
 	children(drive: string, folder: string): JsonObject[] {
 		const own = [...this.items.entries()].filter(([key, item]) => key.startsWith(`${drive.toLowerCase()}\u0000`) && (item.parentReference as JsonObject).id === folder).map(([, item]) => item);
 		return [...own, ...this.strays];
@@ -227,7 +217,7 @@ class FakeGraph {
 		if (a === "organization" && parts.length === 1) return jsonResponse(200, { value: [{ id: TENANT.toUpperCase(), displayName: "Contoso" }] });
 		if (a === "me" && parts.length === 1) return jsonResponse(200, { id: USER_ID, mail: "me@contoso.com", displayName: "Me" });
 		if (a === "me" && b === "drive" && parts.length === 2) return jsonResponse(200, this.drives[this.me] as JsonObject);
-		if (a === "me" && b === "drive" && c === "root" && parts.length === 3) return jsonResponse(200, this.#view(this.mine("root-me"), params));
+		if (a === "me" && b === "drive" && c === "root" && parts.length === 3) return jsonResponse(200, this.mine("root-me"));
 		if (a === "me" && b === "drive" && c?.startsWith("search(q='") && parts.length === 3) {
 			const query = c.slice("search(q='".length, -"')".length).replaceAll("''", "'");
 			const found = [...this.items.values()].filter((item) => (item.name as string).toLowerCase().includes(query.toLowerCase()));
@@ -250,7 +240,12 @@ class FakeGraph {
 		if (a === "drives" && c === "items" && parts.length === 4) {
 			if (this.forbidden.has(FakeGraph.key(b as string, d as string))) return FakeGraph.error(403, "accessDenied");
 			const found = this.find(b as string, d as string);
-			return found ? jsonResponse(200, this.#view(found, params)) : FakeGraph.error(404, "itemNotFound");
+			return found ? jsonResponse(200, found) : FakeGraph.error(404, "itemNotFound");
+		}
+		if (a === "drives" && c === "items" && parts[4] === "content" && parts.length === 5) {
+			const found = this.find(b as string, d as string);
+			if (found === undefined || !("file" in found)) return FakeGraph.error(404, "itemNotFound");
+			return new Response(null, { status: 302, headers: { Location: `https://${this.downloadHost}/download/${d}?tempauth=t` } });
 		}
 		if (a === "drives" && c === "items" && parts[4] === "children" && parts.length === 5 && this.find(b as string, d as string)) {
 			return this.#page(path, this.children(b as string, d as string), params);
@@ -539,11 +534,10 @@ describe("reading files", () => {
 		expect([cut.text, cut.truncated]).toEqual(["Slide 1\nA", true]);
 	});
 
-	test.fails("a personal account's file is read though Graph gives no download URL with it", async () => {
+	test("a personal account's file is read though Graph gives no download URL with it", async () => {
 		// As measured on staging (2026-10-24): Graph left `@microsoft.graph.downloadUrl` out of a personal
-		// account's items although it was selected, and their ids had this form.
+		// account's items although it was selected, and their ids had this form. `/content` redirects instead.
 		const graph = new FakeGraph(true);
-		graph.downloadUrls = false;
 		graph.downloadHost = "my.microsoftpersonalcontent.com";
 		const id = `${PERSONAL}!s0123456789abcdef0123456789abcdef`;
 		graph.put(fileOf(id, "the old pond.docx", PERSONAL, "docs", DOCX));
@@ -568,6 +562,12 @@ describe("reading files", () => {
 		expect(graph.requests.slice(count).every((request) => request.host === "graph.microsoft.com")).toBe(true);
 
 		graph.downloadHost = "contoso.sharepoint.com";
+		// Graph documents only a redirect for `/content`: a body in its place, or no Location, is not read.
+		for (const answer of [new Response("The plan.", { status: 200 }), new Response(null, { status: 302 })]) {
+			graph.hook = (request) => (request.path.endsWith("/plan/content") ? answer : null);
+			expect(await run.code("onedrive_read_file", { file_id: `${ME}:plan` })).toBe("PROVIDER_FAILED");
+		}
+		graph.hook = null;
 		for (const id of ["docs", "link"]) expect(await run.code("onedrive_read_file", { file_id: `${ME}:${id}` })).toBe("UNSUPPORTED_FILE");
 		const plan = graph.mine("plan");
 		(plan.file as JsonObject).mimeType = "application/pdf";

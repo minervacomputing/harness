@@ -215,11 +215,11 @@ class Tree {
 	}
 
 	/** The item again, from Graph, refused if it moved since `resource` was authorized. */
-	async confirm(resource: Resource, download = false): Promise<DriveItem> {
+	async confirm(resource: Resource): Promise<DriveItem> {
 		const fresh = new Tree(this.client);
 		let item: DriveItem;
 		try {
-			item = await fresh.client.item(...split(resource.id), download);
+			item = await fresh.client.item(...split(resource.id));
 		} catch (error) {
 			if (unseen(error)) throw moved();
 			throw error;
@@ -522,9 +522,7 @@ async function textOf(client: DriveClient, item: DriveItem, limit: number): Prom
 	const kind = readable(item);
 	const sizeLimit = kind === "text" ? MAX_TEXT_BYTES : LIMITS.maxOfficeBytes;
 	if (item.size !== null && item.size > sizeLimit) throw new OperationError("FILE_TOO_LARGE", `Minerva reads files of this type up to ${sizeLimit} bytes.`);
-	const url = item["@microsoft.graph.downloadUrl"];
-	if (!url) throw new OperationError("PROVIDER_FORBIDDEN", "OneDrive does not offer this file for download.");
-	const body = await client.content(url, sizeLimit);
+	const body = await client.content(driveOf(client, item), item.id, sizeLimit);
 	// Text files are read as UTF-8, a byte order mark dropped and invalid sequences replaced.
 	if (kind === "text") return new TextDecoder().decode(body);
 	return extract(kind, body, limit);
@@ -547,7 +545,7 @@ const READ_FILE = defineOperation<z.output<typeof ReadFile>>({
 		return {
 			requirements: [{ need: resource, action: "read" }],
 			async execute(): Promise<ProviderOutput> {
-				const current = await tree.confirm(resource, true);
+				const current = await tree.confirm(resource);
 				const text = await textOf(tree.client, current, data.max_chars + 1);
 				const truncated = text.length > data.max_chars;
 				return { records: [record(resource, current, { text: sliceText(text, 0, data.max_chars), truncated })] };
