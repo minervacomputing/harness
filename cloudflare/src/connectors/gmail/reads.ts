@@ -127,9 +127,8 @@ async function summaries(client: GmailClient, refs: readonly MessageRef[]): Prom
 		try {
 			message = await client.message(messageId, "metadata");
 		} catch (error) {
-			if (passesThrough(error)) throw error;
-			// Deleted since it was listed.
-			if (error instanceof OperationError) return null;
+			// Deleted since it was listed. Any other failure fails the page, which would otherwise look complete without it.
+			if (error instanceof OperationError && error.code === "NOT_FOUND") return null;
 			throw error;
 		}
 		return message.id === messageId ? message : null;

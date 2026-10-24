@@ -626,6 +626,16 @@ describe("reading", () => {
 		expect(await run.code("gmail_list_messages", { label: "INBOX", limit: 2, cursor })).toBe("INVALID_CURSOR");
 	});
 
+	test("a listed message deleted before it is fetched is left out, and one Gmail fails to give fails the list", async () => {
+		const gmail = new FakeGmail();
+		const run = await start(gmail, label_("INBOX"));
+		let status = 404;
+		gmail.hook = (_method, path) => (path === `/messages/${HIDDEN}` ? jsonResponse(status, { error: { code: status, message: "x" } }) : null);
+		expect(ids(await run.ok("gmail_list_messages", { label: "INBOX", limit: 3 }))).toEqual([GRACE, UNKNOWN]);
+		status = 500;
+		expect(await run.code("gmail_list_messages", { label: "INBOX", limit: 3 })).toBe("PROVIDER_FAILED");
+	});
+
 	test("a label renamed after authorization is refused", async () => {
 		const gmail = new FakeGmail();
 		const run = await start(gmail, label_(WORK));
