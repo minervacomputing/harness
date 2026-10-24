@@ -38,7 +38,8 @@ import { CONNECTION_ERRORS, FOLDER, RECIPIENT, ROOT, Tree } from "./mailbox.ts";
 import { LIST_FOLDERS, LIST_MESSAGES, READ_MESSAGE } from "./reads.ts";
 import { REPLY, SEND_MESSAGE } from "./writes.ts";
 
-export const DESCRIBE_CONCURRENCY = 5;
+// Graph allows four concurrent requests per app and mailbox, and Outlook Calendar and a running turn share both.
+export const DESCRIBE_CONCURRENCY = 2;
 export const MAX_DISCOVER = 500;
 export const MAX_DISCOVER_REQUESTS = 60;
 

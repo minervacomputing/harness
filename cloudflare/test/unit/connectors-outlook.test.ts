@@ -384,6 +384,23 @@ describe("the connector outside a run", () => {
 		expect(names).toEqual({ "*@partner.org": "Everyone at partner.org" });
 	});
 
+	test("naming many folders keeps two requests in flight, under Outlook's four per mailbox, leaving room for a run", async () => {
+		const graph = new FakeGraph();
+		const extra = Array.from({ length: 8 }, (_, n) => `EXTRAFOLDER${n}`);
+		for (const [n, id] of extra.entries()) graph.folders[id] = folderOf(id, `Extra ${n}`, INBOX);
+		let inFlight = 0;
+		let peak = 0;
+		const slow: typeof fetch = async (input, init) => {
+			peak = Math.max(peak, ++inFlight);
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			inFlight--;
+			return graph.fetch(input, init);
+		};
+		const names = await outlookConnector().describe(outlookConnector().client("token", settingsIo(slow)), "folder", extra);
+		expect(Object.values(names)).toEqual(extra.map((_, n) => `Inbox/Extra ${n}`));
+		expect(peak).toBe(2);
+	});
+
 	test("every request asks for immutable ids and carries the token", async () => {
 		const graph = new FakeGraph();
 		await outlookConnector().account(graph.client());
