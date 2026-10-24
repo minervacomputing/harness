@@ -21,7 +21,7 @@ import {
 	denied,
 } from "../../gateway/connector.ts";
 import type { Resource } from "../../gateway/policy.ts";
-import { fromUtf8, utf8 } from "../../lib/bytes.ts";
+import { decodeText, utf8 } from "../../lib/bytes.ts";
 import { type JsonObject, parseJson } from "../../lib/json.ts";
 import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
 import { TENANCY, googleTenants, oauth } from "../google/index.ts";
@@ -240,7 +240,7 @@ async function textOf(client: GoogleDriveClient, file: DriveFile, limits: DriveL
 	} else {
 		throw new OperationError("UNSUPPORTED_FILE", "Minerva can read Google Docs, Sheets, Slides, and text files, not this type of file.");
 	}
-	return fromUtf8(body);
+	return decodeText(body);
 }
 
 const ListFolder = z.strictObject({

@@ -349,9 +349,16 @@ describe("grants and the ancestry of items", () => {
 		expect(listed[0]?.type).toBe("folder");
 		const read = await items(run, "onedrive_read_file", { file_id: `${ME}:plan` });
 		expect(read[0]?.text).toBe("The plan.");
-		// Text files are UTF-8: a byte order mark is dropped, and bytes that are not UTF-8 are replaced.
-		graph.contents.set("plan", Uint8Array.of(...text("a"), 0xff, ...text("b")));
-		expect((await items(run, "onedrive_read_file", { file_id: `${ME}:plan` }))[0]?.text).toBe("a�b");
+		// Text files are UTF-8 with or without a byte order mark, UTF-16 after one, else Windows' Western code page.
+		const readAs = async (bytes: number[]) => {
+			graph.contents.set("plan", Uint8Array.from(bytes));
+			return (await items(run, "onedrive_read_file", { file_id: `${ME}:plan` }))[0]?.text;
+		};
+		expect(await readAs([0xef, 0xbb, 0xbf, ...text("Zürich;Ä")])).toBe("Zürich;Ä");
+		// Excel's "CSV (Comma delimited)" on a Western Windows.
+		expect(await readAs([0x4d, 0xfc, 0x6c, 0x6c, 0x65, 0x72, 0x3b, 0xe9, 0x3b, 0x80])).toBe("Müller;é;€");
+		expect(await readAs([0xff, 0xfe, 0x5a, 0x00, 0xfc, 0x00, 0x3d, 0xd8, 0x00, 0xde])).toBe("Zü\u{1f600}");
+		expect(await readAs([0xfe, 0xff, 0x00, 0x5a, 0x00, 0xfc])).toBe("Zü");
 		for (const folder of ["root", `${ME}:private`, `${ME}:missing`, `${OTHER}:ghost`]) {
 			expect(await run.code("onedrive_list_folder", { folder_id: folder })).toBe("POLICY_DENIED");
 		}

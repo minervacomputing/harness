@@ -35,6 +35,7 @@ import {
 	denied,
 } from "../../gateway/connector.ts";
 import type { Resource } from "../../gateway/policy.ts";
+import { decodeText } from "../../lib/bytes.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText, TextError } from "../../lib/text.ts";
 import { TENANCY, accountLabel, consent, oauth, pageParam } from "../microsoft/index.ts";
@@ -523,8 +524,7 @@ async function textOf(client: DriveClient, item: DriveItem, limit: number): Prom
 	const sizeLimit = kind === "text" ? MAX_TEXT_BYTES : LIMITS.maxOfficeBytes;
 	if (item.size !== null && item.size > sizeLimit) throw new OperationError("FILE_TOO_LARGE", `Minerva reads files of this type up to ${sizeLimit} bytes.`);
 	const body = await client.content(driveOf(client, item), item.id, sizeLimit);
-	// Text files are read as UTF-8, a byte order mark dropped and invalid sequences replaced.
-	if (kind === "text") return new TextDecoder().decode(body);
+	if (kind === "text") return decodeText(body);
 	return extract(kind, body, limit);
 }
 

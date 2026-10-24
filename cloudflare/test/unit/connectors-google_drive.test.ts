@@ -358,8 +358,10 @@ describe("runs through the executor", () => {
 		const notes = await run.ok("google_drive_read_file", { file_id: "notes", max_chars: 5 });
 		expect([notes.result.items[0]?.text, notes.result.items[0]?.truncated]).toEqual(["hello", true]);
 		expect(google.requests.at(-1)?.searchParams.get("alt")).toBe("media");
+		// A Google Docs export starts with a byte order mark, which is dropped.
+		google.contents.essay = "\ufeffAn essay about Zürich";
 		const essay = await run.ok("google_drive_read_file", { file_id: "essay" });
-		expect(essay.result.items[0]?.truncated).toBe(false);
+		expect([essay.result.items[0]?.text, essay.result.items[0]?.truncated]).toEqual(["An essay about Zürich", false]);
 		expect(google.requests.at(-1)?.pathname.endsWith("/files/essay/export")).toBe(true);
 		expect(google.requests.at(-1)?.searchParams.get("mimeType")).toBe("text/plain");
 		for (const [fileId, message] of [

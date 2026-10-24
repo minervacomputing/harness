@@ -21,6 +21,22 @@ export function fromUtf8(bytes: Uint8Array): string {
 	return new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(bytes);
 }
 
+/**
+ * A text file's characters, one byte order mark dropped: UTF-16 after its byte order mark, UTF-8 when the bytes are
+ * valid UTF-8, else windows-1252, which reads every byte and is what Windows writes for Western languages (Excel's
+ * "CSV (Comma delimited)", for one).
+ */
+export function decodeText(bytes: Uint8Array): string {
+	if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes);
+	if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes);
+	try {
+		return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
+	} catch (error) {
+		if (!(error instanceof TypeError)) throw error;
+		return new TextDecoder("windows-1252").decode(bytes);
+	}
+}
+
 export function hex(bytes: Uint8Array): string {
 	let out = "";
 	for (const byte of bytes) out += byte.toString(16).padStart(2, "0");
