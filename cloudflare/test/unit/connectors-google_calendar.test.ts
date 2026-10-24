@@ -313,6 +313,82 @@ describe("runs through the executor", () => {
 		expect(await run.code("google_calendar_list_events", { ...args, search: "Exam", cursor: token })).toBe("INVALID_CURSOR");
 	});
 
+	test("a listing reads past pages Google leaves empty, up to a few, and leaves out working locations and birthdays", async () => {
+		const google = new FakeCalendar();
+		let pages: JsonObject[] = [];
+		const listed: URL[] = [];
+		const fetch: typeof globalThis.fetch = async (input, init) => {
+			const url = new URL(requestOf(input, init as RequestInit).url);
+			if (url.pathname.endsWith("/events") && (init?.method ?? "GET") === "GET") {
+				listed.push(url);
+				return jsonResponse(200, pages.shift() ?? { items: [] });
+			}
+			return google.fetch(input, init);
+		};
+		const run = await startRun(googleCalendarConnector(), fetch, { scopes: BASE_SCOPES, grants: READS, ceiling: [] });
+		const event = (id: string, eventType = "default") => ({ id, eventType, summary: id, start: { date: "2026-10-26" }, end: { date: "2026-10-27" } });
+		pages = [
+			{ items: [], nextPageToken: "g1" },
+			{ items: [event("office", "workingLocation"), event("ada", "birthday")], nextPageToken: "g2" },
+			{ items: [event("focus", "focusTime"), event("home", "workingLocation")], nextPageToken: "g3" },
+		];
+		const found = await run.ok("google_calendar_list_events", { calendar_id: PRIMARY });
+		expect(found.result.items.map((item) => [item.id, item.event_type])).toEqual([["focus", "focusTime"]]);
+		expect(listed.map((url) => url.searchParams.get("pageToken"))).toEqual([null, "g1", "g2"]);
+		const next = await run.ok("google_calendar_list_events", { calendar_id: PRIMARY, cursor: found.result.next_cursor as Json });
+		expect(listed.at(-1)?.searchParams.get("pageToken")).toBe("g3");
+		expect(next.result.items).toEqual([]);
+		// Five empty pages in a row end the call, with a cursor for the rest.
+		listed.length = 0;
+		pages = Array.from({ length: 7 }, (_, n) => ({ items: [], nextPageToken: `e${n}` }));
+		const empty = await run.ok("google_calendar_list_events", { calendar_id: PRIMARY });
+		expect([listed.length, empty.result.items.length, typeof empty.result.next_cursor]).toEqual([5, 0, "string"]);
+	});
+
+	test("an event says how the user answered it, and its description is text", async () => {
+		const google = new FakeCalendar();
+		google.events[PRIMARY] = [
+			{
+				id: "sync",
+				summary: "Sync",
+				description: '<p>Join: <a href="https://meet.example/abc">meeting</a></p><p>Agenda&nbsp;&amp; notes<br>Line two</p>',
+				start: { dateTime: "2026-10-26T09:00:00+01:00" },
+				end: { dateTime: "2026-10-26T09:30:00+01:00" },
+				organizer: { email: "grace@example.com" },
+				attendees: [
+					{ email: "grace@example.com", responseStatus: "accepted", organizer: true },
+					{ email: PRIMARY, responseStatus: "declined", self: true },
+				],
+			},
+			{ id: "plain", summary: "Plain", description: "a < b\nsecond line", start: { date: "2026-10-27" }, end: { date: "2026-10-28" } },
+		];
+		const run = await start(google, BASE_SCOPES, READS);
+		const [sync, plain] = (await run.ok("google_calendar_list_events", { calendar_id: PRIMARY, time_min: "2026-10-01T00:00:00Z" })).result.items;
+		expect([sync?.my_response, sync?.attendees]).toEqual([
+			"declined",
+			[
+				{ email: "grace@example.com", name: null, response: "accepted", self: false },
+				{ email: PRIMARY, name: null, response: "declined", self: true },
+			],
+		]);
+		expect(sync?.description).toBe("Join: [meeting](https://meet.example/abc)\n\nAgenda & notes\nLine two");
+		expect([plain?.description, plain?.my_response]).toEqual(["a < b\nsecond line", null]);
+	});
+
+	test("with only time_max, a listing starts now when time_max is later, and at the calendar's start when it is past", async () => {
+		const google = new FakeCalendar();
+		const run = await start(google, BASE_SCOPES, READS);
+		const timeMin = async (timeMax: string) => {
+			await run.ok("google_calendar_list_events", { calendar_id: PRIMARY, time_max: timeMax });
+			return new URL(google.requests.at(-1)?.url as string).searchParams.get("timeMin");
+		};
+		const before = Date.now();
+		const fromNow = await timeMin(new Date(before + 7 * 86_400_000).toISOString());
+		expect(Date.parse(fromNow ?? "") - before).toBeGreaterThanOrEqual(0);
+		expect(Date.parse(fromNow ?? "") - before).toBeLessThan(60_000);
+		expect(await timeMin("2020-01-01T00:00:00Z")).toBeNull();
+	});
+
 	test("creating an event needs the create grant and the events scope", async () => {
 		const google = new FakeCalendar();
 		const event = {

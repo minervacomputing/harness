@@ -12,10 +12,11 @@ import {
 	denied,
 } from "../../gateway/connector.ts";
 import { type Json, parseJson } from "../../lib/json.ts";
+import { htmlToText } from "../../lib/markdown.ts";
 import { sliceText } from "../../lib/text.ts";
 import { TENANCY, googleTenants, oauth } from "../google/index.ts";
 import { type EventTime, type GoogleCalendar, GoogleCalendarClient, type GoogleEvent, calendarName } from "./client.ts";
-import { epochMicros, isDate, isTimeZone, parseDate, parseDateTime, parseZonedDateTime } from "../../lib/dates.ts";
+import { epochMicros, isDate, isTimeZone, parseDate, parseDateTime, parseInstant, parseZonedDateTime } from "../../lib/dates.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const CALENDAR = "calendar";
@@ -26,6 +27,11 @@ export const MAX_CALENDAR_PAGES = 10;
 export const PRIMARY = "primary";
 export const MAX_DESCRIPTION = 4000;
 export const MAX_ATTENDEES = 50;
+/** How many pages a listing reads while Google answers pages with no event to show but a next page. */
+export const MAX_EVENT_PAGES = 5;
+/** Entries Google lists among events that are not ones: where the user works that day, and contacts' birthdays. */
+const NOT_EVENTS: ReadonlySet<string> = new Set(["workingLocation", "birthday"]);
+const HTML_TAG = /<\/?[a-z][a-z0-9]*(?:\s[^>]*)?\/?>/i;
 
 // Every operation resolves its calendar through the calendar list, which the events scopes do not cover.
 export const READ_CONSENT = [[READ_SCOPE], [FULL_SCOPE]];
@@ -96,15 +102,17 @@ function timeOf(value: EventTime | null): string | null {
 }
 
 function eventRecord(binding: Binding, calendarId: string, event: GoogleEvent): ScopedRecord {
-	let description = event.description;
+	// Google's descriptions can be HTML (invitations from Zoom, Teams or Calendly), or plain text.
+	let description = event.description && HTML_TAG.test(event.description) ? htmlToText(event.description)[0] : event.description;
 	if (description && description.length > MAX_DESCRIPTION) description = `${sliceText(description, 0, MAX_DESCRIPTION)} [truncated]`;
-	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ email: a.email, name: a.displayName, response: a.responseStatus }));
+	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ email: a.email, name: a.displayName, response: a.responseStatus, self: a.self }));
 	return {
 		resource: binding.resource(CALENDAR, calendarId),
 		data: {
 			id: event.id,
 			calendar_id: calendarId,
 			status: event.status,
+			event_type: event.eventType,
 			summary: event.summary,
 			description,
 			location: event.location,
@@ -113,6 +121,8 @@ function eventRecord(binding: Binding, calendarId: string, event: GoogleEvent): 
 			all_day: Boolean(event.start && event.start.date && !event.start.dateTime),
 			time_zone: event.start ? event.start.timeZone : null,
 			organizer: event.organizer ? event.organizer.email : null,
+			// How the user answered, when they are among the attendees.
+			my_response: event.attendees.find((a) => a.self)?.responseStatus ?? null,
 			attendees,
 			// The attendee list is incomplete when Google or Minerva left some out.
 			attendees_incomplete: event.attendeesOmitted || event.attendees.length > MAX_ATTENDEES,
@@ -247,7 +257,7 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 			name: "list_events",
 			title: "List events",
 			description:
-				"List events in one calendar you may read, ordered by start time, with recurring events expanded. Without time_min or time_max, lists events from now on. Times are RFC 3339 with an offset. To get the next page, repeat the call with identical arguments plus the returned next_cursor.",
+				"List events in one calendar you may read, ordered by start time, with recurring events expanded. Without time_min, lists events from now on, unless time_max is already past: then from the calendar's start. Times are RFC 3339 with an offset. Working locations and birthdays are left out, so a page can hold fewer events than limit, or none while next_cursor says there are more. my_response is how the user answered. To get the next page, repeat the call with identical arguments plus the returned next_cursor.",
 			input: ListEvents,
 			needs: [[CALENDAR, "read"]],
 			consent: READ_CONSENT,
@@ -258,23 +268,29 @@ export function googleCalendarConnector(options: CalendarOptions = {}): Connecto
 				// The upstream cursor is Minerva's own: Google's page token plus the time bound the first page used,
 				// so later pages repeat the query exactly, even when the default bound ("now") was applied.
 				const state = data.cursor ? pageState(data.cursor) : null;
-				const timeMin = state ? state.time_min : (data.time_min ?? (data.time_max === null ? new Date(now()).toISOString() : null));
+				// Without time_min, from now on, unless time_max is already past.
+				const from = now();
+				const until = data.time_max === null ? null : parseInstant(data.time_max);
+				const timeMin = state ? state.time_min : (data.time_min ?? (until === null || until > BigInt(from) * 1000n ? new Date(from).toISOString() : null));
 				return {
 					requirements: [{ need: binding.resource(CALENDAR, calendarId), action: "read" }],
 					async execute(): Promise<ProviderOutput> {
-						const page = await client.events(calendarId, {
-							timeMin,
-							timeMax: data.time_max,
-							query: data.search,
-							limit: data.limit,
-							pageToken: state ? state.page : null,
-						});
+						// Google may answer a page with no events and a next page (events.list maxResults), and leaving out
+						// what is not an event can empty one too: read on, a few pages at most.
+						let pageToken = state ? state.page : null;
+						let events: GoogleEvent[] = [];
+						for (let read = 0; read < MAX_EVENT_PAGES && events.length === 0; read++) {
+							const page = await client.events(calendarId, { timeMin, timeMax: data.time_max, query: data.search, limit: data.limit, pageToken });
+							events = page.items.filter((event) => !NOT_EVENTS.has(event.eventType));
+							pageToken = page.nextPageToken;
+							if (!pageToken) break;
+						}
 						let nextCursor: string | null = null;
-						if (page.nextPageToken) {
-							nextCursor = JSON.stringify({ page: page.nextPageToken, time_min: timeMin });
+						if (pageToken) {
+							nextCursor = JSON.stringify({ page: pageToken, time_min: timeMin });
 							if (nextCursor.length > 1000) throw new OperationError("PROVIDER_LIMIT", "Google Calendar returned a page token that is too long.");
 						}
-						return { records: page.items.map((event) => eventRecord(binding, calendarId, event)), nextCursor };
+						return { records: events.map((event) => eventRecord(binding, calendarId, event)), nextCursor };
 					},
 				};
 			},

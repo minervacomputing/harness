@@ -40,12 +40,16 @@ const Person = z.object({
 	email: z.string().nullable().default(null),
 	displayName: z.string().nullable().default(null),
 	responseStatus: z.string().nullable().default(null),
+	/** Whether this is the calendar the event was read from, which is the user's for their own calendars. */
+	self: z.boolean().default(false),
 });
 
 /** Cancelled and private events can carry little more than an id. */
 export const GoogleEvent = z.object({
 	id: z.string(),
 	status: z.string().nullable().default(null),
+	/** default, focusTime, outOfOffice, fromGmail, workingLocation or birthday. */
+	eventType: z.string().default("default"),
 	summary: z.string().nullable().default(null),
 	description: z.string().nullable().default(null),
 	location: z.string().nullable().default(null),

@@ -76,7 +76,7 @@ A read Google answers busy (429, a 5xx, or a 403 `rateLimitExceeded` or `userRat
 
 ### Google Calendar
 
-**Agents can:** list calendars, list and read events, and create events without guests. A created event's start and end may be local times with its time zone, which Google places, so an event after a change of daylight saving time is not an hour off.
+**Agents can:** list calendars, list and read events, and create events without guests. A created event's start and end may be local times with its time zone, which Google places, so an event after a change of daylight saving time is not an hour off. Listings leave out working locations and contacts' birthdays, which Google lists among events, and read on past pages Google leaves empty, five pages at most per call. Each event names its type (focus time, out of office, from Gmail), which attendee is the calendar read and how it answered (`my_response`, so a declined meeting shows as declined), and its description as text when Google gives HTML. Without `time_min`, a listing starts now, unless `time_max` is already past.
 
 ### Google Drive
 
