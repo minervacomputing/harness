@@ -693,6 +693,33 @@ describe("reading", () => {
 		expect(await run.code("outlook_list_messages", { folder: INBOX })).toBe("CONNECTION_UNAUTHORIZED");
 	});
 
+	test("Graph failing is reported as such, while what a refusal could say about a message or folder stays a denial", async () => {
+		const graph = new FakeGraph();
+		const run = await start(graph, folder(INBOX));
+		const failing = (target: string, status: number, body: Json = { error: { code: "x", message: SECRET } }) => {
+			graph.hook = (_method, path) => (path === target ? jsonResponse(status, body) : null);
+		};
+		// Projects is granted through Inbox, its parent, whose lookup fails.
+		failing(`/me/mailFolders/${INBOX}`, 500);
+		expect(await run.code("outlook_list_messages", { folder: PROJECTS })).toBe("PROVIDER_FAILED");
+		failing(`/me/messages/${FROM_GRACE}`, 502);
+		expect(await run.code("outlook_read_message", { message: FROM_GRACE })).toBe("PROVIDER_FAILED");
+		failing(`/me/mailFolders/${INBOX}`, 504);
+		expect(await run.code("outlook_read_message", { message: FROM_GRACE })).toBe("PROVIDER_FAILED");
+		// A 403 on the mailbox's root is about the account; one on a message or folder could be about that object.
+		failing("/me/mailFolders/msgfolderroot", 403);
+		expect(await run.code("outlook_list_messages", { folder: INBOX })).toBe("PROVIDER_FORBIDDEN");
+		failing(`/me/messages/${FROM_GRACE}`, 403);
+		expect(await run.code("outlook_read_message", { message: FROM_GRACE })).toBe("POLICY_DENIED");
+		failing(`/me/mailFolders/${INBOX}`, 403);
+		expect(await run.code("outlook_list_messages", { folder: INBOX })).toBe("POLICY_DENIED");
+		// An answer that does not fit says the message exists.
+		failing(`/me/messages/${FROM_GRACE}`, 200, { id: 5 });
+		expect(await run.code("outlook_read_message", { message: FROM_GRACE })).toBe("POLICY_DENIED");
+		failing(`/me/messages/${FROM_GRACE}`, 404);
+		expect(await run.code("outlook_read_message", { message: FROM_GRACE })).toBe("POLICY_DENIED");
+	});
+
 	test("a read Graph throttles is sent again after its Retry-After, and a reply it throttles is not", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { ...folder(INBOX), ...recipient("grace@example.com") });

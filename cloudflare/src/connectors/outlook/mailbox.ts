@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import { ProviderServerError } from "../../gateway/http.ts";
 import type { Resource } from "../../gateway/policy.ts";
 import { after } from "../microsoft/inputs.ts";
 import { ID, consent } from "../microsoft/index.ts";
@@ -19,10 +20,16 @@ export const WELL_KNOWN = ["inbox", "sentitems", "drafts", "archive", "deletedit
 /** Mutable for tests only. */
 export const LIMITS = { maxDepth: 16, maxLookups: 60 };
 /** Errors about the connection, not about the object a call names; they say nothing about that object. */
-export const CONNECTION_ERRORS: ReadonlySet<string> = new Set(["CONNECTION_UNAUTHORIZED", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "UNSUPPORTED_ACCOUNT"]);
+const CONNECTION_ERRORS: ReadonlySet<string> = new Set(["CONNECTION_UNAUTHORIZED", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "UNSUPPORTED_ACCOUNT"]);
 
+/**
+ * An error that says nothing about the object a call names, so it is reported as it is: one about the connection,
+ * or Graph failing (a 5xx). A 403 stays a refusal, since Graph's permission errors can be about one object (an
+ * item of a mailbox the account may not open); the account-wide ones (no Exchange license, a missing scope) also
+ * refuse the root folder's lookup, which names nothing.
+ */
 export function connectionError(error: unknown): boolean {
-	return error instanceof OperationError && CONNECTION_ERRORS.has(error.code);
+	return error instanceof ProviderServerError || (error instanceof OperationError && CONNECTION_ERRORS.has(error.code));
 }
 
 function moved(): OperationError {
@@ -123,6 +130,7 @@ export class Tree {
 	 * it is refused like a folder without a grant, so the refusal says nothing about it.
 	 */
 	async resolve(binding: Binding, name: string): Promise<[Resource, Folder]> {
+		await this.root();
 		let folder: Folder;
 		let within: string[] | null;
 		try {
@@ -140,7 +148,7 @@ export class Tree {
 	/** The folder again, from Graph, refused if it moved since `resource` was authorized. */
 	async confirm(resource: Resource): Promise<Folder> {
 		const fresh = new Tree(this.client);
-		fresh.root_ = this.root_;
+		fresh.root_ = await this.root();
 		let folder: Folder;
 		let within: string[] | null;
 		try {

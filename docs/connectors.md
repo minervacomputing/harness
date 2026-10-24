@@ -92,7 +92,7 @@ Choose per label what agents may read, per address or domain whom they may send 
 
 **Agents can:** list labels, list and search messages, read a message or a conversation as plain text with the names of attachments, send plain-text mail, reply to a message they may read, and save drafts and reply drafts. Every address a message goes to, Cc and Bcc included, needs permission. A reply goes only to the original's Reply-To addresses, or else its sender, and needs permission for each. Drafts need no recipient permission, since the user sends them.
 
-**Hidden or refused:** chats are out of reach, and replies to drafts and to the account's own mail are refused.
+**Hidden or refused:** chats are out of reach, and replies to drafts and to the account's own mail are refused. A message or conversation Gmail does not find or refuses (a 403) is refused like one without a grant, so the refusal says nothing about it; Gmail failing (a 5xx) is reported as a failure.
 
 **Limits:** no attachments, forwarding, reply-all, labelling, archiving, deleting or sending drafts. Gmail searches the whole mailbox before Minerva filters the results, so an agent can learn whether mail it may not read matches a search, and so test what that mail says without seeing it. A conversation is read from its last 25 messages, readable or not. Bounces arrive later as mail, since Gmail accepts mail before delivering it. An address grant cannot see mailing lists, aliases or forwarding that pass mail on. Labels can change between Minerva's last check and the write.
 
@@ -154,9 +154,9 @@ Graph allows four concurrent requests per app and mailbox, shared by Outlook and
 
 **Agents can:** list folders, list a folder's messages (filtered by unread and received time, or searched), read a message as plain text with the names of its attachments, send plain-text mail, and reply to a message they may read. Recipients are checked as in [Gmail](#gmail), replies included.
 
-**Hidden or refused:** search folders, hidden folders and Exchange's system folders are out of reach. Replies to drafts and to the account's own mail are refused.
+**Hidden or refused:** search folders, hidden folders and Exchange's system folders are out of reach. Replies to drafts and to the account's own mail are refused. A message or folder Graph does not find or refuses (a 403, which can be about one item) is refused like one without a grant, so the refusal says nothing about it; Graph failing (a 5xx) is reported as a failure, and a 403 on the mailbox itself (no Exchange license) as a refusal of the account.
 
-**Limits:** no drafts, attachments, forwarding, reply-all, moving, deleting or flagging, and no shared or delegated mailboxes. As in Gmail, bounces arrive later as mail, and an address grant cannot see distribution lists, aliases or forwarding rules that pass mail on. Mail can move between Minerva's last check and the write. Mail sent from an alias Graph does not report (personal accounts may report none) or as another mailbox (Send As) is not recognized as the account's own, so a reply to it is refused only when it sits in Sent Items.
+**Limits:** no drafts, attachments, forwarding, reply-all, moving, deleting or flagging, and no shared or delegated mailboxes. Placing a message or folder looks up the folders above it once Graph found it, so a 5xx from those lookups, three in a row after the retries, tells an agent that an id it holds exists; it cannot cause one. As in Gmail, bounces arrive later as mail, and an address grant cannot see distribution lists, aliases or forwarding rules that pass mail on. Mail can move between Minerva's last check and the write. Mail sent from an alias Graph does not report (personal accounts may report none) or as another mailbox (Send As) is not recognized as the account's own, so a reply to it is refused only when it sits in Sent Items.
 
 ## Outlook Calendar
 

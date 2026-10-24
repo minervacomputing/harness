@@ -6,7 +6,7 @@ import type { Resource } from "../../gateway/policy.ts";
 import type { Json, JsonObject } from "../../lib/json.ts";
 import { SINGLE_LINE, decodeCharacterReferences, isSingleLine, sliceText } from "../../lib/text.ts";
 import { type GmailClient, ID, type Message, type MessageRef, headersOf } from "./client.ts";
-import { CONNECTION_ERRORS, LABEL, Labels, READ_CONSENT, SPAM_TRASH, SYSTEM_LABELS, confirm, locate, messageIdInput, moved, sameResource } from "./mailbox.ts";
+import { LABEL, Labels, READ_CONSENT, SPAM_TRASH, SYSTEM_LABELS, confirm, connectionError, locate, messageIdInput, moved, sameResource } from "./mailbox.ts";
 import * as mime from "./mime.ts";
 
 export const FETCH_CONCURRENCY = 5;
@@ -15,7 +15,7 @@ const MAX_SNIPPET = 300;
 
 /** An error the call reports as it is: about the connection or the run, saying nothing of the object it names. */
 export function passesThrough(error: unknown): boolean {
-	return error instanceof OperationError && (CONNECTION_ERRORS.has(error.code) || error.code === "RUN_ENDED");
+	return connectionError(error) || (error instanceof OperationError && error.code === "RUN_ENDED");
 }
 
 /** A system label in any case, else a label id. */

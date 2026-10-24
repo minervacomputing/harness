@@ -34,7 +34,7 @@ import { ID, TENANCY, accountLabel, oauth } from "../microsoft/index.ts";
 import { mapLimited } from "../microsoft/limit.ts";
 import * as addresses from "../../lib/addresses.ts";
 import { type Folder, GraphClient, ordinary } from "./client.ts";
-import { CONNECTION_ERRORS, FOLDER, RECIPIENT, ROOT, Tree } from "./mailbox.ts";
+import { FOLDER, RECIPIENT, ROOT, Tree, connectionError } from "./mailbox.ts";
 import { LIST_FOLDERS, LIST_MESSAGES, READ_MESSAGE } from "./reads.ts";
 import { REPLY, SEND_MESSAGE } from "./writes.ts";
 
@@ -138,7 +138,7 @@ export function outlookConnector(): Connector<GraphClient> {
 					folder = await client.folder(folderId);
 					within = await tree.place(folder);
 				} catch (error) {
-					if (!(error instanceof OperationError) || CONNECTION_ERRORS.has(error.code)) throw error;
+					if (!(error instanceof OperationError) || connectionError(error)) throw error;
 					return null;
 				}
 				if (within === null || folder.id !== folderId) return null;

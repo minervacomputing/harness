@@ -6,6 +6,7 @@
 
 import { z } from "zod";
 import { type Binding, OperationError, denied } from "../../gateway/connector.ts";
+import { ProviderServerError } from "../../gateway/http.ts";
 import type { Resource } from "../../gateway/policy.ts";
 import { type Format, type GmailClient, ID, type Label, type Message } from "./client.ts";
 
@@ -51,7 +52,16 @@ const MESSAGE_PREFIX = "message:";
 /** The executor's limit on a resource's ancestors. */
 const MAX_WITHIN = 64;
 /** Errors about the connection, not about the object a call names; they say nothing about that object. */
-export const CONNECTION_ERRORS: ReadonlySet<string> = new Set(["CONNECTION_UNAUTHORIZED", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "UNSUPPORTED_ACCOUNT"]);
+const CONNECTION_ERRORS: ReadonlySet<string> = new Set(["CONNECTION_UNAUTHORIZED", "PROVIDER_RATE_LIMITED", "PROVIDER_UNAVAILABLE", "UNSUPPORTED_ACCOUNT"]);
+
+/**
+ * An error that says nothing about the message or thread a call names, so it is reported as it is: one about the
+ * connection, or Gmail failing (a 5xx). A 403 stays a refusal, since Google does not document that none is ever about
+ * the object named.
+ */
+export function connectionError(error: unknown): boolean {
+	return error instanceof ProviderServerError || (error instanceof OperationError && CONNECTION_ERRORS.has(error.code));
+}
 
 export function moved(): OperationError {
 	return new OperationError("MAIL_MOVED", "This message or label changed while Minerva was using it. Try again.");
@@ -188,7 +198,7 @@ export async function locate(binding: Binding, messageId: string, fetch: Fetch):
 	try {
 		message = await fetchMessage(client, messageId, fetch);
 	} catch (error) {
-		if (error instanceof OperationError && CONNECTION_ERRORS.has(error.code)) throw error;
+		if (connectionError(error)) throw error;
 		if (error instanceof OperationError) throw denied();
 		throw error;
 	}
@@ -210,7 +220,7 @@ export async function confirm(binding: Binding, resource: Resource, messageId: s
 	try {
 		message = await fetchMessage(client, messageId, fetch);
 	} catch (error) {
-		if (error instanceof OperationError && (CONNECTION_ERRORS.has(error.code) || error.code === "RESPONSE_TOO_LARGE")) throw error;
+		if (connectionError(error) || (error instanceof OperationError && error.code === "RESPONSE_TOO_LARGE")) throw error;
 		if (error instanceof OperationError) throw moved();
 		throw error;
 	}

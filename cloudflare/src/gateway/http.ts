@@ -176,6 +176,17 @@ export class NotSent extends OperationError {
 	}
 }
 
+/**
+ * A provider's 5xx that `classify` did not name: about the provider's state, so it says nothing about the object
+ * the request named, which a connector that refuses unknown objects like ungranted ones may rely on.
+ */
+export class ProviderServerError extends OperationError {
+	constructor(provider: string) {
+		super("PROVIDER_FAILED", `${provider} could not complete this request.`);
+		this.name = "ProviderServerError";
+	}
+}
+
 /** A phase of a request (its headers, or one chunk of its body) took longer than the timeout. */
 export class PhaseTimeout extends Error {
 	constructor() {
@@ -628,6 +639,7 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		if (status === 404) return new OperationError("NOT_FOUND", `${this.provider} did not find this object.`);
 		if (status === 429) return new OperationError("PROVIDER_RATE_LIMITED", `${this.provider} is rate limiting requests. Try again later.`);
 		if (status >= 400 && status < 500) return new OperationError("PROVIDER_REJECTED", `${this.provider} rejected this request.`);
+		if (status >= 500) return new ProviderServerError(this.provider);
 		return new OperationError("PROVIDER_FAILED", `${this.provider} could not complete this request.`);
 	}
 }

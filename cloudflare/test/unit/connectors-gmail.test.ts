@@ -736,6 +736,22 @@ describe("reading", () => {
 		expect(items(await run.ok("gmail_read_thread", { thread: THREAD }))).toEqual([]);
 	});
 
+	test("Gmail failing is reported as such, while what a refusal could say about a message or thread stays a denial", async () => {
+		const gmail = new FakeGmail();
+		const run = await start(gmail, label_("*"));
+		const failing = (target: string, status: number, reason = "backendError") => {
+			gmail.hook = (_method, path) => (path === target ? jsonResponse(status, { error: { code: status, message: SECRET, errors: [{ reason }] } }) : null);
+		};
+		failing(`/messages/${GRACE}`, 500);
+		expect(await run.code("gmail_read_message", { message: GRACE })).toBe("PROVIDER_FAILED");
+		failing(`/threads/${THREAD}`, 503);
+		expect(await run.code("gmail_read_thread", { thread: THREAD })).toBe("PROVIDER_FAILED");
+		failing(`/messages/${GRACE}`, 403, "insufficientPermissions");
+		expect(await run.code("gmail_read_message", { message: GRACE })).toBe("POLICY_DENIED");
+		failing(`/threads/${THREAD}`, 403, "insufficientPermissions");
+		expect(items(await run.ok("gmail_read_thread", { thread: THREAD }))).toEqual([]);
+	});
+
 	test("threads that do not exist read as empty", async () => {
 		const gmail = new FakeGmail();
 		const run = await start(gmail, label_("*"));
