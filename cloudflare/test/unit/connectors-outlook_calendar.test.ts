@@ -432,6 +432,27 @@ describe("times and tool inputs", () => {
 		expect(graph.writes).toHaveLength(writes);
 	});
 
+	test("an all-day event goes in a Windows zone only when it has the zone's offset at the event's midnights", async () => {
+		const graph = new FakeGraph();
+		const run = await start(graph, { [WORK]: ["read", "create"] });
+		const zoneSent = async (start: string, end: string) => {
+			await run.ok("outlook_calendar_create_event", { calendar_id: WORK, subject: "Offsite", start, end, time_zone: "Africa/Sao_Tome" });
+			return ((graph.writes.at(-1) as [string, JsonObject])[1].start as JsonObject).timeZone;
+		};
+		// São Tomé left UTC+1 at 01:00 UTC on 2019-01-01, so that day began an hour before UTC's did.
+		expect(await zoneSent("2019-01-01", "2019-01-03")).toBe("Sao Tome Standard Time");
+		expect(await zoneSent("2019-01-02", "2019-01-04")).toBe("UTC");
+	});
+
+	test("an all-day event centuries long is placed in the time a year's takes", async () => {
+		const graph = new FakeGraph();
+		const run = await start(graph, { [WORK]: ["read", "create"] });
+		const began = performance.now();
+		await run.ok("outlook_calendar_create_event", { calendar_id: WORK, subject: "Forever", start: "2026-01-01", end: "2999-01-01", time_zone: "Europe/Zurich" });
+		expect(performance.now() - began).toBeLessThan(300);
+		expect(((graph.writes.at(-1) as [string, JsonObject])[1].start as JsonObject).timeZone).toBe("W. Europe Standard Time");
+	});
+
 	test("create_event refuses mixed, reversed or unzoned times, unknown zones and odd text", async () => {
 		const FOCUS = { subject: "Focus", start: "2026-10-05T10:00:00+02:00", end: "2026-10-05T11:30:00+02:00" };
 		const OFFSITE = { subject: "Offsite", start: "2026-10-12", end: "2026-10-14", time_zone: "Europe/Berlin" };

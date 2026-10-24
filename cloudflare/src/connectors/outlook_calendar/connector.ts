@@ -85,7 +85,7 @@ function checkZone(value: string): string {
 
 /** The zone Graph is sent for an all-day event (zones.ts), or null when no zone it takes keeps this one's offsets. */
 function allDayZone(data: CreateEventData): string | null {
-	return data.time_zone === null ? null : graphZone(data.time_zone, Number(data.start.slice(0, 4)), Number(data.end.slice(0, 4)));
+	return data.time_zone === null ? null : graphZone(data.time_zone, data.start, data.end);
 }
 
 function checkCalendarRef(value: string): string {

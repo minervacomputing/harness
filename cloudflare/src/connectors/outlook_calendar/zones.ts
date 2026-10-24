@@ -1,6 +1,6 @@
 // The time zones Graph takes (dateTimeTimeZone): Windows names, and the IANA names it documents besides them
 // ("Additional time zones"), with UTC. An IANA zone it does not list is sent as the Windows zone whose
-// offsets it keeps over the event's years.
+// offsets it keeps at the event's midnights and over the start's year.
 
 import { isTimeZone } from "../../lib/dates.ts";
 
@@ -179,14 +179,24 @@ const WINDOWS_BY_NAME: ReadonlyMap<string, string> = new Map(WINDOWS_ZONES.map((
 const DAY_MS = 86_400_000;
 const formats = new Map<string, Intl.DateTimeFormat>();
 
-/** The zone's offset from UTC at `ms`, as Intl writes it (GMT+01:00). */
-function offsetAt(zone: string, ms: number): string {
+/** The zone's offset from UTC at `ms`, in milliseconds. */
+function offsetAt(zone: string, ms: number): number {
 	let format = formats.get(zone);
 	if (format === undefined) {
 		format = new Intl.DateTimeFormat("en-US", { timeZone: zone, timeZoneName: "longOffset" });
 		formats.set(zone, format);
 	}
-	return format.formatToParts(ms).find((part) => part.type === "timeZoneName")?.value ?? "";
+	// "GMT" at UTC, else "GMT+01:00".
+	const name = format.formatToParts(ms).find((part) => part.type === "timeZoneName")?.value ?? "";
+	const found = /^GMT([+-])(\d\d):(\d\d)$/.exec(name);
+	if (found === null) return 0;
+	return (found[1] === "-" ? -1 : 1) * (Number(found[2]) * 60 + Number(found[3])) * 60_000;
+}
+
+/** When the day `date` (YYYY-MM-DD) begins in the zone. */
+function midnight(zone: string, date: string): number {
+	const wall = Date.parse(`${date}T00:00:00Z`);
+	return wall - offsetAt(zone, wall - offsetAt(zone, wall));
 }
 
 /** Whether the zone is one Graph takes, or an IANA zone that may have a Windows zone to stand for it. */
@@ -195,18 +205,20 @@ export function knownZone(zone: string): boolean {
 }
 
 /**
- * The zone Graph is sent for an event in `zone` between the years given: the zone itself when Graph lists it, a
- * Windows name as Windows spells it, else the first Windows zone whose IANA zone has the same offset every day of
- * those years; null when none does.
+ * The zone Graph is sent for an all-day event in `zone` from the day `start` to the day `end` (YYYY-MM-DD): the zone
+ * itself when Graph lists it, a Windows name as Windows spells it, else the first Windows zone whose IANA zone has
+ * the same offset at both midnights and every day of the start's year, which stands for the zone in Outlook; null
+ * when none does. One year keeps the work bounded however long the event is.
  */
-export function graphZone(zone: string, fromYear: number, toYear: number): string | null {
+export function graphZone(zone: string, start: string, end: string): string | null {
 	if (ZONES.has(zone)) return zone;
 	const windows = WINDOWS_BY_NAME.get(zone.toLowerCase());
 	if (windows !== undefined) return windows;
 	if (!isTimeZone(zone)) return null;
-	const days: number[] = [];
-	for (let ms = Date.UTC(fromYear, 0, 1, 12); ms < Date.UTC(toYear + 1, 0, 1); ms += DAY_MS) days.push(ms);
-	const offsets = days.map((ms) => offsetAt(zone, ms));
-	const found = WINDOWS_ZONES.find(([, iana]) => days.every((ms, index) => offsetAt(iana, ms) === offsets[index]));
+	const year = Number(start.slice(0, 4));
+	const instants = [midnight(zone, start), midnight(zone, end)];
+	for (let ms = Date.UTC(year, 0, 1, 12); ms < Date.UTC(year + 1, 0, 1); ms += DAY_MS) instants.push(ms);
+	const offsets = instants.map((ms) => offsetAt(zone, ms));
+	const found = WINDOWS_ZONES.find(([, iana]) => instants.every((ms, index) => offsetAt(iana, ms) === offsets[index]));
 	return found === undefined ? null : found[0];
 }
