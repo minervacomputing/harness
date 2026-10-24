@@ -76,7 +76,7 @@ A read Google answers busy (429, a 5xx, or a 403 `rateLimitExceeded` or `userRat
 
 ### Google Calendar
 
-**Agents can:** list calendars, list and read events, and create events without guests.
+**Agents can:** list calendars, list and read events, and create events without guests. A created event's start and end may be local times with its time zone, which Google places, so an event after a change of daylight saving time is not an hour off.
 
 ### Google Drive
 

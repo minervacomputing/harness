@@ -95,7 +95,7 @@ describe("the declarations", () => {
 			"google_calendar.list_calendars": "2d9e75ec6b24ca0e",
 			"google_calendar.list_events": "8974ff002eb136c0",
 			"google_calendar.get_event": "a5f70f9ee4d4314a",
-			"google_calendar.create_event": "d529f0f6b4ff3d51",
+			"google_calendar.create_event": "355a4bac153c14c1",
 			"google_drive.list_folder": "321e83051695a607",
 			"google_drive.search_files": "f7635ee6fe536498",
 			"google_drive.get_file": "c053c77e57efb812",

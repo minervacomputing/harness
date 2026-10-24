@@ -15,7 +15,7 @@ import { type Json, parseJson } from "../../lib/json.ts";
 import { sliceText } from "../../lib/text.ts";
 import { TENANCY, googleTenants, oauth } from "../google/index.ts";
 import { type EventTime, type GoogleCalendar, GoogleCalendarClient, type GoogleEvent, calendarName } from "./client.ts";
-import { epochMicros, isDate, isTimeZone, parseDate, parseZonedDateTime } from "../../lib/dates.ts";
+import { epochMicros, isDate, isTimeZone, parseDate, parseDateTime, parseZonedDateTime } from "../../lib/dates.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const CALENDAR = "calendar";
@@ -32,7 +32,8 @@ export const READ_CONSENT = [[READ_SCOPE], [FULL_SCOPE]];
 export const WRITE_CONSENT = [[READ_SCOPE, EVENTS_SCOPE], [FULL_SCOPE]];
 
 export const DATE_TIME_MESSAGE = "must be an RFC 3339 date-time with an offset, like 2026-10-01T09:00:00+02:00";
-export const DATE_OR_DATE_TIME_MESSAGE = "must be a date such as 2026-10-01, or an RFC 3339 date-time with an offset";
+export const DATE_OR_DATE_TIME_MESSAGE = "must be a date such as 2026-10-01, or an RFC 3339 date-time such as 2026-10-01T09:00:00, with or without an offset";
+export const LOCAL_TIME_MESSAGE = "must be an RFC 3339 date-time with an offset, or a local date-time with time_zone";
 
 /** Whether an id is more than dots. */
 function notDots(value: string): boolean {
@@ -49,7 +50,7 @@ const EventId = () =>
 		.regex(/^[A-Za-z0-9_@.-]+$/)
 		.refine(notDots, { message: "is not a valid id" });
 const ZonedDateTime = () => z.string().trim().max(40).refine((value) => parseZonedDateTime(value) !== null, DATE_TIME_MESSAGE);
-const DateOrDateTime = () => z.string().trim().max(40).refine((value) => isDate(value) || parseZonedDateTime(value) !== null, DATE_OR_DATE_TIME_MESSAGE);
+const DateOrDateTime = () => z.string().trim().max(40).refine((value) => isDate(value) || parseDateTime(value) !== null, DATE_OR_DATE_TIME_MESSAGE);
 
 export interface CalendarOptions {
 	/** How many pages of the calendar list a call may read (MAX_CALENDAR_PAGES). */
@@ -147,22 +148,37 @@ const CreateEvent = z
 	.strictObject({
 		calendar_id: CalendarId(),
 		summary: z.string().trim().min(1).max(300),
-		start: DateOrDateTime().describe("YYYY-MM-DD for an all-day event, or an RFC 3339 date-time with an offset."),
+		start: DateOrDateTime().describe(
+			"YYYY-MM-DD for an all-day event, or an RFC 3339 date-time: local, like 2026-10-01T09:00:00, with time_zone, which Google then places (daylight saving time included), or with an offset.",
+		),
 		end: DateOrDateTime().describe("Same format as start. For all-day events, the day after the last day."),
 		time_zone: z.string().trim().max(64)
 			.refine(isTimeZone, "must be an IANA time zone, like Europe/Berlin")
 			.nullable()
-			.default(null),
+			.default(null)
+			.describe("The IANA time zone of the event, like Europe/Zurich; needed for local start and end times."),
 		description: z.string().trim().max(8000).nullable().default(null),
 		location: z.string().trim().max(500).nullable().default(null),
 	})
 	.superRefine((data, ctx) => {
-		const [start, end] = [parseDate(data.start) ?? parseZonedDateTime(data.start), parseDate(data.end) ?? parseZonedDateTime(data.end)];
+		const [start, end] = [parseDate(data.start) ?? parseDateTime(data.start), parseDate(data.end) ?? parseDateTime(data.end)];
 		if (start === null || end === null) return;
 		if ("hour" in start !== "hour" in end) {
 			ctx.addIssue({ code: "custom", message: "start and end must both be dates or both be date-times", input: data });
 			return;
 		}
+		const [startTime, endTime] = [parseDateTime(data.start), parseDateTime(data.end)];
+		if (startTime !== null && endTime !== null) {
+			if ((startTime.offset === null) !== (endTime.offset === null)) {
+				ctx.addIssue({ code: "custom", message: "start and end must both have an offset, or neither", input: data });
+				return;
+			}
+			if (startTime.offset === null && data.time_zone === null) {
+				for (const key of ["start", "end"] as const) ctx.addIssue({ code: "custom", message: LOCAL_TIME_MESSAGE, path: [key], input: data[key] });
+				return;
+			}
+		}
+		// Local times compare as wall-clock times in the one zone.
 		if (epochMicros(end) <= epochMicros(start)) ctx.addIssue({ code: "custom", message: "end must be after start", input: data });
 	});
 

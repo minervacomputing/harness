@@ -353,6 +353,24 @@ describe("runs through the executor", () => {
 		expect(decodeURIComponent(lastUrl.pathname).startsWith(`/calendar/v3/calendars/${PRIMARY}/`)).toBe(true);
 	});
 
+	test("an event in a time zone may be given in local time, which Google places across a change of daylight saving time", async () => {
+		const google = new FakeCalendar();
+		const run = await start(google, [...BASE_SCOPES, EVENTS_SCOPE], calendars({ [UNIVERSITY]: ["read", "create"] }));
+		// Europe/Zurich leaves summer time on 2026-10-25: 9:00 the next day is at +01:00, not +02:00.
+		const local = { calendar_id: UNIVERSITY, summary: "Standup", start: "2026-10-26T09:00:00", end: "2026-10-26T09:30:00", time_zone: "Europe/Zurich" };
+		await run.ok("google_calendar_create_event", local);
+		const [, body] = google.created.at(-1) as [URL, JsonObject];
+		expect([body.start, body.end]).toEqual([
+			{ dateTime: "2026-10-26T09:00:00", timeZone: "Europe/Zurich" },
+			{ dateTime: "2026-10-26T09:30:00", timeZone: "Europe/Zurich" },
+		]);
+		const refusal = async (input: JsonObject) => (await run.error("google_calendar_create_event", input)).message;
+		expect(await refusal({ ...local, time_zone: null })).toContain("start: must be an RFC 3339 date-time with an offset, or a local date-time with time_zone");
+		expect(await refusal({ ...local, end: "2026-10-26T09:30:00+01:00" })).toContain("start and end must both have an offset, or neither");
+		expect(await refusal({ ...local, end: "2026-10-26T08:30:00" })).toContain("end must be after start");
+		expect(google.created).toHaveLength(1);
+	});
+
 	test("a disabled Calendar API is explained and the connection kept", async () => {
 		const google = new FakeCalendar();
 		const run = await start(google, BASE_SCOPES, READS);
