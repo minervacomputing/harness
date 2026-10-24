@@ -250,9 +250,9 @@ describe("arguments", () => {
 		return "ok" in found ? "ok" : (/^Invalid arguments\. ([\w.]+):/.exec(found.refused)?.[1] ?? found.refused);
 	};
 
-	test("a file's content is trimmed and at most a megabyte of UTF-8", async () => {
-		expect(await validated(connector, "create_file", { folder_id: "docs", name: "x", content: "  padded  " })).toEqual({
-			ok: { folder_id: "docs", name: "x", content: "padded", as_document: false },
+	test("a file's content is kept as given and at most a megabyte of UTF-8", async () => {
+		expect(await validated(connector, "create_file", { folder_id: "docs", name: "x", content: "  padded\n" })).toEqual({
+			ok: { folder_id: "docs", name: "x", content: "  padded\n", as_document: false },
 		});
 		const cases: [Json, string][] = [
 			[{ folder_id: "docs", name: "x", content: "" }, "ok"],
@@ -396,7 +396,7 @@ describe("runs through the executor", () => {
 		expect(run.tools).toContain("google_drive_read_file");
 
 		run = await start(google, WRITE_SCOPES, { docs: ["read", "create"] });
-		const args = { folder_id: "drafts", name: "Idea", content: "Zażółć\nline two", as_document: true };
+		const args = { folder_id: "drafts", name: "Idea", content: "  - Zażółć\nline two\n", as_document: true };
 		const outcome = await run.ok("google_drive_create_file", args);
 		const [created] = outcome.result.items;
 		expect([created?.id, created?.parent_id, created?.type]).toEqual(["new1", "drafts", "document"]);
@@ -405,7 +405,7 @@ describe("runs through the executor", () => {
 		expect(upload.searchParams.get("ignoreDefaultVisibility")).toBe("true");
 		expect(upload.searchParams.get("supportsAllDrives")).toBe("true");
 		expect(google.files.new1?.mimeType).toBe(GOOGLE_DOC);
-		expect(google.contents.new1).toBe("Zażółć\nline two");
+		expect(google.contents.new1).toBe("  - Zażółć\nline two\n");
 		expect(body).toContain('{"name":"Idea","parents":["drafts"],"mimeType":"application/vnd.google-apps.document"}');
 
 		expect(await run.code("google_drive_create_file", { ...args, folder_id: "private" })).toBe("POLICY_DENIED");

@@ -574,7 +574,7 @@ export const CreateFile = z
 	.strictObject({
 		folder_id: FolderId(),
 		name: after(singleLineOf(z.string().trim().min(1).max(200).describe("The new file's name, with its extension.")), fileName),
-		content: after(z.string().trim().max(MAX_UPLOAD_BYTES), uploadSize),
+		content: after(z.string().max(MAX_UPLOAD_BYTES), uploadSize),
 	});
 
 const CREATE_FILE = defineOperation<z.output<typeof CreateFile>>({

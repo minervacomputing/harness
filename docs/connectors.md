@@ -82,7 +82,7 @@ A read Google answers busy (429, a 5xx, or a 403 `rateLimitExceeded` or `userRat
 
 Folders are chosen in a tree. Access to a folder covers everything inside it.
 
-**Agents can:** list folders, search, read file details, read Google Docs, Sheets, Slides and text files as text, and create text files or Google Docs in a folder. Creating files needs full Drive access, because Google's narrower scope cannot add files to folders Minerva did not create.
+**Agents can:** list folders, search, read file details, read Google Docs, Sheets, Slides and text files as text, and create text files or Google Docs in a folder, their content kept as written, leading and trailing whitespace included. Creating files needs full Drive access, because Google's narrower scope cannot add files to folders Minerva did not create.
 
 ### Gmail
 
@@ -174,7 +174,7 @@ OneDrive and SharePoint use the Entra app from [Outlook](#outlook). Add another 
 
 Click **Connections → Connect OneDrive and SharePoint**, then choose per library, folder or file (or for everything) whether agents may read files and create them. The choices offered are the account's own OneDrive and the document libraries of the SharePoint sites it follows; searching finds folders and files anywhere the account can open, shared ones included. Access to a folder or library covers everything inside it. Minerva asks Microsoft for read access at first (`Files.Read.All`, and `Sites.Read.All` to list followed sites), and for `Files.ReadWrite.All` once the user allows creating files. Only `Files.Read.All` is needed to read, since Microsoft left `Sites.Read.All` out of a personal account's token on staging (2026-10-24); personal accounts have no SharePoint, and their followed sites are never looked up. A work account whose token lacks `Sites.Read.All`, say where an administrator approved files but not sites, lists only its own OneDrive when Graph refuses its followed sites, marked incomplete for the agent but not in the choices the connection's panel offers; it still reaches their libraries through search or a folder's id.
 
-**Agents can:** list the account's OneDrive and the libraries of the SharePoint sites it follows, list a folder, search files (Microsoft Search for work and school accounts), read a file's details, read the text of Word, PowerPoint, Excel (first sheet, as CSV) and text files, and create text files without replacing existing ones.
+**Agents can:** list the account's OneDrive and the libraries of the SharePoint sites it follows, list a folder, search files (Microsoft Search for work and school accounts), read a file's details, read the text of Word, PowerPoint, Excel (first sheet, as CSV) and text files, and create text files, their content kept byte for byte, without replacing existing ones.
 
 A file's bytes come from Graph's `/content` request for the item, which Graph answers with a redirect to a short-lived download address that needs no token. Minerva fetches that address without the account's token, only over HTTPS from Microsoft's file hosts (`*.sharepoint.com`, `*.1drv.com` and `*.microsoftpersonalcontent.com`), and follows no further redirect; any other answer to `/content` is refused, since Graph documents only the redirect. Minerva does not ask for the download address Graph can add to an item (`@microsoft.graph.downloadUrl`): on staging (2026-10-24), Graph left it out of every item of a personal account, files included, although it was asked for, so reading a file failed.
 

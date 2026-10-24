@@ -756,7 +756,7 @@ describe("creating files", () => {
 		expect(run.tools).toContain("onedrive_read_file");
 
 		run = await start(graph, { [`${ME}:docs`]: ["read", "create"] }, { scopes: WRITE_SCOPES });
-		const args = { folder_id: `${ME}:projects`, name: "Idea #1.md", content: "Zażółć\nline two" };
+		const args = { folder_id: `${ME}:projects`, name: "Idea #1.md", content: "  - Zażółć\nline two\n\n" };
 		const created = await items(run, "onedrive_create_file", args);
 		expect(created).toHaveLength(1);
 		expect([created[0]?.id, created[0]?.parent_id, created[0]?.type]).toEqual([`${ME}:new1`, `${ME}:projects`, "file"]);
@@ -765,7 +765,7 @@ describe("creating files", () => {
 		expect(upload.rawPath.startsWith("/v1.0/drives/b%21me/items/projects:/Idea%20%231.md:/content")).toBe(true);
 		expect(upload.params["@microsoft.graph.conflictBehavior"]).toBe("fail");
 		expect(upload.headers.get("content-type")).toBe("text/plain; charset=utf-8");
-		expect(new TextDecoder().decode(graph.contents.get("new1"))).toBe("Zażółć\nline two");
+		expect(new TextDecoder().decode(graph.contents.get("new1"))).toBe("  - Zażółć\nline two\n\n");
 
 		const taken = await run.error("onedrive_create_file", { ...args, name: "PLAN.txt" });
 		expect([taken.code, taken.message.includes("already exists")]).toEqual(["PROVIDER_REJECTED", true]);
@@ -1155,7 +1155,7 @@ describe("file kinds, cursors and tool inputs", () => {
 		["get_file", { file_id: "root" }, { file_id: "root" }],
 		["read_file", { file_id: `${ME}:plan` }, { file_id: `${ME}:plan`, max_chars: 20000 }],
 		["read_file", { file_id: `${ME}:plan`, max_chars: 100000 }, { file_id: `${ME}:plan`, max_chars: 100000 }],
-		["create_file", { folder_id: `${ME}:docs`, name: " Idea #1.md ", content: " Zażółć\nline two\r\n" }, { folder_id: `${ME}:docs`, name: "Idea #1.md", content: "Zażółć\nline two" }],
+		["create_file", { folder_id: `${ME}:docs`, name: " Idea #1.md ", content: " Zażółć\nline two\r\n" }, { folder_id: `${ME}:docs`, name: "Idea #1.md", content: " Zażółć\nline two\r\n" }],
 		...["con .txt", "conx", "com10", "forms.txt", "Desktop.ini.txt", "a~$b", ".a", "K", "conİ", "COM¹", "ＣＯＮ", "é.txt", "\u{1f600}.txt"].map(
 			(name): [string, Json, Json] => ["create_file", { folder_id: `${ME}:docs`, name, content: "" }, { folder_id: `${ME}:docs`, name, content: "" }],
 		),

@@ -258,7 +258,7 @@ const ReadFile = z.strictObject({ file_id: FileId(), max_chars: z.int().min(1).m
 const CreateFile = z.strictObject({
 	folder_id: FolderId(),
 	name: SingleLine(),
-	content: z.string().trim().max(MAX_UPLOAD_BYTES).refine((value) => utf8(value).length <= MAX_UPLOAD_BYTES, {
+	content: z.string().max(MAX_UPLOAD_BYTES).refine((value) => utf8(value).length <= MAX_UPLOAD_BYTES, {
 		message: `must be at most ${MAX_UPLOAD_BYTES} bytes as UTF-8`,
 	}),
 	as_document: z.boolean().default(false).describe("Convert the text into a Google Doc instead of a plain text file."),
