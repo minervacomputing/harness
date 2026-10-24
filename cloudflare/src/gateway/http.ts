@@ -17,6 +17,9 @@
 // - A fetch the platform refuses (private and non-Cloudflare IP literals) resolves to a 403 with
 //   "error code: 1003", or Cloudflare's error page for it when the request has an Accept header, rather than
 //   throwing; `platformRefusal` lets the Web connector recognise it.
+// - A client built with `retries` sends a read the provider answered busy (429, 5xx, a rate limit `classify`
+//   names) again after its Retry-After, or a short jittered backoff, but never waits longer than a few seconds
+//   and never into the time an open write needs. Each new send is checked by the call's binding like the first.
 
 import type { z } from "zod";
 import { concatAll, fromUtf8, utf8 } from "../lib/bytes.ts";
@@ -114,6 +117,11 @@ export interface ProviderHttpOptions {
 	 * goes by the status. `body` and `bytes` as for `classify`.
 	 */
 	judge?(response: Response, body: string, bytes: Uint8Array): Effect | null;
+	/**
+	 * How many times a read the provider answered busy is sent again: a 429, a 500, 502, 503 or 504, or an error
+	 * `classify` names PROVIDER_RATE_LIMITED. Default 0. A write is never sent again.
+	 */
+	retries?: number;
 }
 
 /**
@@ -139,6 +147,11 @@ export const MAX_ERROR_BODY = 64 * 1024;
 export const MAX_RESPONSE_BODY = 16 * 1024 * 1024;
 export const KEPT_ERROR_HEADERS: ReadonlySet<string> = new Set(["content-type", "retry-after", "x-ratelimit-remaining", "x-ratelimit-reset"]);
 export const DEFAULT_TIMEOUT_SECONDS = 20;
+/** The longest a busy read waits before it is sent again; a provider that asks for longer gets its error at once. */
+export const MAX_RETRY_WAIT_MS = 4000;
+/** A busy read's first wait when the provider names none, doubled for the next, each plus up to as much again. */
+export const RETRY_BASE_MS = 250;
+const BUSY_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504]);
 
 const NULL_BODY: ReadonlySet<number> = new Set([101, 103, 204, 205, 304]);
 /** Headers that describe the body as it was sent; the body returned is already decoded. */
@@ -342,8 +355,22 @@ function responseOf(exchanged: Exchanged, body: Uint8Array, keep: (name: string)
 	return new Response(NULL_BODY.has(exchanged.status) ? null : body, { status: exchanged.status, statusText: exchanged.statusText, headers });
 }
 
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function owned(error: OperationErrorShape): OperationError {
 	return error instanceof OperationError ? error : new OperationError(error.code, error.message);
+}
+
+/** Milliseconds a Retry-After header asks for, in seconds or as a date; null without one that parses. */
+export function retryAfterMs(value: string | null, now: number = Date.now()): number | null {
+	if (value === null) return null;
+	const trimmed = value.trim();
+	if (/^\d+$/.test(trimmed)) return Number(trimmed) * 1000;
+	// An HTTP date, which is always in GMT; Date.parse would read much else as a date.
+	const at = / GMT$/.test(trimmed) ? Date.parse(trimmed) : Number.NaN;
+	return Number.isNaN(at) ? null : Math.max(0, at - now);
 }
 
 export function defaultForbidden(provider: string): OperationErrorShape {
@@ -383,6 +410,7 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 	readonly #forbidden: (provider: string, response: Response) => OperationErrorShape;
 	readonly #classify: ProviderHttpOptions["classify"];
 	readonly #judge: ProviderHttpOptions["judge"];
+	readonly #retries: number;
 	#closed = false;
 
 	constructor(io: ProviderIo, options: ProviderHttpOptions) {
@@ -395,6 +423,7 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		this.#forbidden = options.forbidden ?? defaultForbidden;
 		this.#classify = options.classify;
 		this.#judge = options.judge;
+		this.#retries = options.retries ?? 0;
 	}
 
 	async close(): Promise<void> {
@@ -447,14 +476,32 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		return attempt;
 	}
 
+	/**
+	 * How long to wait before sending a read again after `error`, its `retry`th retry, or null to fail with it: the
+	 * provider is not busy, the retries are used up, it asks for longer than MAX_RETRY_WAIT_MS, or the wait would
+	 * leave the call's open write less than MIN_WRITE_MS.
+	 */
+	#busyWait(error: OperationError, response: Response, retry: number): number | null {
+		if (retry >= this.#retries) return null;
+		if (error.code !== "PROVIDER_RATE_LIMITED" && !(error.code === "PROVIDER_FAILED" && BUSY_STATUSES.has(response.status))) return null;
+		const asked = retryAfterMs(response.headers.get("retry-after"));
+		if (asked !== null && asked > MAX_RETRY_WAIT_MS) return null;
+		const base = asked ?? RETRY_BASE_MS * 2 ** retry;
+		const wait = Math.min(MAX_RETRY_WAIT_MS, base + Math.random() * (asked === null ? base : RETRY_BASE_MS));
+		const attempt = this.#io.currentWrite();
+		if (attempt !== null && !attempt.closed && attempt.deadline - this.#io.now() - wait < MIN_WRITE_MS) return null;
+		return wait;
+	}
+
 	#unavailable(cause: unknown): OperationError {
 		return new OperationError("PROVIDER_UNAVAILABLE", `${this.provider} could not be reached.`, { cause });
 	}
 
 	/**
-	 * Sends one request. `mutating` defaults by method; reads sent with POST must say so. With `redirects`,
-	 * a 3xx is returned for the caller to judge instead of being an error; redirects are never followed.
-	 * The body is read in full (up to MAX_RESPONSE_BODY) and returned decoded.
+	 * Sends one request, and a read the provider answered busy again up to `retries` times. `mutating` defaults by
+	 * method; reads sent with POST must say so. With `redirects`, a 3xx is returned for the caller to judge instead
+	 * of being an error; redirects are never followed. The body is read in full (up to MAX_RESPONSE_BODY) and
+	 * returned decoded.
 	 */
 	async request(request: ProviderRequest): Promise<Response> {
 		if (this.#closed) throw new ProgrammingError("Cannot send a request, as the client has been closed.");
@@ -464,6 +511,17 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		const url = this.#url(request);
 		const init = this.#init(request, method);
 		const attempt = mutating ? this.#beginWrite() : null;
+		for (let retry = 0; ; retry++) {
+			const sent = await this.#send(url, init, attempt, request.redirects ?? false);
+			if (sent.error === null) return sent.response;
+			const wait = attempt === null ? this.#busyWait(sent.error, sent.response, retry) : null;
+			if (wait === null) throw sent.error;
+			await sleep(wait);
+		}
+	}
+
+	/** One exchange of `request`: the response, and the error it maps to unless it is returned. */
+	async #send(url: string, init: RequestInit, attempt: WriteAttempt | null, redirects: boolean): Promise<{ response: Response; error: OperationError | null }> {
 		const phaseMs = attempt === null ? this.#timeoutMs : Math.min(this.#timeoutMs, attempt.deadline - this.#io.now());
 		let exchanged: Exchanged;
 		try {
@@ -497,9 +555,8 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		if (success && exchanged.over) throw this.unexpected();
 		const response = fresh();
 		// Every 3xx, with a Location or not; the caller judges it.
-		if (request.redirects && response.status >= 300 && response.status < 400) return response;
-		if (!success) throw this.error(response, text, body);
-		return response;
+		if (redirects && response.status >= 300 && response.status < 400) return { response, error: null };
+		return { response, error: success ? null : this.error(response, text, body) };
 	}
 
 	/** The body as JSON (parseJsonBytes); one that does not parse is an unexpected response. */
@@ -531,23 +588,25 @@ export class ProviderHTTP implements ProviderHttp, ProviderClient {
 		const method = request.method.toUpperCase();
 		const url = this.#url(request);
 		const init = this.#init(request, method);
-		let exchanged: Exchanged;
-		try {
-			exchanged = await exchange(this.#io, url, init, this.#timeoutMs, (status) => (isSuccess(status) ? limit : MAX_ERROR_BODY));
-		} catch (error) {
-			if (error instanceof NotSent || error instanceof ProgrammingError) throw error;
-			throw this.#unavailable(error);
+		for (let retry = 0; ; retry++) {
+			let exchanged: Exchanged;
+			try {
+				exchanged = await exchange(this.#io, url, init, this.#timeoutMs, (status) => (isSuccess(status) ? limit : MAX_ERROR_BODY));
+			} catch (error) {
+				if (error instanceof NotSent || error instanceof ProgrammingError) throw error;
+				throw this.#unavailable(error);
+			}
+			if (isSuccess(exchanged.status)) {
+				if (exchanged.over) throw owned(tooLarge);
+				return responseOf(exchanged, exchanged.body, (name) => !ENCODING_HEADERS.has(name));
+			}
+			const body = exchanged.body.subarray(0, MAX_ERROR_BODY);
+			const response = responseOf(exchanged, body, (name) => KEPT_ERROR_HEADERS.has(name));
+			const error = this.error(response, fromUtf8(body), body);
+			const wait = this.#busyWait(error, response, retry);
+			if (wait === null) throw error;
+			await sleep(wait);
 		}
-		if (isSuccess(exchanged.status)) {
-			if (exchanged.over) throw owned(tooLarge);
-			return responseOf(exchanged, exchanged.body, (name) => !ENCODING_HEADERS.has(name));
-		}
-		const body = exchanged.body.subarray(0, MAX_ERROR_BODY);
-		throw this.error(
-			responseOf(exchanged, body, (name) => KEPT_ERROR_HEADERS.has(name)),
-			fromUtf8(body),
-			body,
-		);
 	}
 
 	/** `bounded` with FILE_TOO_LARGE. */

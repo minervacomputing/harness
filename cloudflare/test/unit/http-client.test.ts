@@ -13,8 +13,10 @@ import {
 	NotSent,
 	ProgrammingError,
 	ProviderHTTP,
+	type ProviderHttpOptions,
 	REFUSED_STATUSES,
 	platformRefusal,
+	retryAfterMs,
 } from "../../src/gateway/http.ts";
 import { refusalPage } from "../fixtures/connectors/web/fake.ts";
 import { Gate, jsonResponse } from "./executor-fakes.ts";
@@ -151,6 +153,52 @@ describe("write accounting", () => {
 		const timedOut = await caught(late.http.request({ method: "PUT", path: "/w" }));
 		expect(timedOut).toMatchObject({ code: "TIMED_OUT", message: "The write was not sent because its time ran out." });
 		expect([short.sent, short.outcome(), late.sent.length]).toEqual([false, "not_applied", 0]);
+	});
+
+	test("a read the provider answered busy is sent again, within its retries, its Retry-After and the write's time; a write never is", async () => {
+		const answers = (...statuses: [number, string | null][]) => {
+			const queue = [...statuses];
+			return () => {
+				const [status, retryAfter] = queue.shift() ?? [200, null];
+				return jsonResponse(status, { ok: status === 200 }, retryAfter === null ? {} : { "retry-after": retryAfter });
+			};
+		};
+		const busy = { retries: 2, classify: (_provider: string, response: Response) => (response.status === 403 ? new OperationError("PROVIDER_RATE_LIMITED", "slow down") : null) };
+		const paths = async (respond: () => Response, send: (http: ProviderHTTP, io: CallIo) => Promise<unknown>, options: Partial<ProviderHttpOptions> = busy) => {
+			const { sent, http, io } = setup(respond, options);
+			const outcome = await send(http, io).then(
+				() => "ok",
+				(error: OperationError) => error.code,
+			);
+			return [outcome, sent.length];
+		};
+		const get = (http: ProviderHTTP) => http.json({ method: "GET", path: "/r" });
+		expect(await paths(answers([429, "0"], [503, null]), get)).toEqual(["ok", 3]);
+		expect(await paths(answers([403, "0"]), (http) => http.bounded({ method: "GET", path: "/r" }, 100, new OperationError("FILE_TOO_LARGE", "x")))).toEqual(["ok", 2]);
+		expect(await paths(answers([500, "0"], [502, "0"], [504, "0"]), get)).toEqual(["PROVIDER_FAILED", 3]);
+		expect(await paths(answers([429, "10"]), get)).toEqual(["PROVIDER_RATE_LIMITED", 1]);
+		expect(await paths(answers([404, null]), get)).toEqual(["NOT_FOUND", 1]);
+		expect(await paths(answers([400, "0"]), get)).toEqual(["PROVIDER_REJECTED", 1]);
+		expect(await paths(answers([429, "0"]), get, {})).toEqual(["PROVIDER_RATE_LIMITED", 1]);
+		const write = (http: ProviderHTTP, io: CallIo) => {
+			io.openWrite(clock + 60_000);
+			return http.request({ method: "POST", path: "/w" });
+		};
+		expect(await paths(answers([429, "0"]), write)).toEqual(["PROVIDER_RATE_LIMITED", 1]);
+		expect(await paths(answers([503, "0"]), write)).toEqual(["PROVIDER_FAILED", 1]);
+		// A read in a write's execute step waits only while the write keeps MIN_WRITE_MS.
+		const readBeforeWrite = (deadline: number) => (http: ProviderHTTP, io: CallIo) => {
+			io.openWrite(clock + deadline);
+			return get(http);
+		};
+		expect(await paths(answers([429, "1"]), readBeforeWrite(2500))).toEqual(["PROVIDER_RATE_LIMITED", 1]);
+		expect(await paths(answers([429, "1"]), readBeforeWrite(4000))).toEqual(["ok", 2]);
+	});
+
+	test("Retry-After is read in seconds or as a date", () => {
+		const now = Date.parse("2026-10-24T10:00:00Z");
+		expect([retryAfterMs("3", now), retryAfterMs(" 0 ", now), retryAfterMs("Sat, 24 Oct 2026 10:00:02 GMT", now), retryAfterMs("Sat, 24 Oct 2026 09:00:00 GMT", now)]).toEqual([3000, 0, 2000, 0]);
+		expect([retryAfterMs(null, now), retryAfterMs("soon", now), retryAfterMs("-1", now)]).toEqual([null, null, null]);
 	});
 
 	test("a write cannot be sent after its attempt was judged", async () => {

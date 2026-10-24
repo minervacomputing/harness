@@ -636,6 +636,16 @@ describe("reading", () => {
 		expect(await run.code("gmail_list_messages", { label: "INBOX", limit: 3 })).toBe("PROVIDER_FAILED");
 	});
 
+	test("a read Gmail answers with a rate limit is sent again", async () => {
+		const gmail = new FakeGmail();
+		const run = await start(gmail, label_("INBOX"));
+		let limited = 0;
+		const rateLimit = { error: { code: 403, message: "x", errors: [{ reason: "userRateLimitExceeded" }] } };
+		gmail.hook = (_method, path) => (path === "/messages" && limited++ < 2 ? jsonResponse(403, rateLimit) : null);
+		expect(ids(await run.ok("gmail_list_messages", { label: "INBOX", limit: 3 }))).toEqual([GRACE, HIDDEN, UNKNOWN]);
+		expect(limited).toBe(3);
+	});
+
 	test("a label renamed after authorization is refused", async () => {
 		const gmail = new FakeGmail();
 		const run = await start(gmail, label_(WORK));

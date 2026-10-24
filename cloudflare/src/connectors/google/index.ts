@@ -13,6 +13,8 @@ export const RATE_LIMITED: ReadonlySet<string> = new Set(["rateLimitExceeded", "
 /** The API is not enabled in the operator's Google Cloud project. */
 export const NOT_CONFIGURED: ReadonlySet<string> = new Set(["accessNotConfigured", "SERVICE_DISABLED"]);
 export const TOO_LARGE: ReadonlySet<string> = new Set(["exportSizeLimitExceeded"]);
+/** Google asks for reads it answered busy (429, 5xx, the rate limit 403s) to be sent again after a backoff. */
+export const RETRIES = 2;
 
 /** The Google app's OAuth declaration, with `openid email` and the connector's base scopes. */
 export function oauth(...scopes: string[]): Extract<Auth, { type: "oauth2" }> {

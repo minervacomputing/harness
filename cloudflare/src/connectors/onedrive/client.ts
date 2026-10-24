@@ -14,7 +14,7 @@ import { z } from "zod";
 import { OperationError } from "../../gateway/connector.ts";
 import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import { type Json, parseJsonBytes } from "../../lib/json.ts";
-import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, classify, errorCode, pageParam } from "../microsoft/index.ts";
+import { API_URL, type Classify, Graph, MAX_RESPONSE_BYTES, RETRIES, classify, errorCode, pageParam } from "../microsoft/index.ts";
 import { percentEncode } from "../../lib/text.ts";
 
 export const ITEM_FIELDS = "id,name,size,file,folder,root,package,remoteItem,parentReference,webUrl,lastModifiedDateTime";
@@ -127,7 +127,7 @@ export class DriveClient extends Graph {
 
 	constructor(accessToken: string, io: ProviderIo, baseUrl: string = API_URL) {
 		super("OneDrive", accessToken, io, { baseUrl, classify: driveClassify });
-		this.files = new ProviderHTTP(io, { provider: "OneDrive", baseUrl: "", headers: {} });
+		this.files = new ProviderHTTP(io, { provider: "OneDrive", baseUrl: "", headers: {}, retries: RETRIES });
 	}
 
 	override async close(): Promise<void> {

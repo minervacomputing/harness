@@ -693,6 +693,21 @@ describe("reading", () => {
 		expect(await run.code("outlook_list_messages", { folder: INBOX })).toBe("CONNECTION_UNAUTHORIZED");
 	});
 
+	test("a read Graph throttles is sent again after its Retry-After, and a reply it throttles is not", async () => {
+		const graph = new FakeGraph();
+		const run = await start(graph, { ...folder(INBOX), ...recipient("grace@example.com") });
+		let throttled = 0;
+		graph.hook = (method) => (throttled++ < 2 ? new Response(null, { status: method === "POST" ? 429 : 503, headers: { "retry-after": "1" } }) : null);
+		const before = performance.now();
+		expect(await ids(run, "outlook_list_messages", { folder: INBOX })).toEqual([FROM_GRACE, LEGACY]);
+		expect(performance.now() - before).toBeGreaterThanOrEqual(2000);
+		const requests = graph.requests.length;
+		throttled = 0;
+		graph.hook = (method) => (method === "POST" ? new Response(null, { status: 429, headers: { "retry-after": "0" } }) : null);
+		expect(await run.code("outlook_reply", { message: FROM_GRACE, body: "Thanks" })).toBe("PROVIDER_RATE_LIMITED");
+		expect(graph.requests.slice(requests).filter((request) => request.method === "POST")).toHaveLength(1);
+	});
+
 	test("a response that does not fit is an unexpected one, and Graph's text never reaches the model", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, folder(INBOX));

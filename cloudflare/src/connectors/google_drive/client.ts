@@ -7,7 +7,7 @@ import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import { concat, utf8 } from "../../lib/bytes.ts";
 import { type JsonObject } from "../../lib/json.ts";
 import { tokenHex } from "../../lib/random.ts";
-import { GoogleUser, USERINFO_URL, classify } from "../google/index.ts";
+import { GoogleUser, RETRIES, USERINFO_URL, classify } from "../google/index.ts";
 
 export const API_URL = "https://www.googleapis.com/drive/v3";
 export const UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files";
@@ -91,6 +91,7 @@ export class GoogleDriveClient implements ProviderClient {
 			baseUrl: options.baseUrl ?? API_URL,
 			headers: { Authorization: `Bearer ${accessToken}` },
 			classify,
+			retries: RETRIES,
 		});
 	}
 

@@ -8,7 +8,7 @@ import { z } from "zod";
 import { OperationError, type OperationErrorShape, type ProviderClient } from "../../gateway/connector.ts";
 import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import { type Json, parseJsonBytes } from "../../lib/json.ts";
-import { GoogleUser, USERINFO_URL, classify as googleClassify, reasons } from "../google/index.ts";
+import { GoogleUser, RETRIES, USERINFO_URL, classify as googleClassify, reasons } from "../google/index.ts";
 
 export const API_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
 /** Message, thread and label ids. Gmail's message and thread ids are hex; user label ids are `Label_<n>`. */
@@ -124,6 +124,7 @@ export class GmailClient implements ProviderClient {
 			baseUrl: options.baseUrl ?? API_URL,
 			headers: { Authorization: `Bearer ${accessToken}` },
 			classify,
+			retries: RETRIES,
 		});
 	}
 

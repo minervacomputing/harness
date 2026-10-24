@@ -72,6 +72,8 @@ Create an OAuth client of type **Web application** in the Google Cloud console, 
 
 Click **Connections → Connect Google Calendar** (or Drive, or Gmail), then choose per calendar, per file or folder, or per label what agents may do. Minerva asks Google only for read access at first, and for write scopes once the user allows creating.
 
+A read Google answers busy (429, a 5xx, or a 403 `rateLimitExceeded` or `userRateLimitExceeded`) is sent up to twice more, after its Retry-After or a short jittered backoff, unless Google asks for more than 4 seconds. Writes are never sent again.
+
 ### Google Calendar
 
 **Agents can:** list calendars, list and read events, and create events without guests.
@@ -147,6 +149,8 @@ Click **Connections → Connect Slack**, then choose per channel what agents may
 Register an app in the Microsoft Entra admin center (<https://entra.microsoft.com>, **App registrations → New registration**) and set `MINERVA_MICROSOFT_CLIENT_ID` (the Application (client) ID) and `MINERVA_MICROSOFT_CLIENT_SECRET` (a secret's value from **Certificates & secrets**). Choose **Accounts in any organizational directory and personal Microsoft accounts**, and add a **Web** redirect URI `{app_url}/oauth/outlook/callback` (for example `{app_url}/oauth/outlook/callback`). Under **API permissions**, add the Microsoft Graph delegated permissions `offline_access`, `User.Read`, `Mail.Read` and `Mail.Send`. Some organizations let only an administrator consent to mail permissions; there, an admin must grant consent for the tenant. Without the client, Outlook is not offered.
 
 Click **Connections → Connect Outlook**, then choose per folder what agents may read, and which addresses or domains they may send mail to. Access to a folder covers its subfolders. Minerva asks Microsoft only for read access at first, and for `Mail.Send` once the user allows sending.
+
+Graph allows four concurrent requests per app and mailbox, shared by Outlook and Outlook Calendar. Minerva names folders two at a time, and sends a read Graph throttles (429 or 503) or fails with a 5xx up to twice more, after its Retry-After or a short jittered backoff, unless Graph asks for more than 4 seconds. This holds for every Microsoft connector. Writes are never sent again.
 
 **Agents can:** list folders, list a folder's messages (filtered by unread and received time, or searched), read a message as plain text with the names of its attachments, send plain-text mail, and reply to a message they may read. Recipients are checked as in [Gmail](#gmail), replies included.
 

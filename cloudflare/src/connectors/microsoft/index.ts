@@ -18,6 +18,8 @@ export const GRAPH = "https://graph.microsoft.com";
 export const API_URL = `${GRAPH}/v1.0`;
 export const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 export const IMMUTABLE_IDS = 'IdType="ImmutableId"';
+/** Graph asks for throttled reads (429, 503) to be sent again after their Retry-After. */
+export const RETRIES = 2;
 /** Graph's ids are URL-safe base64. */
 export const ID = /^[A-Za-z0-9=_-]{10,512}$/;
 const SKIP = /^\d{1,6}$/u;
@@ -149,6 +151,7 @@ export class Graph implements ProviderClient {
 			headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json", Prefer: IMMUTABLE_IDS },
 			forbidden: defaultForbidden,
 			classify: options.classify ?? classify,
+			retries: RETRIES,
 		});
 	}
 

@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { ProviderClient } from "../../gateway/connector.ts";
 import { ProviderHTTP, type ProviderIo, segment } from "../../gateway/http.ts";
 import type { Json } from "../../lib/json.ts";
-import { GoogleUser, USERINFO_URL, classify } from "../google/index.ts";
+import { GoogleUser, RETRIES, USERINFO_URL, classify } from "../google/index.ts";
 
 export const API_URL = "https://www.googleapis.com/calendar/v3";
 
@@ -82,6 +82,7 @@ export class GoogleCalendarClient implements ProviderClient {
 			baseUrl: options.baseUrl ?? API_URL,
 			headers: { Authorization: `Bearer ${accessToken}` },
 			classify,
+			retries: RETRIES,
 		});
 	}
 
