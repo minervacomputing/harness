@@ -383,6 +383,26 @@ describe("grants and the ancestry of items", () => {
 		expect([caught.code, caught.message.includes(`${OTHER}:shared`)]).toEqual(["UNSUPPORTED_FILE", true]);
 	});
 
+	test("libraries need only file consent: without Sites.Read.All, the account's own OneDrive", async () => {
+		// The scopes Microsoft granted a personal account that was asked for Sites.Read.All.
+		const personal = ["Calendars.Read", "Files.Read.All", "Files.ReadWrite.All", "Mail.Read", "User.Read"];
+		const graph = new FakeGraph(true);
+		let run = await start(graph, { "*": ["read"] }, { scopes: personal });
+		let outcome = await run.ok("onedrive_list_libraries", {});
+		expect([(outcome.result.items as Item[]).map((item) => [item.id, item.name]), outcome.result.incomplete]).toEqual([[[`${PERSONAL.toLowerCase()}:root-me`, "OneDrive"]], undefined]);
+
+		// A work account whose token lacks Sites.Read.All: Graph refuses its followed sites, which are left out.
+		const work = new FakeGraph();
+		const scopes = ["Files.Read.All", "User.Read", "openid", "profile"];
+		work.hook = (request) => (request.path.endsWith("/me/followedSites") ? jsonResponse(200, { value: [], "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/followedSites?$skiptoken=25" }) : null);
+		run = await start(work, { "*": ["read"] }, { scopes });
+		expect((await run.ok("onedrive_list_libraries", {})).result.incomplete).toBe(true);
+		work.hook = (request) => (request.path.endsWith("/me/followedSites") ? FakeGraph.error(403, "accessDenied") : null);
+		run = await start(work, { "*": ["read"] }, { scopes });
+		outcome = await run.ok("onedrive_list_libraries", {});
+		expect([(outcome.result.items as Item[]).map((item) => [item.id, item.name]), outcome.result.incomplete]).toEqual([[[`${ME}:root-me`, "OneDrive"]], true]);
+	});
+
 	test("a library grant covers the library only", async () => {
 		const graph = new FakeGraph();
 		const run = await start(graph, { [`${TEAM}:root-team`]: ["read"] });

@@ -46,7 +46,6 @@ import { type Kind, extract, isKind } from "./office.ts";
 export const ITEM = "item";
 export const READ_CONSENT = consent("Files.Read.All", "Files.ReadWrite.All");
 export const WRITE_CONSENT = consent("Files.ReadWrite.All");
-export const SITES_CONSENT = consent("Sites.Read.All", "Sites.ReadWrite.All");
 
 export const ROOT = "root";
 export const CONCURRENCY = 8;
@@ -289,7 +288,7 @@ async function libraries(client: DriveClient): Promise<[[DriveItem, string][], b
 		[sites, more] = await client.followedSites(MAX_SITES);
 	} catch (error) {
 		if (!unseen(error)) throw error;
-		return [found, false];
+		return [found, true];
 	}
 	const perSite = await mapLimited(sites, CONCURRENCY, async (site) => {
 		try {
@@ -330,10 +329,13 @@ const LIST_LIBRARIES = defineOperation<z.output<typeof ListLibraries>>({
 		"List where files live: your own OneDrive, and the document libraries of the SharePoint sites " +
 		`you follow (up to ${MAX_SITES} sites). Libraries you may not read are left out; you may still ` +
 		"have access to folders inside them, which list_folder and search_files reach. incomplete: true " +
-		"means you follow more sites than were listed.",
+		"means sites were left out: you follow more than were listed, or Microsoft did not let Minerva " +
+		"list them. search_files still finds files in them.",
 	input: ListLibraries,
 	needs: [[ITEM, "read"]],
-	consent: SITES_CONSENT,
+	// Not Sites.Read.All, which Microsoft leaves out of personal accounts' tokens: a refused lookup of followed
+	// sites leaves them out (`libraries`), so reading files never waits on a scope the account cannot be given.
+	consent: READ_CONSENT,
 	async prepare(binding): Promise<Prepared> {
 		const tree = new Tree(clientOf(binding));
 		return {
@@ -674,7 +676,8 @@ export function onedriveConnector(options: { baseUrl?: string } = {}): Connector
 			{ id: "create", label: "Create files", requires: "read" },
 		],
 		// Reading is enough to connect; writing is asked for once the user allows an agent to create files.
-		// Sites.Read.All lists the SharePoint sites the account follows, and their libraries.
+		// Sites.Read.All lists the SharePoint sites a work account follows, and their libraries; Microsoft does not grant
+		// it to personal accounts, which have none.
 		auth: oauth("Files.Read.All", "Sites.Read.All"),
 		tenancy: TENANCY,
 		operations: [LIST_LIBRARIES, LIST_FOLDER, SEARCH_FILES, GET_FILE, READ_FILE, CREATE_FILE],

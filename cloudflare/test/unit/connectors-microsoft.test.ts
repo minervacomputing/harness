@@ -32,7 +32,7 @@ describe("the declarations", () => {
 			onedrive_create_file: "c21092d16ee98c9f",
 			onedrive_get_file: "0c7d85270e192d5d",
 			onedrive_list_folder: "329af2cd0513fd58",
-			onedrive_list_libraries: "20f991c6175d8694",
+			onedrive_list_libraries: "2bd5be22056d636d",
 			onedrive_read_file: "4465389468babc8c",
 			onedrive_search_files: "ac35cc40f170f317",
 			outlook_calendar_create_event: "386faadabe340e0a",
