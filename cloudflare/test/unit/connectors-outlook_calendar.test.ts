@@ -11,7 +11,8 @@ import {
 	shownTime,
 	windowOf,
 } from "../../src/connectors/outlook_calendar/connector.ts";
-import { ZONES } from "../../src/connectors/outlook_calendar/zones.ts";
+import { WINDOWS_ZONES, ZONES } from "../../src/connectors/outlook_calendar/zones.ts";
+import { isTimeZone } from "../../src/lib/dates.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { type Received, received } from "../fixtures/connectors/microsoft/fake.ts";
@@ -248,9 +249,14 @@ describe("connecting and discovery", () => {
 });
 
 describe("time zones", () => {
-	test("only documented zones are offered", () => {
+	test("only documented zones are sent as IANA names", () => {
 		for (const zone of ["UTC", "Europe/Berlin", "America/New_York", "Asia/Kolkata"]) expect(ZONES.has(zone)).toBe(true);
 		for (const zone of ["Europe/Zurich", "US/Eastern", "CET", "Local"]) expect(ZONES.has(zone)).toBe(false);
+	});
+
+	test("every Windows zone stands for an IANA zone this runtime knows", () => {
+		const unknown = WINDOWS_ZONES.filter(([, iana]) => !isTimeZone(iana));
+		expect([WINDOWS_ZONES.length, unknown]).toEqual([142, []]);
 	});
 });
 
@@ -395,14 +401,45 @@ describe("times and tool inputs", () => {
 		expect(await created({ ...OFFSITE, time_zone: " Europe/Berlin " })).toEqual(offsite("Europe/Berlin"));
 	});
 
+	test("an all-day event in a zone Graph does not list is sent in the Windows zone that keeps its offsets", async () => {
+		const graph = new FakeGraph();
+		const run = await start(graph, { [WORK]: ["read", "create"] });
+		const zoneSent = async (zone: string, start = "2026-10-12", end = "2026-10-14") => {
+			await run.ok("outlook_calendar_create_event", { calendar_id: WORK, subject: "Offsite", start, end, time_zone: zone });
+			const payload = (graph.writes.at(-1) as [string, JsonObject])[1];
+			return [(payload.start as JsonObject).timeZone, (payload.end as JsonObject).timeZone];
+		};
+		const both = (zone: string) => [zone, zone];
+		expect(await zoneSent("Europe/Zurich")).toEqual(both("W. Europe Standard Time"));
+		expect(await zoneSent("Europe/Zurich", "2027-03-27", "2027-03-30")).toEqual(both("W. Europe Standard Time"));
+		expect(await zoneSent("europe/zurich")).toEqual(both("W. Europe Standard Time"));
+		expect(await zoneSent("Europe/Madrid")).toEqual(both("W. Europe Standard Time"));
+		expect(await zoneSent("Europe/Dublin")).toEqual(both("GMT Standard Time"));
+		expect(await zoneSent("Europe/Helsinki")).toEqual(both("GTB Standard Time"));
+		expect(await zoneSent("America/Toronto")).toEqual(both("Eastern Standard Time"));
+		expect(await zoneSent("US/Eastern")).toEqual(both("Eastern Standard Time"));
+		expect(await zoneSent("Asia/Hong_Kong")).toEqual(both("China Standard Time"));
+		expect(await zoneSent("Australia/Lord_Howe")).toEqual(both("Lord Howe Standard Time"));
+		// Graph takes Windows names as they are, and the IANA names it lists.
+		expect(await zoneSent("W. Europe Standard Time")).toEqual(both("W. Europe Standard Time"));
+		expect(await zoneSent("pacific standard time")).toEqual(both("Pacific Standard Time"));
+		expect(await zoneSent("Europe/Berlin")).toEqual(both("Europe/Berlin"));
+		const writes = graph.writes.length;
+		for (const zone of ["Mars/Olympus", "+02:00", "Standard Time", "Antarctica/Troll"]) {
+			const failed = await run.error("outlook_calendar_create_event", { calendar_id: WORK, subject: "Offsite", start: "2026-10-12", end: "2026-10-14", time_zone: zone });
+			expect([zone, failed.code, failed.message]).toEqual([zone, "INVALID_ARGUMENTS", expect.stringContaining("time_zone")]);
+		}
+		expect(graph.writes).toHaveLength(writes);
+	});
+
 	test("create_event refuses mixed, reversed or unzoned times, unknown zones and odd text", async () => {
 		const FOCUS = { subject: "Focus", start: "2026-10-05T10:00:00+02:00", end: "2026-10-05T11:30:00+02:00" };
 		const OFFSITE = { subject: "Offsite", start: "2026-10-12", end: "2026-10-14", time_zone: "Europe/Berlin" };
 		const refused: [{ [key: string]: Json }, string][] = [
 			[{ ...OFFSITE, time_zone: null }, "time_zone is required for all-day events"],
-			[{ ...OFFSITE, time_zone: "Europe/Zurich" }, "time_zone"],
+			[{ ...OFFSITE, time_zone: "Antarctica/Troll" }, "time_zone"],
 			[{ ...OFFSITE, time_zone: "Mars/Olympus" }, "time_zone"],
-			[{ ...OFFSITE, time_zone: "US/Eastern" }, "time_zone"],
+			[{ ...OFFSITE, time_zone: "Eastern Time" }, "time_zone"],
 			[{ ...OFFSITE, time_zone: "x".repeat(65) }, "time_zone"],
 			[{ ...OFFSITE, end: "2026-10-12" }, "end must be after start"],
 			[{ ...OFFSITE, end: "2026-10-11" }, "end must be after start"],
@@ -643,7 +680,7 @@ describe("creating", () => {
 
 		const changes: JsonObject[] = [
 			{ time_zone: null },
-			{ time_zone: "Europe/Zurich" },
+			{ time_zone: "Antarctica/Troll" },
 			{ time_zone: "Mars/Olympus" },
 			{ end: "2026-10-12" },
 			{ end: "2026-10-14T00:00:00Z" },

@@ -35,7 +35,7 @@ describe("the declarations", () => {
 			onedrive_list_libraries: "2bd5be22056d636d",
 			onedrive_read_file: "4465389468babc8c",
 			onedrive_search_files: "ac35cc40f170f317",
-			outlook_calendar_create_event: "386faadabe340e0a",
+			outlook_calendar_create_event: "8097bf9a884f8007",
 			outlook_calendar_list_calendars: "cba7832577940e1a",
 			outlook_calendar_list_events: "e714d4a8dfc1fd6a",
 			outlook_list_folders: "dea1a9284ea2db1c",

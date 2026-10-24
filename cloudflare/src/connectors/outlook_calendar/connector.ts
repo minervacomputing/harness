@@ -21,8 +21,8 @@
 //
 // Created events have no attendees, so no invitations are sent, and are not online meetings. Timed events
 // are sent in UTC. All-day events need the calendar owner's time zone: Outlook shows an all-day event created
-// in another zone across two days to people in the owner's zone. Graph accepts only some IANA zone names
-// (zones.ts). Not supported: changing, deleting or answering events, attendees, recurrence, and group
+// in another zone across two days to people in the owner's zone. Graph accepts Windows zone names and only
+// some IANA ones, so others are sent as a Windows zone with the same offsets (zones.ts). Not supported: changing, deleting or answering events, attendees, recurrence, and group
 // calendars.
 
 import { z } from "zod";
@@ -42,7 +42,7 @@ import { ID, TENANCY, accountLabel, consent, oauth } from "../microsoft/index.ts
 import { after, objectCheck, plainTextOf, singleLineOf } from "../microsoft/inputs.ts";
 import { DAY_MICROS, formatUtc, isDate, parseDate, parseInstant, parseZonedDateTime } from "../../lib/dates.ts";
 import { type Calendar, CalendarClient, type Event, type Time } from "./client.ts";
-import { ZONES } from "./zones.ts";
+import { graphZone, knownZone } from "./zones.ts";
 import { extend } from "../../lib/arrays.ts";
 
 export const CALENDAR = "calendar";
@@ -79,8 +79,13 @@ export function checkDateOrDateTime(value: string): string {
 }
 
 function checkZone(value: string): string {
-	if (!ZONES.has(value)) throw new TextError("must be an IANA time zone Microsoft accepts, like Europe/Berlin or America/New_York");
+	if (!knownZone(value)) throw new TextError("must be an IANA time zone, like Europe/Zurich, or a Windows one, like W. Europe Standard Time");
 	return value;
+}
+
+/** The zone Graph is sent for an all-day event (zones.ts), or null when no zone it takes keeps this one's offsets. */
+function allDayZone(data: CreateEventData): string | null {
+	return data.time_zone === null ? null : graphZone(data.time_zone, Number(data.start.slice(0, 4)), Number(data.end.slice(0, 4)));
 }
 
 function checkCalendarRef(value: string): string {
@@ -319,7 +324,7 @@ export const CreateEvent = z
 		time_zone: after(z.string().trim().max(64), checkZone)
 			.nullable()
 			.default(null)
-			.describe("Required for all-day events, and only for them: the calendar owner's IANA time zone, like Europe/Berlin."),
+			.describe("Required for all-day events, and only for them: the calendar owner's IANA time zone, like Europe/Zurich."),
 		body: plainTextOf(z.string().trim().max(8000)).nullable().default(null),
 		location: singleLineOf(z.string().trim().max(500)).nullable().default(null),
 	})
@@ -328,6 +333,7 @@ export const CreateEvent = z
 			const allDay = isDate(data.start);
 			if (allDay !== isDate(data.end)) throw new TextError("start and end must both be dates or both be date-times");
 			if (allDay && data.time_zone === null) throw new TextError("time_zone is required for all-day events");
+			if (allDay && allDayZone(data) === null) throw new TextError("time_zone has offsets no time zone Microsoft takes keeps; give the Windows zone the calendar owner uses");
 			if (!allDay && data.time_zone !== null) throw new TextError("time_zone is only for all-day events; give timed events an offset");
 			if (instantOf(data.end) <= instantOf(data.start)) throw new TextError("end must be after start");
 		}),
@@ -340,7 +346,7 @@ export function eventPayload(data: CreateEventData): { [key: string]: Json } {
 	let start: string;
 	let end: string;
 	if (allDay) {
-		zone = data.time_zone;
+		zone = allDayZone(data);
 		[start, end] = [`${data.start}T00:00:00`, `${data.end}T00:00:00`];
 	} else {
 		zone = "UTC";
