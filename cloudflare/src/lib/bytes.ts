@@ -22,13 +22,14 @@ export function fromUtf8(bytes: Uint8Array): string {
 }
 
 /**
- * A text file's characters, one byte order mark dropped: UTF-16 after its byte order mark, UTF-8 when the bytes are
- * valid UTF-8, else windows-1252, which reads every byte and is what Windows writes for Western languages (Excel's
- * "CSV (Comma delimited)", for one).
+ * A text file's characters, one byte order mark dropped: UTF-16 or UTF-8 after its byte order mark, UTF-8 when the
+ * bytes are valid UTF-8, else windows-1252, which reads every byte and is what Windows writes for Western languages
+ * (Excel's "CSV (Comma delimited)", for one).
  */
 export function decodeText(bytes: Uint8Array): string {
 	if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes);
 	if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes);
+	if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return new TextDecoder("utf-8").decode(bytes);
 	try {
 		return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
 	} catch (error) {

@@ -355,6 +355,8 @@ describe("grants and the ancestry of items", () => {
 			return (await items(run, "onedrive_read_file", { file_id: `${ME}:plan` }))[0]?.text;
 		};
 		expect(await readAs([0xef, 0xbb, 0xbf, ...text("Zürich;Ä")])).toBe("Zürich;Ä");
+		// A file marked UTF-8 stays UTF-8 when a byte in it is not.
+		expect(await readAs([0xef, 0xbb, 0xbf, 0x5a, 0xc3, 0xbc, 0xff])).toBe("Zü\ufffd");
 		// Excel's "CSV (Comma delimited)" on a Western Windows.
 		expect(await readAs([0x4d, 0xfc, 0x6c, 0x6c, 0x65, 0x72, 0x3b, 0xe9, 0x3b, 0x80])).toBe("Müller;é;€");
 		expect(await readAs([0xff, 0xfe, 0x5a, 0x00, 0xfc, 0x00, 0x3d, 0xd8, 0x00, 0xde])).toBe("Zü\u{1f600}");
