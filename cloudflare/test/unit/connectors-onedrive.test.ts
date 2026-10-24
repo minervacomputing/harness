@@ -112,6 +112,8 @@ class FakeGraph {
 	readonly forbidden = new Set([`${OTHER}\u0000ghost`]);
 	readonly contents = new Map<string, Uint8Array>();
 	downloadHost = "contoso.sharepoint.com";
+	/** Whether items carry `@microsoft.graph.downloadUrl` when it is selected. */
+	downloadUrls = true;
 	pageSize: number | null = null;
 	requests: Received[] = [];
 	uploads: Received[] = [];
@@ -184,7 +186,7 @@ class FakeGraph {
 
 	#view(item: JsonObject, params: { [name: string]: string }): JsonObject {
 		const shown = { ...item };
-		if ((params.$select ?? "").includes("@microsoft.graph.downloadUrl") && "file" in item) {
+		if (this.downloadUrls && (params.$select ?? "").includes("@microsoft.graph.downloadUrl") && "file" in item) {
 			shown["@microsoft.graph.downloadUrl"] = `https://${this.downloadHost}/download/${item.id}?tempauth=t`;
 		}
 		return shown;
@@ -535,6 +537,20 @@ describe("reading files", () => {
 		});
 		const cut = (await items(run, "onedrive_read_file", { file_id: `${ME}:deck`, max_chars: 9 }))[0] as Item;
 		expect([cut.text, cut.truncated]).toEqual(["Slide 1\nA", true]);
+	});
+
+	test.fails("a personal account's file is read though Graph gives no download URL with it", async () => {
+		// As measured on staging (2026-10-24): Graph left `@microsoft.graph.downloadUrl` out of a personal
+		// account's items although it was selected, and their ids had this form.
+		const graph = new FakeGraph(true);
+		graph.downloadUrls = false;
+		graph.downloadHost = "my.microsoftpersonalcontent.com";
+		const id = `${PERSONAL}!s0123456789abcdef0123456789abcdef`;
+		graph.put(fileOf(id, "the old pond.docx", PERSONAL, "docs", DOCX));
+		graph.contents.set(id, docx("<w:p><w:r><w:t>A frog jumps in.</w:t></w:r></w:p>"));
+		const run = await start(graph, { "*": ["read"] });
+		const read = await items(run, "onedrive_read_file", { file_id: `${PERSONAL.toLowerCase()}:${id}` });
+		expect(read[0]?.text).toBe("A frog jumps in.\n");
 	});
 
 	test("downloads send no token and only go to Microsoft", async () => {
