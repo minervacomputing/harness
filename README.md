@@ -46,7 +46,7 @@ What an agent may do is the intersection of what your account, the connection an
 
 Each conversation also has a folder. Attach files to a message, and the agent reads and writes them with ordinary file tools and shell commands, with Python and libraries for PDFs, Word documents, spreadsheets and charts. The chat shows each command and what it printed, and every file it leaves in the folder can be downloaded.
 
-![The Connections page: ten connected apps, each with the resources agents may reach.](docs/images/connections.png)
+![The Connections page: ten connected apps, each with its account, six of them shared with the organization.](docs/images/connections.png)
 
 ### The sealed sandbox
 
@@ -63,7 +63,7 @@ Scripts the agent writes to call its tools run in isolates with no network eithe
 
 Prompt injection is not prevented, but it is contained. An email that asks the agent to send your invoices to a stranger fails at the permission check, since the address is not on the recipient list. A web page that asks it to upload its keys finds no keys, and no network to upload them to.
 
-![An email in the Invoices label hides an instruction to send all invoices to files@outside.io. The agent tries, Minerva refuses, and the agent warns the user.](docs/images/injection.png)
+![An email in the Invoices label hides an instruction to send all invoices to files@outside.example. The agent tries, Minerva refuses, and the agent warns the user.](docs/images/injection.png)
 
 ## Connectors
 
