@@ -4,6 +4,7 @@
 // `id: <seq>\nevent: <type>\ndata: <compact JSON on one line>\n\n`.
 
 import type { RunEvent, RunStatus, StatusEventData } from "@minerva/contract";
+import { NO_LONGER_AVAILABLE, NO_ROOM } from "../files/limits.ts";
 import { sliceText } from "../lib/text.ts";
 import { CONTEXT_OVERFLOW } from "../model/tap.ts";
 
@@ -20,6 +21,7 @@ export type {
 
 /** The phases the loop reports, in the UI's order of precedence after start-up. */
 export type PhaseText =
+	| "Copying the attached files"
 	| "Starting the agent"
 	| "Resuming the agent"
 	| "Preparing files"
@@ -59,7 +61,10 @@ export type RunEnd =
 	/** Its spend reached the allowance Laravel gave it, at a model call's admission (store.ts `recordModelCall`). */
 	| { status: "failed"; code: "budget_reached"; message: "This conversation reached its budget." }
 	| { status: "failed"; code: "state_too_large"; message: "This run's saved state grew too large." }
-	| { status: "failed"; code: "state_unreadable"; message: "This run's saved state could not be read." };
+	| { status: "failed"; code: "state_unreadable"; message: "This run's saved state could not be read." }
+	/** Its copy found an attached file's staged object gone or changed, or kept failing (conversation.ts `#attach`). */
+	| { status: "failed"; code: "attachment_unavailable"; message: typeof NO_LONGER_AVAILABLE }
+	| { status: "failed"; code: "workspace_full"; message: typeof NO_ROOM };
 
 /**
  * Strict revocation's reasons: a user's grant change cancels all of that user's
@@ -97,6 +102,8 @@ export const WORKER_FAILED: RunEnd = { status: "failed", code: "worker_failed", 
 export const START_EXPIRED: RunEnd = { status: "failed", code: "start_expired", message: "The agent could not finish this run. Try again." };
 export const BUDGET_REACHED: RunEnd = { status: "failed", code: "budget_reached", message: "This conversation reached its budget." };
 export const COMPACTION_FAILED: RunEnd = { status: "failed", code: "compaction_failed", message: "This conversation has grown too long, and its earlier turns could not be summarized. Try again, or start a new conversation." };
+export const ATTACHMENT_UNAVAILABLE: RunEnd = { status: "failed", code: "attachment_unavailable", message: NO_LONGER_AVAILABLE };
+export const WORKSPACE_FULL: RunEnd = { status: "failed", code: "workspace_full", message: NO_ROOM };
 export const TOO_LONG: RunEnd = { status: "failed", code: "context_overflow", message: "This turn needed more than the model can read at once. Try a smaller request, or start a new conversation." };
 
 /**

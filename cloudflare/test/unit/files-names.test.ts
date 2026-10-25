@@ -24,6 +24,8 @@ describe("names and types", () => {
 		["a\ud800b.txt", "ab.txt"],
 		[".bashrc", ".bashrc"],
 		["...", "..."],
+		[". .", "file"],
+		["x/. .", "file"],
 		["evil\u202egnp.exe", "evilgnp.exe"],
 		["a\nb.txt", "ab.txt"],
 		["Cafe\u0301.txt", "Café.txt"],

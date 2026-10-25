@@ -31,7 +31,7 @@ import { scriptsObject } from "../addressing.ts";
 import { settings } from "../config.ts";
 import { connectorRegistry } from "../connectors/index.ts";
 import { type FolderLimit, folderLimitMessage, type FolderLimits } from "../files/limits.ts";
-import type { DownloadTarget } from "../files/store.ts";
+import type { AttachmentCopies, DownloadTarget } from "../files/store.ts";
 import type { CredentialPort, Executor, ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
 import type { Registry as ConnectorRegistry } from "../gateway/registry.ts";
 import type { RunStatePort } from "../gateway/run-state.ts";
@@ -54,10 +54,11 @@ import { scriptTool } from "../scripts/tool.ts";
 import type { Folder } from "@minerva/contract";
 import type { CancelRun, CancelRunResult, DeleteConversation, DeleteConversationResult, Fact, ReadFolder, ReplayFacts, ResolveDownload, StartRun, StartRunResult } from "@minerva/contract/internal";
 import { type Preparation, type StartRefusal, UNAVAILABLE, deletedRefusal, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
-import type { AttemptFence, RunId, WorkspaceRef } from "../shared/rpc.ts";
+import type { AttemptFence, RunId, Sha256, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTING,
 	ACTIVE,
+	ATTACHMENT_UNAVAILABLE,
 	CANCELLED,
 	COMPLETED,
 	endFor,
@@ -70,6 +71,7 @@ import {
 	unansweredEnd,
 	WORKER_EXITED,
 	WORKER_FAILED,
+	WORKSPACE_FULL,
 } from "./events.ts";
 import { decideGate, type PiWork } from "./gate.ts";
 import { HISTORY_LIMIT, sessionInstructions, turnNote, type UnseenTurn } from "./history.ts";
@@ -99,9 +101,10 @@ interface ConversationApi {
 	/**
 	 * Laravel's `startRun`, once the Worker has bound the conversation and the run in the
 	 * recovery index; `workspace` is where the index addresses it. Binds the conversation on first use, and answers a
-	 * stored answer again; otherwise prepares the start once (its snapshot compiled), copies the attachments from
-	 * staging and stores the run with its acceptance, or stores a refusal. An error stores no answer. `deleted`: the index
-	 * holds the conversation deleted, which the binding records (`#bindInternal`).
+	 * stored answer again; otherwise prepares the start once (its snapshot compiled), inspects the staged attachments and
+	 * stores the run with its planned attachments and its acceptance, or stores a refusal; the run copies them as its first
+	 * step. An error stores no answer. `deleted`: the index holds the conversation deleted, which the binding records
+	 * (`#bindInternal`).
 	 */
 	startInternal(command: StartRun, workspace: WorkspaceRef, deleted: boolean): Promise<InternalAnswer<StartRunResult>>;
 	/**
@@ -448,9 +451,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * A start: refused, or prepared once (the preparation of an earlier try is used as it is); then its attachments
-	 * measured and copied; then stored, unless a cancel, a deletion or another run came first. Each step that decides
-	 * commits outside pi's transactions.
+	 * A start: refused, or prepared once (the preparation of an earlier try is used as it is); then stored, unless a cancel,
+	 * a deletion or another run came first. Each step that decides commits outside pi's transactions.
 	 */
 	async #startOnce(command: StartRun): Promise<StartRunResult> {
 		const runId = command.run;
@@ -477,30 +479,30 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		if ("outcome" in first) return first;
 		const preparation = first;
 		const folder = this.#folder() as FolderPort;
-		const uploads = await folder.measureStaged(command.message.attachments, config.files.uploadBytes);
+		const uploads = await folder.inspectStaged(command.message.attachments, config.files.uploadBytes);
 		if (uploads === null) return this.#refuseInternal(runId, startRefusal("ATTACHMENT_UNAVAILABLE", UNAVAILABLE));
-		const copied = await folder.prepareAttachments(runId, uploads);
-		if (!copied.ok) {
-			const { code, detail } = copied.refusal;
-			return this.#refuseInternal(runId, code === "NOT_FOUND" ? deletedRefusal() : startRefusal(code, detail));
-		}
+		await this.#point("start:planned", runId);
 		const answer = await this.#store.outside(() =>
 			this.#store.write((): StartRunResult => {
 				const answered = this.#store.answer(runId);
 				if (answered) return answered;
 				const refused = this.#startState(runId);
 				if (refused) return this.#answerRefused(runId, refused);
+				// In this write, so the folder it plans on is the one the run is stored with.
+				const planned = folder.planAttachments(uploads);
+				if (!planned.ok) return this.#answerRefused(runId, startRefusal(planned.refusal.code, planned.refusal.detail));
+				const plan = planned.value;
 				const now = this.#store.now();
-				const { baseVersionId, attachments } = folder.commitAttachments(runId, copied.value);
+				const attachments = plan.attachments.map(({ path, size, mediaType }) => ({ path, size, mediaType }));
 				const snapshot: RunSnapshot = {
 					...preparation.snapshot,
 					runId,
-					baseVersionId,
+					baseVersionId: plan.parentId,
 					attachments,
 					limits: { folderBytes: config.files.folderBytes, folderEntries: config.files.folderEntries, runUploadBytes: config.files.runUploadBytes },
 					turn: { history: preparation.history, prompt: internalPrompt(command.message.content, attachments, preparation.snapshot.createdAt) },
 				};
-				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, baseVersionId, createdAt: now, allowance: command.allowance ?? null });
+				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, plan, createdAt: now, allowance: command.allowance ?? null });
 				this.#store.append(runId, statusEvent({ status: "queued" }));
 				// Laravel registered the run before it sent the start, so it is active once stored: `provisioning` in this write.
 				this.#store.activate(runId);
@@ -519,10 +521,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				return accepted;
 			}),
 		);
-		if (answer.outcome === "accepted") {
-			this.#defer(() => this.#startLoop(runId));
-			this.#defer(() => folder.deleteStaged(command.message.attachments.map((attachment) => attachment.upload)));
-		}
+		if (answer.outcome === "accepted") this.#defer(() => this.#startLoop(runId));
 		return answer;
 	}
 
@@ -551,20 +550,72 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * The loop starts, in PiStops's lane. Not awaited by the events that
-	 * start it: its wait can last until the bound.
+	 * The loop starts: the run's attachments copied, then its section in PiStops's lane, which is queued only once the copy
+	 * committed, since the section's bound counts from then. Not awaited by the events that start it: the copy and the
+	 * section's wait can each take long.
 	 */
 	#startLoop(runId: RunId): Promise<void> {
 		const running = this.#loops.get(runId);
 		if (running) return running;
-		const work = this.#stops
-			.section(
-				(section) => this.#startSection(runId, section),
-				(bound) => this.#startTimedOut(runId, bound),
+		const work = this.#attach(runId)
+			.then((attached) =>
+				attached
+					? this.#stops.section(
+							(section) => this.#startSection(runId, section),
+							(bound) => this.#startTimedOut(runId, bound),
+						)
+					: undefined,
 			)
 			.finally(() => this.#loops.delete(runId));
 		this.#loops.set(runId, work);
 		return work;
+	}
+
+	/**
+	 * The run's first step when its message has attachments it has not copied yet (ARCHITECTURE.md: Starting a run). A run
+	 * that ended meanwhile commits nothing and keeps its planned attachments, which the turn note reads. An R2 error is
+	 * thrown, and the watch or the next instance tries again until the copy's bound after the run was stored.
+	 */
+	async #attach(runId: RunId): Promise<boolean> {
+		const plan = this.#store.uncopiedAttachments(runId);
+		if (plan === null) return true;
+		const run = this.#store.run(runId);
+		if (run === null) return false;
+		const fence = { runId, attempt: run.attempt };
+		if (!this.#store.isCurrent(fence)) return false;
+		this.#phase(fence, "Copying the attached files");
+		const folder = this.#folder() as FolderPort;
+		const staged = plan.attachments.map(({ key, name, size }) => ({ upload: key, name, size }));
+		let copy: { hashes: Sha256[]; copies: AttachmentCopies } | RunEnd;
+		try {
+			const uploads = await folder.measureStaged(staged, settings(this.env).files.uploadBytes);
+			if (uploads === null || uploads.some((upload, index) => upload.mediaType !== plan.attachments[index]?.mediaType)) copy = ATTACHMENT_UNAVAILABLE;
+			else {
+				const copied = await folder.copyAttachments(runId, uploads);
+				if (copied.ok) copy = { hashes: uploads.map((upload) => upload.sha256), copies: copied.value };
+				else copy = copied.refusal.code === "WORKSPACE_FULL" ? WORKSPACE_FULL : ATTACHMENT_UNAVAILABLE;
+			}
+		} catch (error) {
+			if (this.#store.now() - run.created_at < this.#ports.copyBoundMs(this.#portsContext() as PortsContext)) throw error;
+			this.#log(`run ${runId}'s attachments could not be copied`, error);
+			copy = ATTACHMENT_UNAVAILABLE;
+		}
+		if ("status" in copy) {
+			await this.#fail(fence, copy);
+			return false;
+		}
+		await this.#point("copy:copied", runId);
+		const { hashes, copies } = copy;
+		const committed = await this.#store.outside(() =>
+			this.#store.write(() => {
+				const base = folder.commitAttachments(fence, plan, hashes, copies);
+				if (base.ok) this.#store.setBase(runId, base.baseVersionId);
+				else if (base.reason !== "stale") this.#store.finish(runId, ATTACHMENT_UNAVAILABLE, { attempt: fence.attempt });
+				return base.ok;
+			}),
+		);
+		if (committed) this.#defer(() => folder.deleteStaged(plan.attachments.map((attachment) => attachment.key)));
+		return committed;
 	}
 
 	/**
@@ -623,14 +674,16 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/**
 	 * The note after a turn that did not complete (history.ts `turnNote`), from the runs before `run` back to the newest whose
-	 * `run:<id>` submission pi holds, or to the session's first run, whose seed has the ones before it. Read after the settle,
-	 * so every earlier run has ended.
+	 * `run:<id>` submission pi holds, or to the session's first run, whose seed has the ones before it, leaving out each run
+	 * that ended before its copy committed. Read after the settle, so every earlier run has ended.
 	 */
 	async #turnNote(run: RunRow, session: string): Promise<string> {
 		const storage = this.#piStorage;
 		if (!storage) return "";
 		const unseen: UnseenTurn[] = [];
 		for (const earlier of this.#store.earlierRuns(run, session, HISTORY_LIMIT)) {
+			// Laravel shows its message as not sent, and its prompt names files the folder never held.
+			if (this.#store.uncopiedAttachments(earlier.id) !== null) continue;
 			const submission = await storage.submissionByRequest(Number(session) as PiConversationId, `run:${earlier.id}`, BG);
 			if (submission) return turnNote({ status: earlier.status, code: earlier.error_code, answered: submission.status === "done" }, unseen.reverse());
 			// A run's snapshot is deleted from its first prune step on.

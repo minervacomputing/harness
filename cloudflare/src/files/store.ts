@@ -23,7 +23,7 @@ import { tokenHex, uuid7 } from "../lib/random.ts";
 import { first, type Sql, type SqlValue } from "../lib/sql.ts";
 import { splitParts, VALUE_PART } from "../lib/text.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
-import type { Attachment, Folder, FolderChanges } from "@minerva/contract";
+import type { Folder, FolderChanges } from "@minerva/contract";
 import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type Sha256, type VersionId, type WorkspaceId, refuse } from "../shared/rpc.ts";
 import {
 	BLOB_GONE,
@@ -62,7 +62,7 @@ import {
 import { numbered } from "./names.ts";
 import { type Bucket, blobKey, conversationPrefix, deletePage } from "./objects.ts";
 import { sha256HexSync } from "./sha256.ts";
-import type { ReservedUpload } from "./staging.ts";
+import type { InspectedUpload, ReservedUpload } from "./staging.ts";
 
 /** A file of a version, which Laravel signs a download for (ARCHITECTURE.md: Files, Downloads). */
 export interface DownloadTarget {
@@ -206,15 +206,44 @@ interface RunFolder {
 	[key: string]: SqlValue;
 }
 
-/** What `prepareAttachments` leaves for `commitAttachments`. */
+/**
+ * An attachment as its start planned it before the answer, stored with the run (`run_attachments`) until the run's copy
+ * commits.
+ */
+export interface PlannedAttachment {
+	/** The staged object's key in R2. */
+	key: string;
+	/** The cleaned name, which the copy sniffs the type with again. */
+	name: string;
+	size: number;
+	mediaType: string;
+	/** Where the folder holds it once copied: at the root, numbered when the name is taken. */
+	path: string;
+	mtime: EpochMs;
+}
+
+/** A start's attachments on top of the folder it starts from, `parentId`, which is the run's base version until its copy commits. */
 export interface AttachmentPlan {
 	parentId: VersionId | null;
-	entries: StoredEntries;
-	attachments: Attachment[];
-	/** Keys claimed when the start is stored: one copy per contents the conversation did not hold. */
+	attachments: PlannedAttachment[];
+}
+
+/** What `copyAttachments` leaves for `commitAttachments`. */
+export interface AttachmentCopies {
+	/** Keys claimed when the copy commits: one copy per contents the conversation did not hold. */
 	copies: { sha256: Sha256; key: string }[];
 	/** Contents the conversation already held, which the base version names as they are. */
 	reused: Sha256[];
+	/** The keys this try recorded, which are doomed when it commits nothing. */
+	fresh: string[];
+}
+
+/** The copy's commit: the run's base version, or why nothing was committed (the run no longer current, the folder moved, a copy or a held blob gone). */
+export type CommittedAttachments = { ok: true; baseVersionId: VersionId } | { ok: false; reason: "stale" | "moved" | "unclaimed" };
+
+/** A distinct stand-in for an attachment's SHA-256 before its copy hashes it: `parseManifest` checks a plan's paths and counts only with one. */
+function placeholderSha256(index: number): Sha256 {
+	return index.toString(16).padStart(64, "0");
 }
 
 /** Objects deleted at once by the sweep (R2's limit per delete). */
@@ -482,8 +511,8 @@ export class FolderStore {
 
 	/**
 	 * Forgets loose keys this call recorded and no writer was ever given, so no object can exist under them
-	 * (a checkpoint or a start refused before its uploads): they stop counting at once. Never a reused key,
-	 * which an earlier try may have written. The sweep reports the smaller total.
+	 * (a checkpoint, or a run's copy refused by the workspace counter, before its uploads): they stop counting at once.
+	 * Never a reused key, which an earlier try may have written. The sweep reports the smaller total.
 	 */
 	#discard(keys: readonly string[]): void {
 		if (keys.length === 0) return;
@@ -581,76 +610,74 @@ export class FolderStore {
 	// Attachments (ARCHITECTURE.md: Starting a run).
 
 	/**
-	 * Before the start's transaction: the base version the message's uploads make, at the folder's root with
-	 * numbered names, checked against the folder's limits before anything is copied; then a copy of each
-	 * upload whose contents the conversation does not hold, recorded as loose first and made with `get` and a
-	 * `put` R2 checks against the upload's SHA-256. A failed get or put is made once more. A refusal leaves
-	 * nothing the sweep does not delete; an error (R2 unreachable twice) is thrown, and the start is sent
-	 * again by its watch, which copies into the same keys.
+	 * Before a start's answer, synchronous: the message's uploads at the root of the folder the run starts from, with
+	 * numbered names, checked against the folder's limits from their declared sizes.
 	 */
-	async prepareAttachments(runId: RunId, uploads: ReservedUpload[]): Promise<Outcome<AttachmentPlan | null>> {
-		if (uploads.length === 0) return { ok: true, value: null };
-		const conversation = this.#deps.conversation();
-		if (conversation === null || conversation.deleted) return refuse("NOT_FOUND", "Not found.");
-		const parentId = conversation.folderVersionId;
+	planAttachments(uploads: readonly InspectedUpload[]): Outcome<AttachmentPlan> {
+		const parentId = this.#deps.conversation()?.folderVersionId ?? null;
+		if (uploads.length === 0) return { ok: true, value: { parentId, attachments: [] } };
 		const parent = parentId === null ? null : this.entries(parentId);
 		const files: { path: string; sha256: Sha256; mode: number; mtime: number }[] = [];
-		if (parent) for (const [path, entry] of filesOf(parent)) files.push({ path, sha256: entry.sha256, mode: entry.mode, mtime: entry.mtime });
+		const sizes: number[] = [];
+		if (parent) {
+			for (const [path, entry] of filesOf(parent)) {
+				files.push({ path, sha256: entry.sha256, mode: entry.mode, mtime: entry.mtime });
+				sizes.push(entry.size);
+			}
+		}
 		// The first segment of every root entry, directories included, so a folder's name blocks a file's.
 		const taken = rootNames(parent);
 		const mtime = this.#deps.now();
-		const attachments: Attachment[] = [];
-		for (const upload of uploads) {
+		const attachments: PlannedAttachment[] = [];
+		for (const [index, upload] of uploads.entries()) {
 			const path = numbered(upload.name, taken);
 			taken.add(path);
-			files.push({ path, sha256: upload.sha256, mode: 0o644, mtime });
-			attachments.push({ path, size: upload.size, mediaType: upload.mediaType });
+			files.push({ path, sha256: placeholderSha256(index), mode: 0o644, mtime });
+			sizes.push(upload.size);
+			attachments.push({ key: upload.key, name: upload.name, size: upload.size, mediaType: upload.mediaType, path, mtime });
 		}
 		const { folderBytes: limitBytes, folderEntries } = this.#deps.settings;
-		let manifest: Manifest;
 		try {
-			manifest = parseManifest({ files, dirs: parent ? [...parent.dirs] : [] }, folderEntries);
+			parseManifest({ files, dirs: parent ? [...parent.dirs] : [] }, folderEntries);
 		} catch (error) {
 			if (error instanceof QuotaExceeded) return refuse("FOLDER_FULL", overFolder("folder_entries", folderEntries, limitBytes));
 			if (error instanceof InvalidManifest) return refuse("INVALID_ATTACHMENTS", `The files could not be attached: ${error.message}`);
 			throw error;
 		}
-		const sizes = new Map<Sha256, number>();
-		if (parent) for (const entry of Object.values(parent.files)) sizes.set(entry.sha256, entry.size);
-		for (const upload of uploads) if (!sizes.has(upload.sha256)) sizes.set(upload.sha256, upload.size);
-		if (folderBytes([...manifest.files.values()].map((entry) => sizes.get(entry.sha256) as number)) > limitBytes) {
-			return refuse("FOLDER_FULL", overFolder("folder_bytes", folderEntries, limitBytes));
-		}
-		const entries = storedEntries(manifest, sizes);
+		if (folderBytes(sizes) > limitBytes) return refuse("FOLDER_FULL", overFolder("folder_bytes", folderEntries, limitBytes));
+		return { ok: true, value: { parentId, attachments } };
+	}
 
-		// One copy per contents the conversation does not hold, recorded before it is written. A start sent
-		// again (its object restarted after a copy, say) copies into the keys it recorded the first time, so
-		// it is not counted twice: R2 checks the hash, so a key written twice holds the same bytes.
+	/**
+	 * The run's copy of its measured uploads: one copy per contents the conversation does not hold, recorded as loose first
+	 * and made with `get` and a `put` R2 checks against the upload's SHA-256. A failed get or put is made once more. A
+	 * refusal leaves nothing the sweep does not delete. An error (R2 unreachable twice) dooms the keys this try recorded and
+	 * is thrown, and the run's watch tries again with new keys; a try after a reset copies into the keys the reset left.
+	 */
+	async copyAttachments(runId: RunId, uploads: readonly ReservedUpload[]): Promise<Outcome<AttachmentCopies>> {
 		const planned = await this.#deps.outside(() =>
 			this.#sql.transaction(() => {
 				const held = this.#stored(uploads.map((upload) => upload.sha256));
 				const earlier = this.#looseOf(runId);
-				const copies: { sha256: Sha256; key: string; upload: ReservedUpload }[] = [];
+				const copies: { sha256: Sha256; key: string; source: string }[] = [];
 				const fresh: string[] = [];
 				const reused = new Set<Sha256>();
 				for (const upload of uploads) {
 					if (held.has(upload.sha256)) reused.add(upload.sha256);
 					else if (!copies.some((copy) => copy.sha256 === upload.sha256)) {
-						copies.push({ sha256: upload.sha256, key: this.#keyFor(upload.sha256, upload.size, runId, earlier, fresh), upload });
+						copies.push({ sha256: upload.sha256, key: this.#keyFor(upload.sha256, upload.size, runId, earlier, fresh), source: upload.key });
 					}
 				}
 				for (const copy of copies) this.#writing.add(copy.key);
 				return { copies, fresh, reused: [...reused] };
 			}),
 		);
-		// Every key of this start: none is claimed unless the start is stored. A refused or failed start deletes
-		// the keys it recorded now; keys reused from an earlier try stay loose for the sweep's hour, as that
-		// try's write may still land.
+		// None is claimed unless the copy commits. A refused or failed try deletes the keys it recorded now; keys reused from
+		// an earlier try stay loose for the sweep's hour, as that try's write may still land.
 		const keys = planned.copies.map((copy) => copy.key);
 		const abandon = () => this.#deps.outside(() => this.#sql.transaction(() => this.#doomUnclaimed(planned.fresh)));
 		try {
 			if (planned.copies.length && !(await this.#report())) {
-				// Refused before any copy was made by this try.
 				await this.#deps.outside(() => this.#sql.transaction(() => this.#discard(planned.fresh)));
 				return refuse("WORKSPACE_FULL", NO_ROOM);
 			}
@@ -670,10 +697,7 @@ export class FolderStore {
 		} finally {
 			for (const key of keys) this.#writing.delete(key);
 		}
-		return {
-			ok: true,
-			value: { parentId, entries, attachments, copies: planned.copies.map(({ sha256, key }) => ({ sha256, key })), reused: planned.reused },
-		};
+		return { ok: true, value: { copies: planned.copies.map(({ sha256, key }) => ({ sha256, key })), reused: planned.reused, fresh: planned.fresh } };
 	}
 
 	/**
@@ -682,10 +706,10 @@ export class FolderStore {
 	 * under the same key: the key is loose, so nothing deletes it meanwhile, and a put whose answer was lost
 	 * wrote the same bytes.
 	 */
-	async #copy(copy: { sha256: Sha256; key: string; upload: ReservedUpload }): Promise<"copied" | "gone"> {
+	async #copy(copy: { sha256: Sha256; key: string; source: string }): Promise<"copied" | "gone"> {
 		for (let attempt = 0; ; attempt++) {
 			try {
-				const source = await this.#deps.bucket.get(copy.upload.key);
+				const source = await this.#deps.bucket.get(copy.source);
 				if (source === null) return "gone";
 				await this.#deps.bucket.put(copy.key, source.body, { sha256: copy.sha256 });
 				return "copied";
@@ -698,21 +722,44 @@ export class FolderStore {
 	}
 
 	/**
-	 * Inside the start's transaction: the base version (parent the folder, run the new run), its copies
-	 * claimed. A folder that moved since, or a copy the sweep took, throws: the start is refused (503) and
-	 * released rather than stored with a folder it did not check.
+	 * Inside the copy's write, outside pi's transactions: the base version on top of the plan's parent (run the run), with
+	 * `hashes` in the plan's order, its copies claimed. Nothing is committed, and the keys the try recorded are doomed, when
+	 * the fence is no longer current, the folder is no longer the plan's parent, or a copy the sweep took or a held blob is
+	 * gone.
 	 */
-	commitAttachments(runId: RunId, plan: AttachmentPlan | null): { baseVersionId: VersionId | null; attachments: Attachment[] } {
-		const current = this.#deps.conversation()?.folderVersionId ?? null;
-		if (plan === null) return { baseVersionId: current, attachments: [] };
-		if (current !== plan.parentId) throw new Error("The folder changed while its attachments were copied.");
-		return this.#sql.transaction(() => {
-			for (const copy of plan.copies) if (!this.#claim(copy.key, runId)) throw new Error("An attached file's copy was deleted before the start was stored.");
-			const missing = plan.reused.filter((hash) => !this.#stored([hash]).has(hash));
-			if (missing.length) throw new Error("An attached file's contents are no longer in the store.");
-			const row = this.#insertVersion({ kind: "base", parentId: plan.parentId, runId, attempt: null, entries: plan.entries });
-			return { baseVersionId: row.id, attachments: plan.attachments };
-		});
+	commitAttachments(fence: AttemptFence, plan: AttachmentPlan, hashes: readonly Sha256[], copies: AttachmentCopies): CommittedAttachments {
+		const refused = (reason: "stale" | "moved" | "unclaimed"): CommittedAttachments => {
+			this.#doomUnclaimed(copies.fresh);
+			return { ok: false, reason };
+		};
+		if (!this.#deps.isCurrent(fence)) return refused("stale");
+		if ((this.#deps.conversation()?.folderVersionId ?? null) !== plan.parentId) return refused("moved");
+		const parent = plan.parentId === null ? null : this.entries(plan.parentId);
+		const files: { path: string; sha256: Sha256; mode: number; mtime: number }[] = [];
+		const sizes = new Map<Sha256, number>();
+		if (parent) {
+			for (const [path, entry] of filesOf(parent)) {
+				files.push({ path, sha256: entry.sha256, mode: entry.mode, mtime: entry.mtime });
+				sizes.set(entry.sha256, entry.size);
+			}
+		}
+		for (const [index, attachment] of plan.attachments.entries()) {
+			const sha256 = hashes[index] as Sha256;
+			files.push({ path: attachment.path, sha256, mode: 0o644, mtime: attachment.mtime });
+			sizes.set(sha256, attachment.size);
+		}
+		const entries = storedEntries(parseManifest({ files, dirs: parent ? [...parent.dirs] : [] }, this.#deps.settings.folderEntries), sizes);
+		try {
+			return this.#sql.transaction((): CommittedAttachments => {
+				for (const copy of copies.copies) if (!this.#claim(copy.key, fence.runId)) throw new Refused("unclaimed");
+				if (copies.reused.some((hash) => !this.#stored([hash]).has(hash))) throw new Refused("unclaimed");
+				const row = this.#insertVersion({ kind: "base", parentId: plan.parentId, runId: fence.runId, attempt: null, entries });
+				return { ok: true, baseVersionId: row.id };
+			});
+		} catch (error) {
+			if (error instanceof Refused) return refused("unclaimed");
+			throw error;
+		}
 	}
 
 	// Checkpoints (ARCHITECTURE.md: Checkpoints).

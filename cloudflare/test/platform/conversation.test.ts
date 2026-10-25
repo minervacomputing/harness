@@ -285,7 +285,7 @@ async function leftQueued(stub: Stub, ended: StartRun, left: StartRun, watched: 
 		const answer = store.answer(ended.run) as StartRunResult;
 		store.write(() => {
 			const turn = { history: [], prompt: left.message.content };
-			store.insertRun({ id: left.run, snapshot: { ...snapshot, runId: left.run, deadline: null, turn }, deadline: null, baseVersionId: snapshot.baseVersionId, createdAt: Date.now(), allowance: null });
+			store.insertRun({ id: left.run, snapshot: { ...snapshot, runId: left.run, deadline: null, turn }, deadline: null, plan: { parentId: snapshot.baseVersionId, attachments: [] }, createdAt: Date.now(), allowance: null });
 			store.append(left.run, statusEvent({ status: "queued" }));
 			store.addAnswer(left.run, answer);
 		});
@@ -326,11 +326,11 @@ describe("starting a run", () => {
 	});
 
 	test("refusals store no run, and the conversation takes the next start", async () => {
-		// Staged uploads measure as declared; the folder then cannot take them (emptyFolder's `prepareAttachments`).
+		// Staged uploads inspect as declared; the folder then cannot take them (emptyFolder's `planAttachments`).
 		const { start, stub } = conversation(
 			{
 				folder: () => ({
-					measureStaged: async (staged) => staged.map((item) => ({ id: uuid7(), name: item.name, size: item.size, mediaType: "text/plain", sha256: "0".repeat(64), key: item.upload })),
+					inspectStaged: async (staged) => staged.map((item) => ({ key: item.upload, name: item.name, size: item.size, mediaType: "text/plain" })),
 				}),
 			},
 			{ message: message("  \n\t ") },
@@ -354,9 +354,9 @@ describe("starting a run", () => {
 		const { start, stub, fakes } = conversation(
 			{
 				...waiting(hold.promise),
-				// The first start waits after its preparation is stored, while its attachments would be measured.
+				// The first start waits after its preparation is stored, while its attachments would be inspected.
 				folder: () => ({
-					measureStaged: async () => {
+					inspectStaged: async () => {
 						measuring = true;
 						await prepared.promise;
 						return [];
@@ -388,7 +388,7 @@ describe("one start per run", () => {
 		const { start, stub, fakes } = conversation(
 			{
 				folder: () => ({
-					measureStaged: async () => {
+					inspectStaged: async () => {
 						measured++;
 						await prepared.promise;
 						return [];
@@ -1125,9 +1125,9 @@ describe("restarts through the attempt gate", () => {
 		const { start, fakes } = conversation(
 			{
 				folder: (context) => ({
-					commitAttachments: (runId, prepared) => {
+					planAttachments: (uploads) => {
 						queueMicrotask(() => context.ctx.abort("fault: start:stored"));
-						return emptyFolder(context).commitAttachments(runId, prepared);
+						return emptyFolder(context).planAttachments(uploads);
 					},
 				}),
 			},

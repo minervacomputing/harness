@@ -108,6 +108,10 @@ export const StartRun = InConversation.extend({
 export type StartRun = z.infer<typeof StartRun>
 
 export const StartRunResult = z.discriminatedUnion('outcome', [
+  /**
+   * The run is stored and active. Its attachments were checked against their staged objects by size and head, and against the
+   * folder's limits. The run copies them as its first step.
+   */
   z.object({
     outcome: z.literal('accepted'),
     /** The catalog and the compiler the snapshot was built with, and its digest. */
@@ -116,7 +120,13 @@ export const StartRunResult = z.discriminatedUnion('outcome', [
     digest: z.string(),
     /** The connections the snapshot can reach: what revocation matches and leases are limited to. */
     authorized: z.array(Id),
-    /** The message's attachments as the folder holds them, in the message's order: Laravel stores these on the message. */
+    /**
+     * The message's attachments as the folder will hold them, in the message's order. Paths are numbered against the folder at
+     * the start, sizes are as declared and as the staged objects hold them, and types are sniffed from their first 8 KiB. The
+     * run copies them before its prompt is submitted, and a copy that fails ends the run `failed` with code
+     * `attachment_unavailable` or `workspace_full`. A run that ends before its copy commits, a cancelled one say, leaves the
+     * folder without them. Laravel stores these on the message.
+     */
     attachments: z.array(AttachedFile).max(100),
   }),
   Refused,
@@ -258,10 +268,12 @@ export const engine = {
   /** The connectors this engine serves [5]. */
   catalog: internal.route({ method: 'GET', path: at('/catalog') }).output(Catalog),
   /**
-   * Compiles the run's snapshot once, copies its attachments and admits it, or refuses [6]. Refusals: today's start refusals
-   * (`TOO_MANY_ATTACHMENTS`, `ATTACHED_TWICE`, `ATTACHMENT_UNAVAILABLE`, `FOLDER_FULL`), `CONVERSATION_BUSY`, `CANCELLED` (the run
-   * was tombstoned), `CONVERSATION_DELETED`, `FACTS_BACKLOG` (Laravel has not acknowledged the conversation's facts for too long)
-   * and `ADMISSION_CLOSED`.
+   * Compiles the run's snapshot once, checks its attachments and admits it, or refuses [6]; the run copies the attachments.
+   * Refusals: today's start refusals (`TOO_MANY_ATTACHMENTS`, `ATTACHED_TWICE`, `ATTACHMENT_UNAVAILABLE`, `FOLDER_FULL`),
+   * `CONVERSATION_BUSY`, `CANCELLED` (the run was tombstoned), `CONVERSATION_DELETED`, `FACTS_BACKLOG` (Laravel has not
+   * acknowledged the conversation's facts for too long) and `ADMISSION_CLOSED`. `ATTACHMENT_UNAVAILABLE` is a staged object
+   * missing, of another size than declared or over the file limit, and `FOLDER_FULL` is judged from the declared sizes, both
+   * before any byte past an object's first 8 KiB is read.
    */
   startRun: internal.route({ method: 'POST', path: at('/runs/start') }).input(StartRun).output(StartRunResult),
   /** Answers once the cancellation, or the tombstone of a run the engine has not received, is durable [6]. */

@@ -1,9 +1,10 @@
 // Agent files in local workerd (ARCHITECTURE.md: Files), as Laravel's commands reach them (startRun, folder, resolveDownload,
 // deleteConversation through the internal mount) with the fake Laravel: the uploads Laravel staged under `uploads/<workspace>/`
-// in the EU bucket, measured, hashed and sniffed by the start (files/staging.ts); the folder's store on a Durable Object's own
-// SQLite; attachments copied into a conversation's blobs; and the fault rows Files (ARCHITECTURE.md: Testing): an
-// attachment's copy crashed and sent again, an R2 acknowledgement lost, a copy that lands while its conversation is deleted;
-// and the bytes a conversation keeps, on its runs' `run.finished`.
+// in the EU bucket, inspected by the start and measured, hashed and sniffed again by the run's copy (files/staging.ts); the
+// folder's store on a Durable Object's own SQLite; attachments copied into a conversation's blobs; and the fault rows Files
+// (ARCHITECTURE.md: Testing): a staged object gone during the copy, a copy crashed and made again by the next instance, an R2
+// acknowledgement lost, a copy that lands while its conversation is deleted; and the bytes a conversation keeps, on its runs'
+// `run.finished`.
 
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -18,12 +19,13 @@ import { FakeLaravel } from "../../src/faults/laravel.ts";
 import { FOLDER_PORTS } from "../../src/files/folder.ts";
 import { parseManifest } from "../../src/files/manifest.ts";
 import type { Bucket } from "../../src/files/objects.ts";
+import { inspectStaged, measureStaged } from "../../src/files/staging.ts";
 import { FolderStore } from "../../src/files/store.ts";
 import { hex } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import { durableSql } from "../../src/lib/sql.ts";
 import { fakeUpstream } from "../../src/model/fake.ts";
-import { commands, held, objectOf, refusalOf, scope, signedAssertions, startOf } from "./internal-support.ts";
+import { commands, held, objectOf, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
 
@@ -162,6 +164,29 @@ describe("staged uploads", () => {
 		expect(await resolved(start, "empty")).toMatchObject({ size: 0, sha256: await sha("") });
 	});
 
+	test("the start's inspection of its head finds the type the copy's measure of the whole object finds", async () => {
+		const within = scope();
+		const bytes = (text: string) => Uint8Array.from(text, (char) => char.charCodeAt(0));
+		const objects: [string, Uint8Array | string, string][] = [
+			["report.pdf", bytes(`%PDF-1.7\n${"x".repeat(20_000)}`), "application/pdf"],
+			["photo", bytes("\x89PNG\r\n\x1a\n\0\0\0\rIHDR"), "image/png"],
+			["sheet.xlsx", bytes("PK\x03\x04\x14\0\0\0"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+			["notes.txt", "zażółć ".repeat(2000), "text/plain"],
+			["data.bin", bytes("a\0b"), "application/octet-stream"],
+			["empty", "", "text/plain"],
+		];
+		const attachments = await Promise.all(objects.map(([name, data]) => staged(within.workspace, name, data)));
+		const bucket = filesBucket(env, { id: within.workspace, jurisdiction: "eu" }) as unknown as Bucket;
+		const types = objects.map(([, , mediaType]) => mediaType);
+		expect((await inspectStaged(bucket, attachments, 52_428_800))?.map((upload) => upload.mediaType)).toEqual(types);
+		expect((await measureStaged(bucket, attachments, 52_428_800))?.map((upload) => upload.mediaType)).toEqual(types);
+		const [first] = attachments as [Attachments[number]];
+		for (const declared of [{ ...first, size: 3 }, { ...first, upload: `uploads/${within.workspace}/${uuid7()}` }]) {
+			expect(await inspectStaged(bucket, [declared], 52_428_800)).toBeNull();
+			expect(await measureStaged(bucket, [declared], 52_428_800)).toBeNull();
+		}
+	});
+
 	test("one larger or smaller than declared is refused and leaves nothing; the staged object is kept", async () => {
 		const within = scope();
 		for (const declared of [4, 6]) {
@@ -268,11 +293,12 @@ describe("stored bytes", () => {
 });
 
 describe("fault rows: Files", () => {
-	test("a staged object gone after it was measured refuses the start, the copies made are swept, and the kept one attaches again", async () => {
+	test("a staged object gone during the copy ends the run, the copies made are swept, and the kept one attaches again", async () => {
 		const within = scope();
 		const kept = await staged(within.workspace, "kept.txt", "kept");
 		const gone = await staged(within.workspace, "gone.txt", "gone");
-		// The copy of `gone` finds its object deleted, once the copy of `kept` has landed.
+		// The copy of `gone` finds its object deleted, once the copy of `kept` has landed: its first read is the start's
+		// inspection, its second the copy's measure, its third the copy's own.
 		const keptCopied = Promise.withResolvers<void>();
 		let goneReads = 0;
 		FOLDER_PORTS.bucket = (context) => {
@@ -280,7 +306,7 @@ describe("fault rows: Files", () => {
 			return {
 				...inner,
 				async get(key) {
-					if (key === gone.upload && ++goneReads === 2) {
+					if (key === gone.upload && ++goneReads === 3) {
 						await keptCopied.promise;
 						await env.FILES_EU.delete(key);
 					}
@@ -296,9 +322,9 @@ describe("fault rows: Files", () => {
 			};
 		};
 		const start = attaching(within, [kept, gone]);
-		expect(await commands.startRun(start)).toEqual(UNAVAILABLE);
-		expect(goneReads).toBe(2);
-		expect((await objectOf(start).faultView(start.run)).head).toBeNull();
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
+		expect(await settled(start)).toMatchObject({ status: "failed", errorMessage: UNAVAILABLE.message });
+		expect(goneReads).toBe(3);
 		expect(await blobs(start)).toHaveLength(1);
 		await sweepNow(start);
 		expect(await blobs(start)).toEqual([]);
@@ -308,7 +334,7 @@ describe("fault rows: Files", () => {
 		expect((await settled(again)).status).toBe("completed");
 	});
 
-	test("a crash during the attachments' copy: the start sent again copies into the key it recorded, and the sweep keeps it", async () => {
+	test("a crash during the attachments' copy: the next instance copies into the key it recorded, and the sweep keeps it", async () => {
 		const within = scope();
 		const start = attaching(within, [await staged(within.workspace, "notes.txt", "notes")]);
 		let crashes = 0;
@@ -326,12 +352,14 @@ describe("fault rows: Files", () => {
 				},
 			};
 		};
-		expect((await refusalOf(commands.startRun(start))).status).toBeGreaterThanOrEqual(500);
-		const [copy] = await blobs(start);
-		expect(copy).toBeDefined();
-		// Laravel sends the start again.
 		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted", attachments: [{ path: "notes.txt", size: 5, mediaType: "text/plain" }] });
+		const [copy] = await until(
+			() => blobs(start),
+			(keys) => keys.length === 1,
+		);
+		// The next call reaches a new instance, whose start runs the copy again.
 		expect((await settled(start)).status).toBe("completed");
+		expect(crashes).toBe(2);
 		expect(await resolved(start, "notes.txt")).toMatchObject({ key: copy, size: 5, sha256: await sha("notes") });
 		expect(await blobs(start)).toEqual([copy]);
 		await sweepNow(start);
@@ -356,23 +384,20 @@ describe("fault rows: Files", () => {
 			};
 		};
 		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
-		expect(puts).toBe(2);
 		await settled(start);
+		expect(puts).toBe(2);
 		const states = await rows<{ state: string }>(objectOf(start), "SELECT state FROM folder_blobs");
 		expect(states.map((row) => row.state)).toEqual(["stored"]);
 		await sweepNow(start);
 		expect(await blobs(start)).toEqual([(await resolved(start, "notes.txt")).key]);
 	});
 
-	test("a copy that lands while its conversation is deleted: the start is refused as deleted, and the sweep deletes the copy", async () => {
+	test("a copy that lands while its conversation is deleted commits nothing, and the sweep deletes the copy", async () => {
 		const within = scope();
 		const first = attaching(within, [await staged(within.workspace, "notes.txt", "notes")]);
 		await commands.startRun(first);
 		await settled(first);
 		const [kept] = await blobs(first);
-		// The second start's copy is held in its put while the conversation is deleted. Only this conversation's keys are held,
-		// and the deletion waits until the copy is really in its put: a deletion that overtakes the start before that refuses
-		// it before any copy, which is a different case.
 		const hold = Promise.withResolvers<void>();
 		let copying = false;
 		const late = attaching(within, [await staged(within.workspace, "late.txt", "late bytes")], first.conversation);
@@ -393,14 +418,17 @@ describe("fault rows: Files", () => {
 		};
 		// The object restarts, so its new instance builds its folder with the held bucket.
 		await runInDurableObject(objectOf(first), (_instance, state) => state.abort("fault: reload")).catch(() => {});
-		const inFlight = commands.startRun(late);
+		expect(await commands.startRun(late)).toMatchObject({ outcome: "accepted" });
 		await until(async () => copying, (reached) => reached);
 		expect(await commands.deleteConversation({ scope: within, conversation: first.conversation })).toEqual({ outcome: "deleted" });
 		hold.resolve();
-		expect(await inFlight).toEqual({ outcome: "refused", code: "CONVERSATION_DELETED", message: "This conversation was deleted." });
-		expect((await objectOf(late).faultView(late.run)).head).toBeNull();
-		// The copy landed, recorded loose; the run's blob stays until retention removes it (chunk 15).
-		expect(await blobs(first)).toHaveLength(2);
+		expect((await settled(late)).status).toBe("cancelled");
+		// The copy landed, and its commit found the run ended: it is doomed, and the first run's blob stays until retention removes it.
+		await until(
+			() => rows<{ state: string }>(objectOf(first), "SELECT state FROM folder_blobs ORDER BY state"),
+			(states) => states.map((row) => row.state).join() === "doomed,stored",
+		);
+		expect(await rows(objectOf(first), `SELECT count(*) AS n FROM folder_versions WHERE run_id = '${late.run}'`)).toEqual([{ n: 0 }]);
 		await sweepNow(first);
 		expect(await blobs(first)).toEqual([kept]);
 	});

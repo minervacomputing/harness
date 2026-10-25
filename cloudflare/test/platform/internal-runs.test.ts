@@ -8,8 +8,11 @@ import type { StartRun } from "@minerva/contract/internal";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
 import { connectorRegistry } from "../../src/connectors/index.ts";
 import type { Conversation } from "../../src/conversation/conversation.ts";
-import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
+import { PI_SETTLE_MS } from "../../src/conversation/pi-stops.ts";
+import { defaultPorts, PORTS, type PortsContext } from "../../src/conversation/ports.ts";
 import { FOLDER_PORTS } from "../../src/files/folder.ts";
+import { COPY_BOUND_MS } from "../../src/files/limits.ts";
+import type { Bucket } from "../../src/files/objects.ts";
 import { catalogOf } from "../../src/internal/catalog.ts";
 import { inputDigest } from "../../src/internal/start.ts";
 import { uuid7 } from "../../src/lib/random.ts";
@@ -21,13 +24,27 @@ signedAssertions();
 /** Every model request's transcript, in order, of the file's runs. */
 const contexts: TranscriptContext[] = [];
 const realBucket = FOLDER_PORTS.bucket;
+const realCounter = FOLDER_PORTS.counter;
+let point: ((context: PortsContext, name: string, detail?: string) => Promise<void>) | null = null;
+let copyBoundMs = COPY_BOUND_MS;
+let piSettleMs = PI_SETTLE_MS;
 
 beforeAll(() => {
-	PORTS.factory = () => ({ ...defaultPorts, upstream: () => fakeUpstream({ onCall: (_call, context) => contexts.push(context) }) });
+	PORTS.factory = () => ({
+		...defaultPorts,
+		upstream: () => fakeUpstream({ onCall: (_call, context) => contexts.push(context) }),
+		point: async (context, name, detail) => point?.(context, name, detail),
+		copyBoundMs: () => copyBoundMs,
+		piSettleMs: () => piSettleMs,
+	});
 });
 
 afterEach(() => {
 	FOLDER_PORTS.bucket = realBucket;
+	FOLDER_PORTS.counter = realCounter;
+	point = null;
+	copyBoundMs = COPY_BOUND_MS;
+	piSettleMs = PI_SETTLE_MS;
 	contexts.length = 0;
 });
 
@@ -90,10 +107,105 @@ function next(start: StartRun, change: Partial<StartRun> = {}): StartRun {
 	return startOf(start.scope, { conversation: start.conversation, ...change });
 }
 
-function stage(workspace: string, contents: string): Promise<string> {
+function stage(workspace: string, contents: string | Uint8Array): Promise<string> {
 	const key = `uploads/${workspace}/${uuid7()}`;
 	return env.FILES_EU.put(key, contents).then(() => key);
 }
+
+function bucketWith(change: (inner: Bucket) => Partial<Bucket>): void {
+	FOLDER_PORTS.bucket = (context) => {
+		const inner = realBucket(context);
+		return {
+			get: (key) => inner.get(key),
+			put: (key, value, options) => inner.put(key, value, options),
+			list: (options) => inner.list(options),
+			delete: (keys) => inner.delete(keys),
+			...change(inner),
+		};
+	};
+}
+
+/**
+ * Counts the bytes the first read of each staged object takes from the bucket; `sizes` gives an object another size than
+ * it holds. A later read of an object waits for `release`, so none is made before the test has read the counts.
+ */
+function countingReads(sizes: Map<string, number> = new Map()): { pulled: Map<string, number>; release: () => void } {
+	const pulled = new Map<string, number>();
+	const released = Promise.withResolvers<void>();
+	bucketWith((inner) => ({
+		async get(key) {
+			if (pulled.has(key)) {
+				await released.promise;
+				return inner.get(key);
+			}
+			const object = await inner.get(key);
+			if (object === null) return object;
+			pulled.set(key, 0);
+			const data = new Uint8Array(await new Response(object.body).arrayBuffer());
+			let offset = 0;
+			// A default read is handed a view of 64 KiB; a read with a view of its own, no more than that view.
+			const body = new ReadableStream(
+				{
+					type: "bytes",
+					autoAllocateChunkSize: 65_536,
+					pull(controller) {
+						const request = controller.byobRequest as ReadableStreamBYOBRequest;
+						const view = request.view as Uint8Array;
+						if (offset >= data.byteLength) {
+							controller.close();
+							request.respond(0);
+							return;
+						}
+						const size = Math.min(data.byteLength - offset, view.byteLength);
+						new Uint8Array(view.buffer, view.byteOffset, size).set(data.subarray(offset, offset + size));
+						request.respond(size);
+						offset += size;
+						pulled.set(key, (pulled.get(key) ?? 0) + size);
+					},
+				},
+				{ highWaterMark: 0 },
+			);
+			return { body, size: sizes.get(key) ?? object.size };
+		},
+	}));
+	return { pulled, release: () => released.resolve() };
+}
+
+async function attaching(within: ReturnType<typeof scope>, contents: string[], options: { conversation?: string; content?: string } = {}): Promise<StartRun> {
+	const attachments = await Promise.all(
+		contents.map(async (data, index) => ({ upload: await stage(within.workspace, data), name: `${String.fromCharCode(97 + index)}.txt`, size: data.length, mediaType: "text/plain" })),
+	);
+	const message = { id: uuid7(), content: options.content ?? `Read ${contents.length} files`, attachments };
+	return startOf(within, { message, ...(options.conversation ? { conversation: options.conversation } : {}) });
+}
+
+function attachmentsOf(start: StartRun) {
+	return runInDurableObject(objectOf(start), (_instance, state) => {
+		const sql = state.storage.sql;
+		return {
+			rows: sql.exec("SELECT position, name, size, media_type, path FROM run_attachments WHERE run_id = ? ORDER BY position", start.run).toArray(),
+			base: sql.exec<{ base: string | null }>("SELECT base_version_id AS base FROM runs WHERE id = ?", start.run).toArray()[0]?.base ?? null,
+			folder: sql.exec<{ folder: string | null }>("SELECT folder_version_id AS folder FROM conversation").toArray()[0]?.folder ?? null,
+			blobs: sql.exec<{ key: string; state: string }>("SELECT key, state FROM folder_blobs ORDER BY created_at, key").toArray(),
+		};
+	});
+}
+
+function eventsOf(start: StartRun): Promise<string[]> {
+	return runInDurableObject(objectOf(start), (_instance, state) =>
+		state.storage.sql.exec<{ data: string }>("SELECT data FROM run_events WHERE run_id = ? ORDER BY seq", start.run).toArray().map((event) => event.data),
+	);
+}
+
+/** The run's watch made due now, as Lifecycle runs it once its time comes (retention.test.ts `due`). */
+async function watchNow(start: StartRun): Promise<void> {
+	await runInDurableObject(objectOf(start), async (_instance, state) => {
+		state.storage.sql.exec("UPDATE cf_agents_jobs SET time = 0, running = 0 WHERE id = ?", `watch:${start.run}`);
+		await state.storage.setAlarm(Date.now());
+	});
+}
+
+const lastTranscript = () => JSON.stringify(contexts.at(-1));
 
 describe("startRun", () => {
 	test("is accepted once its run is stored, and its turn runs with the history and prompt Laravel sent", async () => {
@@ -278,42 +390,84 @@ describe("startRun", () => {
 		}
 	});
 
-	test("copies attachments it measured itself into the folder, under their cleaned names, and deletes the staged objects", async () => {
+	test("is accepted after reading at most 8 KiB of each staged object, and the run then copies them into its base version", async () => {
 		const within = scope();
-		const staged = await stage(within.workspace, "hello");
+		const large = new Uint8Array(1024 * 1024);
+		for (let i = 0; i < large.length; i += 65_536) crypto.getRandomValues(large.subarray(i, i + 65_536));
+		large.set(new TextEncoder().encode("%PDF-1.7"));
+		const [report, notes] = [await stage(within.workspace, large), await stage(within.workspace, "hello")];
 		const start = startOf(within, {
-			message: { id: uuid7(), content: "Read this", attachments: [{ upload: staged, name: "dir/report.txt", size: 5, mediaType: "application/x-claimed" }] },
+			message: {
+				id: uuid7(),
+				content: "Read this",
+				attachments: [
+					{ upload: report, name: "report.pdf", size: large.length, mediaType: "application/pdf" },
+					{ upload: notes, name: "dir/notes.txt", size: 5, mediaType: "application/x-claimed" },
+				],
+			},
 		});
-		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted", attachments: [{ path: "report.txt", size: 5, mediaType: "text/plain" }] });
-		await settled(start);
-		expect(JSON.stringify(contexts.at(-1))).toContain("[The user attached report.txt to this message, in your folder.]");
+		const { pulled, release } = countingReads();
+		expect(await commands.startRun(start)).toMatchObject({
+			outcome: "accepted",
+			attachments: [
+				{ path: "report.pdf", size: large.length, mediaType: "application/pdf" },
+				{ path: "notes.txt", size: 5, mediaType: "text/plain" },
+			],
+		});
+		expect(Object.fromEntries(pulled)).toEqual({ [report]: 8192, [notes]: 5 });
+		expect(await attachmentsOf(start)).toEqual({
+			rows: [
+				{ position: 0, name: "report.pdf", size: large.length, media_type: "application/pdf", path: "report.pdf" },
+				{ position: 1, name: "notes.txt", size: 5, media_type: "text/plain", path: "notes.txt" },
+			],
+			base: null,
+			folder: null,
+			blobs: [],
+		});
+		release();
+		expect(await settled(start)).toMatchObject({ status: "completed" });
+		const after = await attachmentsOf(start);
+		expect(after).toMatchObject({ rows: [], base: expect.any(String), folder: expect.any(String) });
+		expect(after.blobs.map((blob) => blob.state)).toEqual(["stored", "stored"]);
+		expect((await eventsOf(start)).slice(0, 5)).toEqual([
+			'{"status":"queued"}',
+			'{"status":"provisioning"}',
+			'{"text":"Copying the attached files"}',
+			'{"status":"running"}',
+			'{"text":"Starting the agent"}',
+		]);
+		expect(lastTranscript()).toContain("[The user attached report.pdf, notes.txt to this message, in your folder.]");
 		const blobs = await env.FILES_EU.list({ prefix: `blobs/${within.workspace}/${start.conversation}/` });
-		expect(blobs.objects.map((object) => object.size)).toEqual([5]);
-		await until(
-			() => env.FILES_EU.head(staged),
-			(object) => object === null,
-		);
+		expect(blobs.objects.map((object) => object.size).sort((a, b) => a - b)).toEqual([5, large.length]);
+		for (const staged of [report, notes]) {
+			await until(
+				() => env.FILES_EU.head(staged),
+				(object) => object === null,
+			);
+		}
 	});
 
-	test("a start cut off by a reset after its preparation stores no answer, and sent again is accepted as first compiled", async () => {
+	test("refuses attachments over the folder's limits from their declared sizes, reading no more than each one's head", async () => {
 		const within = scope();
-		const staged = await stage(within.workspace, "hello");
-		const start = startOf(within, { message: { id: uuid7(), content: "Read this", attachments: [{ upload: staged, name: "a.txt", size: 5, mediaType: "text/plain" }] } });
-		// The object is reset while its attachment is copied; the next instance has the preparation, and nothing else.
+		const MB50 = 50 * 1024 * 1024;
+		const keys = await Promise.all(Array.from({ length: 6 }, () => stage(within.workspace, "x".repeat(20_000))));
+		const { pulled } = countingReads(new Map(keys.map((key) => [key, MB50])));
+		const start = startOf(within, {
+			message: { id: uuid7(), content: "", attachments: keys.map((upload, index) => ({ upload, name: `${index}.bin`, size: MB50, mediaType: "application/octet-stream" })) },
+		});
+		const refused = { outcome: "refused", code: "FOLDER_FULL", message: "These files would make this conversation's folder larger than 256 MB." };
+		expect(await commands.startRun(start)).toEqual(refused);
+		expect([...pulled.values()]).toEqual(Array.from({ length: 6 }, () => 8192));
+		expect(await commands.startRun(start)).toEqual(refused);
+		expect(await runRow(start)).toBeNull();
+	});
+
+	test("a start cut off by a reset after its inspection stores no answer, and sent again is accepted as first compiled", async () => {
+		const within = scope();
+		const start = await attaching(within, ["hello"]);
 		let resets = 0;
-		FOLDER_PORTS.bucket = (context) => {
-			const inner = realBucket(context);
-			return {
-				...inner,
-				get: (key) => inner.get(key),
-				list: (options) => inner.list(options),
-				delete: (keys) => inner.delete(keys),
-				async put(key, value, options) {
-					const stored = await inner.put(key, value, options);
-					if (resets++ === 0) context.ctx.abort("fault: copy:after");
-					return stored;
-				},
-			};
+		point = async (context, name) => {
+			if (name === "start:planned" && resets++ === 0) context.ctx.abort("fault: start:planned");
 		};
 		expect((await refusalOf(commands.startRun(start))).status).toBeGreaterThanOrEqual(500);
 		const prepared = await runInDurableObject(objectOf(start), (_instance, state) => {
@@ -324,10 +478,156 @@ describe("startRun", () => {
 		});
 		expect(prepared).toMatchObject({ answers: 0, runs: 0 });
 		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted", digest: prepared.preparation.digest });
-		await settled(start);
-		// The copy the first try made was used again: one object.
+		expect(await settled(start)).toMatchObject({ status: "completed" });
 		const blobs = await env.FILES_EU.list({ prefix: `blobs/${within.workspace}/${start.conversation}/` });
 		expect(blobs.objects).toHaveLength(1);
+	});
+});
+
+describe("the copy, the run's first step", () => {
+	/** A conversation with one completed run, so its pi conversation exists and the next run's input may carry a turn note. */
+	async function conversationWithTurn(): Promise<StartRun> {
+		const first = startOf(scope());
+		await commands.startRun(first);
+		expect(await settled(first)).toMatchObject({ status: "completed" });
+		return first;
+	}
+
+	async function nextTurn(start: StartRun): Promise<string> {
+		const after = next(start);
+		expect(await commands.startRun(after)).toMatchObject({ outcome: "accepted" });
+		expect(await settled(after)).toMatchObject({ status: "completed" });
+		return lastTranscript();
+	}
+
+	test("a staged object deleted after the acceptance ends the run before its prompt, and the next turn's note leaves it out", async () => {
+		const first = await conversationWithTurn();
+		const folder = (await attachmentsOf(first)).folder;
+		const start = await attaching(first.scope, ["kept", "gone"], { conversation: first.conversation, content: "Never submitted" });
+		const gone = (start.message.attachments[1] as { upload: string }).upload;
+		let reads = 0;
+		bucketWith((inner) => ({
+			async get(key) {
+				if (key === gone && ++reads === 2) await env.FILES_EU.delete(key);
+				return inner.get(key);
+			},
+		}));
+		const calls = contexts.length;
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
+		expect(await settled(start)).toEqual({ status: "failed", error_code: "attachment_unavailable", revoked: 0 });
+		expect(contexts.length).toBe(calls);
+		expect(await attachmentsOf(start)).toMatchObject({ rows: [{ path: "a.txt" }, { path: "b.txt" }], base: folder, folder });
+		const transcript = await nextTurn(start);
+		expect(transcript).not.toContain("Never submitted");
+		expect(transcript).not.toMatch(/was stopped before you saw it|did not reach you/);
+	});
+
+	test("a workspace with no room for the copies ends the run", async () => {
+		FOLDER_PORTS.counter = () => ({ setConversationBytes: async () => ({ ok: false, limit: "workspace" }) });
+		const start = await attaching(scope(), ["hello"]);
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted", attachments: [{ path: "a.txt", size: 5, mediaType: "text/plain" }] });
+		expect(await settled(start)).toEqual({ status: "failed", error_code: "workspace_full", revoked: 0 });
+		const error = await runInDurableObject(objectOf(start), (_instance, state) => state.storage.sql.exec("SELECT error_message FROM runs").one().error_message);
+		expect(error).toBe("This workspace has no room for more files.");
+		expect(await attachmentsOf(start)).toMatchObject({ rows: [{ path: "a.txt" }], base: null, folder: null });
+	});
+
+	test("a reset after the copy, before its commit: the next instance copies into the keys it recorded, stored once", async () => {
+		const start = await attaching(scope(), ["hello"]);
+		let resets = 0;
+		point = async (context, name) => {
+			if (name === "copy:copied" && resets++ === 0) context.ctx.abort("fault: copy:copied");
+		};
+		expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
+		// The next call reaches a new instance, whose start runs the copy again.
+		const done = await until(
+			() => objectOf(start).faultView(start.run).catch(() => null),
+			(view) => view?.head?.status === "completed",
+		);
+		expect(resets).toBe(2);
+		expect(done?.internals.attempts).toEqual([{ attempt: 1, ended: "completed" }]);
+		const { blobs } = await attachmentsOf(start);
+		expect(blobs.map((blob) => blob.state)).toEqual(["stored"]);
+		const stored = await env.FILES_EU.list({ prefix: `blobs/${start.scope.workspace}/${start.conversation}/` });
+		expect(stored.objects.map((object) => object.key)).toEqual([blobs[0]?.key]);
+	});
+
+	test.each([
+		["start_expired", "failed"],
+		["cancelled", "cancelled"],
+	] as const)("a %s cancel during the copy commits nothing, and the next turn's note leaves the run out", async (reason, status) => {
+		const first = await conversationWithTurn();
+		const folder = (await attachmentsOf(first)).folder;
+		const start = await attaching(first.scope, ["hello"], { conversation: first.conversation, content: "Stopped while copying" });
+		const putting = Promise.withResolvers<void>();
+		const hold = Promise.withResolvers<void>();
+		bucketWith((inner) => ({
+			async put(key, value, options) {
+				putting.resolve();
+				await hold.promise;
+				return inner.put(key, value, options);
+			},
+		}));
+		// The object restarts, so its new instance builds its folder with this bucket.
+		await runInDurableObject(objectOf(first), (_instance, state) => state.abort("fault: reload")).catch(() => {});
+		const accepted = await commands.startRun(start);
+		expect(accepted).toMatchObject({ outcome: "accepted" });
+		await putting.promise;
+		expect(await cancelOf(start, reason)).toEqual({ state: "cancelled" });
+		hold.resolve();
+		expect(await settled(start)).toEqual({ status, error_code: reason, revoked: 1 });
+		await until(
+			() => attachmentsOf(start),
+			(held) => held.blobs.length === 1 && held.blobs[0]?.state === "doomed",
+		);
+		expect(await attachmentsOf(start)).toMatchObject({ rows: [{ path: "a.txt" }], base: folder, folder });
+		expect(await commands.startRun(start)).toEqual(accepted);
+		const transcript = await nextTurn(start);
+		expect(transcript).not.toContain("Stopped while copying");
+		expect(transcript).not.toMatch(/was stopped before you saw it|did not reach you/);
+	});
+
+	test("a copy that outlasts the section's bound does not reset the object", async () => {
+		piSettleMs = 300;
+		bucketWith((inner) => ({
+			async put(key, value, options) {
+				await sleep(1000);
+				return inner.put(key, value, options);
+			},
+		}));
+		const start = await attaching(scope(), ["hello"]);
+		await commands.startRun(start);
+		expect(await settled(start)).toMatchObject({ status: "completed" });
+		const view = await objectOf(start).faultView(start.run);
+		expect(view.internals.attempts).toEqual([{ attempt: 1, ended: "completed" }]);
+		expect(view.aborts).toEqual([]);
+	});
+
+	test.each([
+		["the next try's put works", "completed", ""],
+		["the bound has passed", "failed", "attachment_unavailable"],
+	])("an R2 error during the copy is tried again by the watch with new keys; %s", async (_case, status, code) => {
+		let failing = true;
+		bucketWith((inner) => ({
+			async put(key, value, options) {
+				if (failing || code !== "") throw new Error("put: Network connection lost.");
+				return inner.put(key, value, options);
+			},
+		}));
+		const start = await attaching(scope(), ["hello"]);
+		await commands.startRun(start);
+		await until(
+			() => attachmentsOf(start),
+			(held) => held.blobs.length === 1 && held.blobs[0]?.state === "doomed",
+		);
+		failing = false;
+		if (code !== "") copyBoundMs = 0;
+		await watchNow(start);
+		expect(await settled(start)).toMatchObject({ status, error_code: code });
+		const { blobs, rows } = await attachmentsOf(start);
+		expect(blobs.map((blob) => blob.state)).toEqual(code === "" ? ["doomed", "stored"] : ["doomed", "doomed"]);
+		expect(new Set(blobs.map((blob) => blob.key)).size).toBe(2);
+		expect(rows).toHaveLength(code === "" ? 0 : 1);
 	});
 });
 
@@ -398,35 +698,37 @@ describe("cancelRun", () => {
 
 	const cancelledFirst = { outcome: "refused", code: "CANCELLED", message: "This run was cancelled before it started." };
 
-	test("arriving while the start copies its attachments, refuses the start", async () => {
-		const within = scope();
-		const staged = await stage(within.workspace, "hello");
-		const start = startOf(within, { message: { id: uuid7(), content: "Read this", attachments: [{ upload: staged, name: "a.txt", size: 5, mediaType: "text/plain" }] } });
-		// The first get measures the staged object, the second copies it.
-		const copying = holding(2);
+	test("arriving after the start's inspection, before the write that stores its run, refuses the start", async () => {
+		const start = await attaching(scope(), ["hello"]);
+		const planned = Promise.withResolvers<void>();
+		const hold = Promise.withResolvers<void>();
+		point = async (_context, name) => {
+			if (name !== "start:planned") return;
+			planned.resolve();
+			await hold.promise;
+		};
 		const answer = commands.startRun(start);
-		await copying.reading;
+		await planned.promise;
 		expect(await cancelOf(start)).toEqual({ state: "tombstoned" });
-		copying.release();
+		hold.resolve();
 		expect(await answer).toEqual(cancelledFirst);
 		expect(await runRow(start)).toBeNull();
 		// The conversation is free for the next run.
-		FOLDER_PORTS.bucket = realBucket;
 		const after = next(start);
 		expect(await commands.startRun(after)).toMatchObject({ outcome: "accepted" });
 		await settled(after);
 	});
 
-	test("arriving while the start measures an attachment that is not there, is the refusal that counts", async () => {
+	test("arriving while the start inspects an attachment that is not there, is the refusal that counts", async () => {
 		const within = scope();
 		const start = startOf(within, {
 			message: { id: uuid7(), content: "Read this", attachments: [{ upload: `uploads/${within.workspace}/${uuid7()}`, name: "a.txt", size: 5, mediaType: "text/plain" }] },
 		});
-		const measuring = holding(1);
+		const inspecting = holding(1);
 		const answer = commands.startRun(start);
-		await measuring.reading;
+		await inspecting.reading;
 		expect(await cancelOf(start)).toEqual({ state: "tombstoned" });
-		measuring.release();
+		inspecting.release();
 		expect(await answer).toEqual(cancelledFirst);
 		expect(await commands.startRun(start)).toEqual(cancelledFirst);
 	});

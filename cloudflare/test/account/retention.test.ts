@@ -11,6 +11,7 @@
 
 import { ORPCError } from "@orpc/client";
 import { afterAll, describe, expect, test } from "vitest";
+import { MIGRATIONS } from "../../src/conversation/schema.ts";
 import {
 	type Fault,
 	LIST_INBOX,
@@ -144,7 +145,7 @@ describe.concurrent("retention with periods of a minute", () => {
 			"the conversation's storage is not deleted",
 		);
 		const kept = Object.fromEntries(Object.entries(emptied.tables).flatMap(([table, { rows }]) => (rows > 0 ? [[table, rows]] : [])));
-		expect(kept).toEqual({ _migrations: 16, pi_conversations: 1, pi_document_revisions: 5, pi_documents: 5, pi_durable_metadata: 1, pi_durable_schema: 1, pi_record_ids: 6 });
+		expect(kept).toEqual({ _migrations: MIGRATIONS.length, pi_conversations: 1, pi_document_revisions: 5, pi_documents: 5, pi_durable_metadata: 1, pi_durable_schema: 1, pi_record_ids: 6 });
 		expect(emptied.alarm).toBeNull();
 
 		await expect(post(w, "Hello again")).rejects.toThrow(/^Refused: CONVERSATION_DELETED /);

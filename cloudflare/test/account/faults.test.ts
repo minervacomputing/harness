@@ -18,7 +18,7 @@
 // - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
 //   turn's container; a detached writer, a FIFO and a symlink at the checkpoint; five attachments of 50 MiB
-//   (the folder's limit) copied, hydrated and kept in the version; crashes between a checkpoint's upload,
+//   (the folder's limit) copied as the run's first step, hydrated and kept in the version; crashes between a checkpoint's upload,
 //   record, release and pi's commit; the container parked at the end of a completed turn, and taken by the next;
 // - a kill between a cancel and the next start, while the cancelled run's command is past its checkpoint: the
 //   cancelled run's tasks end abort-marked, it enters one model call and one tool call in all and has no tool_call
@@ -336,7 +336,9 @@ describe.concurrent("the local tools in the container", () => {
 		expect(view.head?.status, outcome(view)).toBe("completed");
 		expect(cards(view.events)).toEqual([{ tool: "bash", summary: expect.stringContaining("wc -c"), ok: true, excerpt: "262144000 total\nd\n" }]);
 		expect((await folder(w)).files.map((item) => [item.path, item.size]).sort()).toEqual(["big0.bin", "big1.bin", "big2.bin", "big3.bin", "big4.bin"].map((path) => [path, 50 * MiB]));
-		console.info(`five attachments of 50 MiB: staging ${uploadedMs} ms, the start (the copies) ${postedMs} ms, the run ${view.seconds} s`);
+		const phases = view.events.flatMap((event) => (event.type === "phase" ? [event.data.text] : []));
+		expect(phases.slice(0, 2)).toEqual(["Copying the attached files", "Starting the agent"]);
+		console.info(`five attachments of 50 MiB: staging ${uploadedMs} ms, the start ${postedMs} ms, the run with its copy ${view.seconds} s`);
 	});
 
 	for (const point of ["checkpoint:uploaded", "checkpoint:recorded", "local:released"]) {

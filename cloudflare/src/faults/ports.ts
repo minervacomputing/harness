@@ -19,7 +19,9 @@
 //   whose notes time a pass on the object's clock (the perf probe);
 // - `loop:created`: the conversation's pi conversation created by its first run, before the run claims it (detail: its id);
 // - `pi:stop`: a run's end, before it marks pi's orphaned work (detail: the run's id); no other stop reaches it;
-// - `start:copy`: before a start copies its attachments into the folder, ahead of its transaction;
+// - `start:planned`: a start's staged attachments inspected, before the transaction that plans and stores its run;
+//   `copy:copied`: the run's attachments copied into the conversation's blobs, before the write that commits them (detail:
+//   the run's id, both);
 // - `gate:decided`, `gate:committed`: in the attempt gate, once it decided to end or restart a run, before
 //   its transaction, and after the transaction and its sync (detail: the decision);
 // - `local:prepared`: an attempt's container started, hardened, verified and hydrated (detail: its `Preparation` as JSON,
@@ -221,17 +223,6 @@ export function faultConversationPorts(base: ConversationPorts): ConversationPor
 					const outcome = await inner.invoke(request);
 					await plan.at("tool:after", { tool: request.name });
 					return outcome;
-				},
-			};
-		},
-		folder: (context) => {
-			const inner = base.folder(context);
-			const plan = planOf(context.ctx);
-			return {
-				...inner,
-				async prepareAttachments(runId, uploads) {
-					await plan.at("start:copy");
-					return inner.prepareAttachments(runId, uploads);
 				},
 			};
 		},

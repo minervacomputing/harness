@@ -116,5 +116,10 @@ export function quotaRefusal(limit: FolderLimit): string {
 
 /** Loose objects not claimed within this are deleted (ARCHITECTURE.md: Files). */
 export const LOOSE_GRACE_MS = 60 * 60 * 1000;
+/**
+ * A run's copy of its attachments that fails this long after the run was stored ends the run instead of being tried again:
+ * well inside LOOSE_GRACE_MS, so the keys a reset left are still loose for the try after it.
+ */
+export const COPY_BOUND_MS = 10 * 60 * 1000;
 /** An object is deleted once more this long after its first deletion, for a write that was still in flight. */
 export const SECOND_DELETION_MS = 24 * 60 * 60 * 1000;

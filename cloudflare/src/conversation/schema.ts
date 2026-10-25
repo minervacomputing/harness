@@ -327,4 +327,23 @@ DROP INDEX IF EXISTS runs_session;
 CREATE INDEX runs_by_session ON runs (session) WHERE session IS NOT NULL;
 `,
 	},
+	// A run's attachments as its start planned them, in the message's order, until its copy commits them into its base
+	// version; a run that ended before that keeps them until its prune. The previous version ignores them.
+	{
+		id: 17,
+		sql: `
+CREATE TABLE run_attachments (
+	run_id TEXT NOT NULL,
+	position INTEGER NOT NULL,
+	upload TEXT NOT NULL,
+	name TEXT NOT NULL,
+	size INTEGER NOT NULL,
+	media_type TEXT NOT NULL,
+	path TEXT NOT NULL,
+	parent_id TEXT,
+	mtime INTEGER NOT NULL,
+	PRIMARY KEY (run_id, position)
+) STRICT;
+`,
+	},
 ];

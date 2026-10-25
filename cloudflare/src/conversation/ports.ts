@@ -8,9 +8,9 @@ import { sandboxObject } from "../addressing.ts";
 import { settings } from "../config.ts";
 
 import { conversationFolder } from "../files/folder.ts";
-import type { CheckpointOutcome, CheckpointScan, DownloadTarget } from "../files/store.ts";
-import type { StagedUpload } from "../files/staging.ts";
-import type { ReservedUpload } from "../files/staging.ts";
+import { COPY_BOUND_MS } from "../files/limits.ts";
+import type { AttachmentCopies, AttachmentPlan, CheckpointOutcome, CheckpointScan, CommittedAttachments, DownloadTarget } from "../files/store.ts";
+import type { InspectedUpload, ReservedUpload, StagedUpload } from "../files/staging.ts";
 import { systemClock } from "../gateway/clock.ts";
 import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
 import { type DispatchResult, RUN_ENDED_MESSAGE, type SettledWrite, type Settlement, type WriteNote, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
@@ -20,8 +20,8 @@ import type { RunStatePort } from "../gateway/run-state.ts";
 import { durableSql } from "../lib/sql.ts";
 import { type ModelRoute, type Upstream, upstreamOf } from "../model/route.ts";
 import type { CheckpointUploadPlan, CheckpointUploadResult, HydratePlan } from "../sandbox/folder.ts";
-import type { Attachment, Folder } from "@minerva/contract";
-import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type RunStatus, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
+import type { Folder } from "@minerva/contract";
+import { type AttemptFence, type ConversationId, type EpochMs, type Outcome, type RunId, type RunStatus, type Sha256, type VersionId, type WorkspaceRef, refuse } from "../shared/rpc.ts";
 import type { GateDecision } from "./gate.ts";
 import type { SandboxPort } from "./local-run.ts";
 import { PI_SETTLE_MS } from "./pi-stops.ts";
@@ -65,22 +65,23 @@ export type WriteOutcome = "done" | "failed" | "uncertain";
 const OUTCOMES: Record<Settlement["effect"], WriteOutcome> = { applied: "done", not_applied: "failed", unknown: "uncertain" };
 
 /**
- * The run's folder (ARCHITECTURE.md: Starting a run, Checkpoints, Files; src/files/). The start protocol
- * calls `prepareAttachments` before its transaction (the copies into the conversation's blobs, recorded as
- * loose first) and `commitAttachments` inside it; `publish` runs in `finish`'s transaction. The sandbox
- * hydrates from `hydratePlan` and saves with `checkpoint`; `sweep` is the `files` Lifecycle job.
+ * The run's folder (ARCHITECTURE.md: Starting a run, Checkpoints, Files; src/files/). A start inspects its staged uploads
+ * and plans them inside the transaction that stores its run; the run's copy measures them in full, copies them into the
+ * conversation's blobs (recorded as loose first) and commits them in one write. `publish` runs in `finish`'s transaction.
+ * The sandbox hydrates from `hydratePlan` and saves with `checkpoint`; `sweep` is the `files` Lifecycle job.
  */
 export interface FolderPort {
-	/**
-	 * Laravel's staged uploads, measured into uploads `prepareAttachments` copies (files/staging.ts); null when any is
-	 * missing or not as declared.
-	 */
+	/** Laravel's staged uploads by their sizes and heads (files/staging.ts); null when any is missing or not as declared. */
+	inspectStaged(staged: readonly StagedUpload[], uploadBytes: number): Promise<InspectedUpload[] | null>;
+	/** Laravel's staged uploads read in full, counted and hashed, into uploads `copyAttachments` copies; null as for `inspectStaged`. */
 	measureStaged(staged: readonly StagedUpload[], uploadBytes: number): Promise<ReservedUpload[] | null>;
-	/** Deletes staged uploads a stored run copied; R2's lifecycle rule deletes any left after a day. */
+	/** Deletes staged uploads a run copied; R2's lifecycle rule deletes any left after a day. */
 	deleteStaged(keys: readonly string[]): Promise<void>;
-	prepareAttachments(runId: RunId, uploads: ReservedUpload[]): Promise<Outcome<PreparedAttachments>>;
-	/** Synchronous, inside the start's transaction: the base version with the copies, claiming their loose keys. */
-	commitAttachments(runId: RunId, prepared: PreparedAttachments): { baseVersionId: VersionId | null; attachments: Attachment[] };
+	/** Synchronous, inside the start's transaction: the uploads at the folder's root, checked against its limits. */
+	planAttachments(uploads: readonly InspectedUpload[]): Outcome<AttachmentPlan>;
+	copyAttachments(runId: RunId, uploads: readonly ReservedUpload[]): Promise<Outcome<AttachmentCopies>>;
+	/** Synchronous, inside the copy's write: the base version with the copies, claiming their loose keys, while the fence is current. */
+	commitAttachments(fence: AttemptFence, plan: AttachmentPlan, hashes: readonly Sha256[], copies: AttachmentCopies): CommittedAttachments;
 	/**
 	 * Inside `finish`'s transaction: the last checkpoint, else the base, becomes the folder; with the bytes the
 	 * conversation then keeps (`run.finished`'s `storedBytes`), absent when they cannot be summed.
@@ -103,12 +104,6 @@ export interface FolderPort {
 	checkpoint(fence: AttemptFence, scan: CheckpointScan, upload: (plan: CheckpointUploadPlan) => Promise<CheckpointUploadResult>): Promise<CheckpointOutcome>;
 	/** The `files` job: deletes loose and unnamed objects (twice, a day apart) and reports the byte total; when to run next. */
 	sweep(): Promise<{ rescheduleAt: EpochMs } | undefined>;
-}
-
-export interface PreparedAttachments {
-	uploads: ReservedUpload[];
-	/** Whatever the folder needs to commit them. */
-	state: { [key: string]: unknown };
 }
 
 export interface PortsContext {
@@ -143,6 +138,8 @@ export interface ConversationPorts {
 	runTimeoutMs(context: PortsContext): number | null;
 	/** How long a start waits for pi's earlier work before the object resets (pi-stops.ts): PI_SETTLE_MS, unless the test build's plan sets one. */
 	piSettleMs(context: PortsContext): number;
+	/** How long after its run was stored a copy of its attachments that fails is tried again: COPY_BOUND_MS. */
+	copyBoundMs(context: PortsContext): number;
 	/** What the conversation keeps and how long (retention.ts): RETENTION, unless the test build's plan shortens it. */
 	retention(ctx: DurableObjectState): RetentionPeriods;
 	/**
@@ -163,7 +160,9 @@ export interface ConversationPorts {
 	 * `model:settled` around a model call's record and settlement; `settle:sealed` and `settle:written` around the write of
 	 * a run's `run.settled`; `retain:step` after each step of a retention pass, a purge's included, and `retain:pass` at a
 	 * pass's start and end; `loop:created` between the
-	 * creation of the conversation's pi conversation and the run's claim; `pi:stop` at a run's end, before it marks pi's orphaned work.
+	 * creation of the conversation's pi conversation and the run's claim; `pi:stop` at a run's end, before it marks pi's orphaned work;
+	 * `start:planned` between a start's inspection of its attachments and the transaction that stores its run; `copy:copied`
+	 * between a run's copy of its attachments and the write that commits them.
 	 */
 	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
 	/**
@@ -175,13 +174,15 @@ export interface ConversationPorts {
 
 /** No files: the folder stays as it is, and a message with attachments is refused (for tests of the rest). */
 export const emptyFolder = (context: PortsContext): FolderPort => ({
+	inspectStaged: async (staged) => (staged.length ? null : []),
 	measureStaged: async (staged) => (staged.length ? null : []),
 	deleteStaged: async () => {},
-	prepareAttachments: async (_runId, uploads) =>
+	planAttachments: (uploads) =>
 		uploads.length
 			? refuse("ATTACHMENT_UNAVAILABLE", "An attached file is no longer available. Remove it and attach it again.")
-			: { ok: true, value: { uploads: [], state: {} } },
-	commitAttachments: () => ({ baseVersionId: context.folderVersionId(), attachments: [] }),
+			: { ok: true, value: { parentId: context.folderVersionId(), attachments: [] } },
+	copyAttachments: async () => ({ ok: true, value: { copies: [], reused: [], fresh: [] } }),
+	commitAttachments: () => ({ ok: false, reason: "stale" }),
 	publish: (_runId, run) => ({ resultVersionId: run.checkpointVersionId ?? run.baseVersionId, changes: null }),
 	list: (versionId) => (versionId === null || versionId === context.folderVersionId() ? { versionId: context.folderVersionId(), files: [], dirs: [] } : null),
 	resolve: () => null,
@@ -277,6 +278,7 @@ export const defaultPorts: ConversationPorts = {
 	sandbox: ({ env, ctx, workspace, conversationId }) => sandboxObject(env, ctx.exports, workspace, conversationId) as unknown as SandboxPort,
 	runTimeoutMs: ({ env }) => settings(env).runTimeoutMs,
 	piSettleMs: () => PI_SETTLE_MS,
+	copyBoundMs: () => COPY_BOUND_MS,
 	retention: () => RETENTION,
 };
 

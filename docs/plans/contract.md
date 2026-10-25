@@ -24,6 +24,7 @@ Anything else is `v2`, which the engine serves beside `v1` until Laravel has mov
 Some changes need the receiving side deployed first, in two steps, expand then contract:
 - **A new kind of fact.** Laravel must apply every fact it acknowledges, so Laravel's support for it is deployed before the engine sends it.
 - **An input that becomes required.** It is first optional and then sent, and only after that required.
+- **A change in what an outcome promises, with the wire unchanged.** It is none of the additive kinds above, so it needs the owner's approval, and the receiving side's handling of the new meaning is deployed first.
 
 Readers on both sides ignore fields they do not know (zod's objects strip them, and Laravel's client reads only what it names).
 
@@ -82,7 +83,7 @@ Each is idempotent by its own ids.
   - optionally `allowance`: what the run may spend, in micro-dollars (µ$). The engine refuses the run's next model call once it has spent this, and the run fails with the code `budget_reached`. Without it the run has no budget.
 
   It answers one of two outcomes:
-  - `{outcome: "accepted", catalog, compiler, digest, authorized: [connection ids], attachments: [{path, size, mediaType}]}`: the catalog's and the compiler's versions, the snapshot's digest, the run's authorized set, and the message's attachments as the folder holds them, which Laravel stores on the message;
+  - `{outcome: "accepted", catalog, compiler, digest, authorized: [connection ids], attachments: [{path, size, mediaType}]}`: the catalog's and the compiler's versions, the snapshot's digest, the run's authorized set, and the message's attachments as the folder will hold them, which Laravel stores on the message. It promises that the run is stored and active and that its attachments passed a check of each staged object's size and head and of the folder's limits; the run copies them as its first step, and a copy that fails ends the run `failed` with the code `attachment_unavailable` or `workspace_full`;
   - `{outcome: "refused", code, message}`. The codes include the attachments' and the folder's (`TOO_MANY_ATTACHMENTS`, `ATTACHMENT_UNAVAILABLE`, `FOLDER_FULL`, …), `CONVERSATION_BUSY`, `CANCELLED` (the run is tombstoned) and `CONVERSATION_DELETED`. `ADMISSION_CLOSED` is declared and never sent.
 
   A repeat with the same run id gets the same answer. It compiles once.

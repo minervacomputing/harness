@@ -10,7 +10,8 @@ import { describe, expect, test } from "vitest";
 import { MIGRATIONS } from "../../src/conversation/schema.ts";
 import { BLOB_GONE, CONFLICT, LOOSE_GRACE_MS, NO_LONGER_AVAILABLE, NO_ROOM, QuotaExceeded, SECOND_DELETION_MS, STALE } from "../../src/files/limits.ts";
 import { type FolderWarnings, type WireManifest, digestOf, parseManifest } from "../../src/files/manifest.ts";
-import { StaleParent, UnknownBlob } from "../../src/files/store.ts";
+import type { ReservedUpload } from "../../src/files/staging.ts";
+import { type AttachmentCopies, type AttachmentPlan, StaleParent, UnknownBlob } from "../../src/files/store.ts";
 import { parseJson } from "../../src/lib/json.ts";
 import { migrate, type Sql, sqliteSql } from "../../src/lib/sql.ts";
 import { CHECKSUM_MISMATCH, CONVERSATION, DAY, START, WORKSPACE, World, sandboxUpload, sha } from "./files-support.ts";
@@ -32,6 +33,22 @@ async function saved(promise: Promise<Checkpointed>): Promise<string | null> {
 	const { outcome } = await promise;
 	if (!outcome.ok) throw new Error(`Refused: ${JSON.stringify(outcome)}`);
 	return outcome.versionId;
+}
+
+function planned(w: World, uploads: ReservedUpload[]): AttachmentPlan {
+	const plan = w.store.planAttachments(uploads);
+	if (!plan.ok) throw new Error(plan.refusal.detail);
+	return plan.value;
+}
+
+async function copied(w: World, run: string, uploads: ReservedUpload[]): Promise<AttachmentCopies> {
+	const copy = await w.store.copyAttachments(run, uploads);
+	if (!copy.ok) throw new Error(copy.refusal.detail);
+	return copy.value;
+}
+
+function committed(w: World, run: string, plan: AttachmentPlan, uploads: ReservedUpload[], copies: AttachmentCopies) {
+	return w.sql.transaction(() => w.store.commitAttachments(w.fence(run), plan, uploads.map((upload) => upload.sha256), copies));
 }
 
 function refusedWith(error: unknown): { name: string; limit?: string; hashes?: string[] } {
@@ -809,19 +826,21 @@ describe("attachments", () => {
 		const earlier = w.run();
 		const first = await saved(w.checkpoint(earlier, [{ path: "notes.txt", data: "old" }], { dirs: ["data.csv (2)"] }));
 		w.finish(earlier);
-		const a = await w.upload("notes.txt", "new notes");
-		const b = await w.upload("data.csv", "a,b\n", "text/csv");
-		const run = w.run({ status: "queued", baseVersionId: null });
-		const prepared = await w.store.prepareAttachments(run, [a, b]);
-		if (!prepared.ok) throw new Error(prepared.refusal.detail);
-		const { baseVersionId, attachments } = w.sql.transaction(() => w.store.commitAttachments(run, prepared.value));
-		expect(attachments).toEqual([
-			{ path: "notes (2).txt", size: 9, mediaType: "text/plain" },
-			{ path: "data.csv", size: 4, mediaType: "text/csv" },
-		]);
-		const base = w.versions().find((version) => version.id === baseVersionId);
+		const uploads = [await w.upload("notes.txt", "new notes"), await w.upload("data.csv", "a,b\n", "text/csv")];
+		const run = w.run({ status: "provisioning" });
+		const plan = planned(w, uploads);
+		expect(plan).toEqual({
+			parentId: first,
+			attachments: [
+				{ key: uploads[0]?.key, name: "notes.txt", size: 9, mediaType: "text/plain", path: "notes (2).txt", mtime: w.now },
+				{ key: uploads[1]?.key, name: "data.csv", size: 4, mediaType: "text/csv", path: "data.csv", mtime: w.now },
+			],
+		});
+		const result = committed(w, run, plan, uploads, await copied(w, run, uploads));
+		if (!result.ok) throw new Error(result.reason);
+		const base = w.versions().find((version) => version.id === result.baseVersionId);
 		expect(base).toMatchObject({ kind: "base", parent_id: first, run_id: run });
-		const entries = w.store.entries(baseVersionId as string);
+		const entries = w.store.entries(result.baseVersionId);
 		expect(Object.fromEntries(Object.entries(entries.files).map(([path, file]) => [path, file.sha256]))).toEqual({
 			"notes.txt": await sha("old"),
 			"notes (2).txt": await sha("new notes"),
@@ -839,59 +858,68 @@ describe("attachments", () => {
 		);
 		for (const copy of copies) expect(copy.key.startsWith(PREFIX)).toBe(true);
 		expect(w.counter.value).toBe(3 + 9 + 4);
-		expect(w.store.resolve(baseVersionId, "notes (2).txt")).toMatchObject({ key: copies.find((row) => row.size === 9)?.key, size: 9 });
+		expect(w.store.resolve(result.baseVersionId, "notes (2).txt")).toMatchObject({ key: copies.find((row) => row.size === 9)?.key, size: 9 });
 	});
 
 	test("two attachments of one name are numbered against each other; contents the conversation holds are not copied", async () => {
 		const w = new World();
 		await w.blob("same");
 		const uploads = [await w.upload("a.txt", "same"), await w.upload("a.txt", "other"), await w.upload("b.txt", "other")];
-		const run = w.run({ status: "queued" });
-		const prepared = await w.store.prepareAttachments(run, uploads);
-		if (!prepared.ok) throw new Error(prepared.refusal.detail);
-		expect(prepared.value?.attachments.map((attachment) => attachment.path)).toEqual(["a.txt", "a (2).txt", "b.txt"]);
-		expect(prepared.value?.copies.map((copy) => copy.sha256)).toEqual([await sha("other")]);
-		expect(prepared.value?.reused).toEqual([await sha("same")]);
-		const { baseVersionId } = w.sql.transaction(() => w.store.commitAttachments(run, prepared.value));
-		expect(w.store.list(baseVersionId)?.files.map((file) => file.path)).toEqual(["a (2).txt", "a.txt", "b.txt"]);
+		const run = w.run({ status: "provisioning" });
+		const plan = planned(w, uploads);
+		expect(plan.attachments.map((attachment) => attachment.path)).toEqual(["a.txt", "a (2).txt", "b.txt"]);
+		const copies = await copied(w, run, uploads);
+		expect(copies.copies.map((copy) => copy.sha256)).toEqual([await sha("other")]);
+		expect(copies.reused).toEqual([await sha("same")]);
+		const result = committed(w, run, plan, uploads, copies);
+		expect(result.ok && w.store.list(result.baseVersionId)?.files.map((file) => file.path)).toEqual(["a (2).txt", "a.txt", "b.txt"]);
 	});
 
-	test("a message without attachments starts from the folder, and no version is made", async () => {
+	test("a message without attachments plans on the folder as it is, and no version is made", async () => {
 		const w = new World();
 		const earlier = w.run();
 		const first = await saved(w.checkpoint(earlier, [{ path: "notes.txt", data: "old" }]));
 		w.finish(earlier);
-		const run = w.run({ status: "queued" });
-		const prepared = await w.store.prepareAttachments(run, []);
-		expect(prepared).toEqual({ ok: true, value: null });
-		expect(w.store.commitAttachments(run, null)).toEqual({ baseVersionId: first, attachments: [] });
+		expect(w.store.planAttachments([])).toEqual({ ok: true, value: { parentId: first, attachments: [] } });
 		expect(w.versions()).toHaveLength(1);
 	});
 
-	test("attachments over the folder's limits are refused before anything is copied, in words", async () => {
+	test("the plan refuses attachments over the folder's limits from their declared sizes, in words, and reads no object", async () => {
 		const w = new World({ folderBytes: 3 });
-		const run = w.run({ status: "queued" });
 		const big = await w.upload("big.bin", "mine");
-		expect(await w.store.prepareAttachments(run, [big])).toEqual({ ok: false, refusal: { code: "FOLDER_FULL", detail: "These files would make this conversation's folder larger than 0.00000286102 MB." } });
+		const two = [await w.upload("a", "1"), await w.upload("b", "2")];
+		w.bucket.objects.clear();
+		expect(w.store.planAttachments([big])).toEqual({ ok: false, refusal: { code: "FOLDER_FULL", detail: "These files would make this conversation's folder larger than 0.00000286102 MB." } });
 		w.settings.folderBytes = 268_435_456;
 		w.settings.folderEntries = 1;
-		const two = [await w.upload("a", "1"), await w.upload("b", "2")];
-		expect(await w.store.prepareAttachments(run, two)).toEqual({ ok: false, refusal: { code: "FOLDER_FULL", detail: "These files would put more than 1 files and folders in this conversation's folder." } });
-		w.settings.folderEntries = 10_000;
+		expect(w.store.planAttachments(two)).toEqual({ ok: false, refusal: { code: "FOLDER_FULL", detail: "These files would put more than 1 files and folders in this conversation's folder." } });
 		expect(w.blobRows()).toEqual([]);
-		expect(w.bucket.keys()).toEqual([]);
 		expect(w.counter.calls).toEqual([]);
 	});
 
-	test("an upload that is gone, or does not hold what was recorded for it, refuses the start and leaves nothing claimed", async () => {
+	test("the plan counts every file in whole pages, the folder's and each attachment's, the same contents twice included", async () => {
+		const PAGE = 4096;
+		const w = new World({ folderBytes: 3 * PAGE });
+		const earlier = w.run();
+		await saved(w.checkpoint(earlier, [{ path: "kept.txt", data: "kept" }]));
+		w.finish(earlier);
+		const same = [await w.upload("a.txt", "same"), await w.upload("b.txt", "same")];
+		expect(w.store.planAttachments(same).ok).toBe(true);
+		const over = [...same, await w.upload("c.txt", "same")];
+		expect(w.store.planAttachments(over)).toEqual({ ok: false, refusal: { code: "FOLDER_FULL", detail: "These files would make this conversation's folder larger than 0.0117188 MB." } });
+		w.settings.folderBytes = 3 * PAGE - 1;
+		expect(w.store.planAttachments(same)).toMatchObject({ ok: false, refusal: { code: "FOLDER_FULL" } });
+	});
+
+	test("an upload that is gone, or does not hold what was measured for it, refuses the copy and leaves nothing claimed", async () => {
 		const w = new World();
-		const run = w.run({ status: "queued" });
+		const run = w.run({ status: "provisioning" });
 		const gone = await w.upload("gone.txt", "gone");
 		w.bucket.objects.delete(gone.key);
-		expect(await w.store.prepareAttachments(run, [await w.upload("fine.txt", "fine"), gone])).toEqual({ ok: false, refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: NO_LONGER_AVAILABLE } });
+		expect(await w.store.copyAttachments(run, [await w.upload("fine.txt", "fine"), gone])).toEqual({ ok: false, refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: NO_LONGER_AVAILABLE } });
 		const corrupt = await w.upload("corrupt.txt", "corrupt");
 		w.bucket.objects.set(corrupt.key, new TextEncoder().encode("changed"));
-		expect(await w.store.prepareAttachments(run, [corrupt])).toEqual({ ok: false, refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: NO_LONGER_AVAILABLE } });
+		expect(await w.store.copyAttachments(run, [corrupt])).toEqual({ ok: false, refusal: { code: "ATTACHMENT_UNAVAILABLE", detail: NO_LONGER_AVAILABLE } });
 		expect(w.blobRows().every((row) => row.state === "doomed")).toBe(true);
 		await w.sweepAt(w.now);
 		expect(w.bucket.keys()).toEqual([]);
@@ -900,76 +928,74 @@ describe("attachments", () => {
 
 	test("a copy whose answer is lost is made again under its key, and counted once", async () => {
 		const w = new World();
-		const run = w.run({ status: "queued" });
-		const upload = await w.upload("a.txt", "hello");
+		const run = w.run({ status: "provisioning" });
+		const uploads = [await w.upload("a.txt", "hello")];
 		let puts = 0;
 		w.bucket.faults.put = () => (++puts === 1 ? "lose" : "write");
-		const prepared = await w.store.prepareAttachments(run, [upload]);
-		if (!prepared.ok) throw new Error(prepared.refusal.detail);
+		const copies = await copied(w, run, uploads);
 		expect(puts).toBe(2);
-		expect(w.bucket.keys()).toEqual([prepared.value?.copies[0]?.key]);
-		w.sql.transaction(() => w.store.commitAttachments(run, prepared.value));
+		expect(w.bucket.keys()).toEqual([copies.copies[0]?.key]);
+		expect(committed(w, run, planned(w, uploads), uploads, copies).ok).toBe(true);
 		expect(w.blobRows().map((row) => row.state)).toEqual(["stored"]);
 		expect(w.counter.value).toBe(5);
 	});
 
-	test("a start sent again after its object restarted copies into the keys it recorded, so it is not counted twice", async () => {
+	test("a copy after its object restarted copies into the keys the reset left, so it is not counted twice", async () => {
 		const w = new World();
 		w.counter.limit = 5;
-		const run = w.run({ status: "queued" });
-		const upload = await w.upload("a.txt", "hello");
-		const first = await w.store.prepareAttachments(run, [upload]);
-		if (!first.ok) throw new Error(first.refusal.detail);
-		// The object restarts before the start's transaction; its watch sends the start again.
+		const run = w.run({ status: "provisioning" });
+		const uploads = [await w.upload("a.txt", "hello")];
+		const plan = planned(w, uploads);
+		const first = await copied(w, run, uploads);
+		// The object restarts before the copy's commit; its watch copies again.
 		w.now += 20_000;
 		w.open();
-		const again = await w.store.prepareAttachments(run, [upload]);
-		if (!again.ok) throw new Error(again.refusal.detail);
-		expect(again.value?.copies).toEqual(first.value?.copies);
+		const again = await copied(w, run, uploads);
+		expect(again.copies).toEqual(first.copies);
+		expect(again.fresh).toEqual([]);
 		expect(w.blobRows()).toMatchObject([{ state: "loose", due_at: w.now + LOOSE_GRACE_MS }]);
 		expect(w.counter.value).toBe(5);
-		w.sql.transaction(() => w.store.commitAttachments(run, again.value));
+		expect(committed(w, run, plan, uploads, again).ok).toBe(true);
 		expect(w.bucket.keys()).toHaveLength(1);
 	});
 
-	test("a copy that fails twice throws (the start's watch sends it again); nothing is claimed", async () => {
+	test("a copy that fails twice throws and dooms its keys; the next try records new ones", async () => {
 		const w = new World();
-		const run = w.run({ status: "queued" });
-		const upload = await w.upload("a.txt", "hello");
+		const run = w.run({ status: "provisioning" });
+		const uploads = [await w.upload("a.txt", "hello")];
 		w.bucket.faults.put = () => "refuse";
-		await expect(w.store.prepareAttachments(run, [upload])).rejects.toThrow("Network connection lost");
-		expect(w.blobRows().map((row) => row.state)).toEqual(["doomed"]);
+		await expect(w.store.copyAttachments(run, uploads)).rejects.toThrow("Network connection lost");
+		const [doomed] = w.blobRows();
+		expect(doomed?.state).toBe("doomed");
 		w.bucket.faults.put = undefined;
-		// Sent again: new keys, and the start goes through.
-		const prepared = await w.store.prepareAttachments(run, [upload]);
-		expect(prepared.ok).toBe(true);
+		const copies = await copied(w, run, uploads);
+		expect(copies.fresh).toHaveLength(1);
+		expect(copies.fresh).not.toContain(doomed?.key);
+		expect(committed(w, run, planned(w, uploads), uploads, copies).ok).toBe(true);
 	});
 
 	test("the workspace with no room refuses the copies", async () => {
 		const w = new World();
 		w.counter.limit = 3;
-		const run = w.run({ status: "queued" });
-		expect(await w.store.prepareAttachments(run, [await w.upload("a.txt", "hello")])).toEqual({ ok: false, refusal: { code: "WORKSPACE_FULL", detail: NO_ROOM } });
+		const run = w.run({ status: "provisioning" });
+		expect(await w.store.copyAttachments(run, [await w.upload("a.txt", "hello")])).toEqual({ ok: false, refusal: { code: "WORKSPACE_FULL", detail: NO_ROOM } });
 		expect(w.bucket.keys()).toEqual([]);
 	});
 
-	test("the start's transaction refuses a folder that moved, or a copy the sweep took", async () => {
-		const w = new World();
-		const run = w.run({ status: "queued" });
-		const prepared = await w.store.prepareAttachments(run, [await w.upload("a.txt", "hello")]);
-		if (!prepared.ok) throw new Error(prepared.refusal.detail);
-		w.setFolder("0199a000-0000-7000-8000-00000000beef");
-		expect(() => w.sql.transaction(() => w.store.commitAttachments(run, prepared.value))).toThrow("The folder changed");
-		w.setFolder(null);
-		await w.sweepAt(w.now + LOOSE_GRACE_MS);
-		expect(() => w.sql.transaction(() => w.store.commitAttachments(run, prepared.value))).toThrow("was deleted before the start was stored");
-		expect(w.versions()).toEqual([]);
-	});
-
-	test("a deleted conversation copies nothing", async () => {
-		const w = new World();
-		w.sql.exec("UPDATE conversation SET deleted_at = ?", w.now);
-		expect(await w.store.prepareAttachments(w.run({ status: "queued" }), [await w.upload("a", "a")])).toEqual({ ok: false, refusal: { code: "NOT_FOUND", detail: "Not found." } });
+	test("the commit refuses a run no longer current, a folder that moved, or a copy the sweep took, and dooms the keys the try recorded", async () => {
+		for (const reason of ["stale", "moved", "unclaimed"] as const) {
+			const w = new World();
+			const run = w.run({ status: "provisioning" });
+			const uploads = [await w.upload("a.txt", "hello")];
+			const plan = planned(w, uploads);
+			const copies = await copied(w, run, uploads);
+			if (reason === "stale") w.sql.exec("UPDATE runs SET revoked = 1 WHERE id = ?", run);
+			if (reason === "moved") w.setFolder("0199a000-0000-7000-8000-00000000beef");
+			if (reason === "unclaimed") await w.sweepAt(w.now + LOOSE_GRACE_MS);
+			expect(committed(w, run, plan, uploads, copies)).toEqual({ ok: false, reason });
+			expect([reason, w.versions()]).toEqual([reason, []]);
+			expect([reason, w.blobRows().map((row) => row.state)]).toEqual([reason, ["doomed"]]);
+		}
 	});
 });
 
@@ -1037,14 +1063,13 @@ describe("stored bytes", () => {
 
 	test.each(["cancelled", "failed"] as const)("a run %s before its first checkpoint counts its attachments", async (status) => {
 		const w = new World();
-		const run = w.run({ status: "queued" });
-		const prepared = await w.store.prepareAttachments(run, [await w.upload("notes.txt", "notes"), await w.upload("data.csv", "d".repeat(PAGE + 1))]);
-		if (!prepared.ok) throw new Error(prepared.refusal.detail);
-		// As the start's transaction does: the run starts from the base version with the copies.
-		w.sql.transaction(() => {
-			const { baseVersionId } = w.store.commitAttachments(run, prepared.value);
-			w.sql.exec("UPDATE runs SET base_version_id = ?, status = 'running' WHERE id = ?", baseVersionId, run);
-		});
+		const run = w.run({ status: "provisioning" });
+		const uploads = [await w.upload("notes.txt", "notes"), await w.upload("data.csv", "d".repeat(PAGE + 1))];
+		const plan = planned(w, uploads);
+		const result = committed(w, run, plan, uploads, await copied(w, run, uploads));
+		if (!result.ok) throw new Error(result.reason);
+		// As the run's copy does: the run starts from the base version with the copies.
+		w.sql.exec("UPDATE runs SET base_version_id = ? WHERE id = ?", result.baseVersionId, run);
 		expect(w.finish(run, status)?.storedBytes).toBe(3 * PAGE);
 	});
 
@@ -1180,10 +1205,8 @@ describe("the sweep", () => {
 
 	test("an object that cannot be deleted stays queued and is deleted by a later sweep", async () => {
 		const w = new World();
-		const run = w.run({ status: "queued" });
-		const prepared = await w.store.prepareAttachments(run, [await w.upload("gone", "x")]);
-		expect(prepared.ok).toBe(true);
-		// Never stored (the start was refused after the copies): its copy is loose.
+		const run = w.run({ status: "provisioning" });
+		expect((await w.store.copyAttachments(run, [await w.upload("gone", "x")])).ok).toBe(true);
 		w.bucket.faults.delete = true;
 		const later = await w.sweepAt(w.now + LOOSE_GRACE_MS);
 		expect(later).toEqual({ rescheduleAt: w.now + 30_000 });
@@ -1252,15 +1275,16 @@ describe("the byte count after a crash", () => {
 		}
 	});
 
-	test("an attachment's copy: after the report, after the put, after the start's transaction", async () => {
+	test("an attachment's copy: after the report, after the put, after the copy's commit", async () => {
 		for (const crash of ["reported", "copied", "stored"] as const) {
 			const w = new World();
-			const run = w.run({ status: "queued" });
-			const upload = await w.upload("a.txt", "hello");
+			const run = w.run({ status: "provisioning" });
+			const uploads = [await w.upload("a.txt", "hello")];
+			const plan = planned(w, uploads);
 			if (crash === "reported") w.bucket.faults.put = () => "refuse";
-			const prepared = await w.store.prepareAttachments(run, [upload]).catch(() => null);
+			const copy = await w.store.copyAttachments(run, uploads).catch(() => null);
 			w.bucket.faults.put = undefined;
-			if (crash === "stored" && prepared?.ok) w.sql.transaction(() => w.store.commitAttachments(run, prepared.value));
+			if (crash === "stored" && copy?.ok) committed(w, run, plan, uploads, copy.value);
 			w.open();
 			expect([crash, w.countsEnough()]).toEqual([crash, true]);
 			await w.sweepAt(w.now + LOOSE_GRACE_MS);

@@ -126,7 +126,7 @@ true satisfies Same<z.infer<typeof FolderWarningsSchema>, FolderWarnings>
 true satisfies Same<z.infer<typeof LocalToolData>, LocalToolEventData>
 
 export const Fact = z.discriminatedUnion('type', [
-  /** The run started an attempt, or is running it. */
+  /** The run started an attempt, or is running it. A run's first `running` comes only after its attachments are copied. */
   fact('run.status', z.object({ status: z.enum(['provisioning', 'running']), attempt: z.int().min(1) })),
   fact('run.tool_call', ToolCallData),
   fact('run.local_tool', LocalToolData),
@@ -206,7 +206,10 @@ export const Fact = z.discriminatedUnion('type', [
       status: z.enum(['completed', 'failed', 'cancelled', 'timed_out']),
       /** Why it ended, for users; empty when it did not fail. */
       error: z.string(),
-      /** Why it ended, for code (`budget_reached`, `folder_limit`); empty when it completed. */
+      /**
+       * Why it ended, for code (`budget_reached`, `folder_limit`; `attachment_unavailable` and `workspace_full` for a run whose
+       * copy of its attachments failed); empty when it completed.
+       */
       code: z.string().optional(),
       /** The final answer; null when the run wrote none. */
       message: z.object({ id: Id, content: z.string() }).nullable(),

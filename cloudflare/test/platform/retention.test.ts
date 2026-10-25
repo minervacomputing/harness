@@ -397,7 +397,7 @@ async function notes(content: string): Promise<StartRun> {
 }
 
 /** The tables of a run's own records, which its prune deletes. */
-const RECORDS = ["run_events", "run_snapshots", "attempts", "tool_executions", "tool_arguments", "call_records", "script_records", "run_writes", "page_tokens"] as const;
+const RECORDS = ["run_events", "run_snapshots", "attempts", "tool_executions", "tool_arguments", "call_records", "script_records", "run_writes", "page_tokens", "run_attachments"] as const;
 
 /** How many rows of the run each of its own tables holds. */
 async function records(start: StartRun, runId = start.run): Promise<{ [table in (typeof RECORDS)[number]]: number }> {
@@ -502,9 +502,10 @@ describe("runs' retention", () => {
 		await settled(start);
 		const tombstoned = uuid7();
 		expect(await commands.cancelRun({ scope: start.scope, conversation: start.conversation, run: tombstoned, reason: "cancelled" })).toEqual({ state: "tombstoned" });
-		// What the run did not make of its own, as a run with a page of results and an escaped argument would.
+		// What the run did not make of its own, as a run with a page of results, an escaped argument and a copy it never committed would.
 		await sql(start, "INSERT INTO tool_arguments (run_id, call_id, text) VALUES (?, 'call', '{}')", start.run);
 		await sql(start, "INSERT INTO page_tokens (token, run_id, tool, query_hash, upstream_cursor, created_at) VALUES ('token', ?, 'notes_list_notes', 'hash', 'cursor', 0)", start.run);
+		await sql(start, "INSERT INTO run_attachments (run_id, position, upload, name, size, media_type, path, parent_id, mtime) VALUES (?, 0, 'upload', 'a.txt', 1, 'text/plain', 'a.txt', NULL, 0)", start.run);
 		const before = await runRow(start);
 		const kept = await records(start);
 		expect(Object.entries(kept).filter(([, count]) => count === 0)).toEqual([["run_snapshots", 0]]);

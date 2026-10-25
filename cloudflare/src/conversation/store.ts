@@ -16,6 +16,7 @@
 // its own. What only shows progress (text and reasoning deltas, phases) may still run inside pi's transaction; rolled
 // back with it, it was never announced either.
 
+import type { AttachmentPlan } from "../files/store.ts";
 import type { StartSnapshot } from "../gateway/tools.ts";
 import type { Preparation } from "../internal/start.ts";
 import { type Json, parseJson } from "../lib/json.ts";
@@ -59,9 +60,9 @@ export interface EventPage {
 /** The snapshot the Conversation Durable Object stores with the run: the start snapshot plus its folder. */
 export interface RunSnapshot extends StartSnapshot {
 	runId: RunId;
-	/** The version the run starts from: the conversation's folder, or a new `base` with the attachments. */
+	/** The folder the run's start planned on. */
 	baseVersionId: VersionId | null;
-	/** As added to the folder: final, possibly numbered names at the root, in upload order. */
+	/** As planned for the folder: final, possibly numbered names at the root, in upload order. */
 	attachments: Attachment[];
 	limits: { folderBytes: number; folderEntries: number; runUploadBytes: number };
 	/**
@@ -184,6 +185,7 @@ const RUN_RECORDS = [
 	["script_records", "script_id"],
 	["run_writes", "key"],
 	["page_tokens", "token"],
+	["run_attachments", "position"],
 ] as const;
 
 /**
@@ -531,7 +533,7 @@ export class RunStore {
 	 * parts with the column empty. A snapshot holds every grant of the user, so it can pass the 2 MB a
 	 * string or a row may have without any API limit being broken.
 	 */
-	insertRun(run: { id: RunId; snapshot: RunSnapshot; deadline: EpochMs | null; baseVersionId: VersionId | null; createdAt: EpochMs; allowance: number | null }): void {
+	insertRun(run: { id: RunId; snapshot: RunSnapshot; deadline: EpochMs | null; plan: AttachmentPlan; createdAt: EpochMs; allowance: number | null }): void {
 		const parts = splitParts(JSON.stringify(run.snapshot), VALUE_PART);
 		this.#sql.exec(
 			"INSERT INTO runs (id, status, attempt, attempt_started_at, snapshot, deadline, base_version_id, created_at, metered, allowance) VALUES (?, 'queued', 1, ?, ?, ?, ?, ?, 1, ?)",
@@ -539,12 +541,48 @@ export class RunStore {
 			run.createdAt,
 			parts.length === 1 ? (parts[0] as string) : "",
 			run.deadline,
-			run.baseVersionId,
+			run.plan.parentId,
 			run.createdAt,
 			run.allowance,
 		);
 		if (parts.length > 1) parts.forEach((text, part) => this.#sql.exec("INSERT INTO run_snapshots (run_id, part, text) VALUES (?, ?, ?)", run.id, part, text));
 		this.#sql.exec("INSERT INTO attempts (run_id, attempt, started_at) VALUES (?, 1, ?)", run.id, run.createdAt);
+		for (const [position, file] of run.plan.attachments.entries()) {
+			this.#sql.exec(
+				"INSERT INTO run_attachments (run_id, position, upload, name, size, media_type, path, parent_id, mtime) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				run.id,
+				position,
+				file.key,
+				file.name,
+				file.size,
+				file.mediaType,
+				file.path,
+				run.plan.parentId,
+				file.mtime,
+			);
+		}
+	}
+
+	/** The attachments the run's copy has still to commit, as its start planned them; null once committed, or for a run with none. */
+	uncopiedAttachments(runId: RunId): AttachmentPlan | null {
+		const rows = this.#sql
+			.exec<{ upload: string; name: string; size: number; media_type: string; path: string; parent_id: string | null; mtime: number }>(
+				"SELECT upload, name, size, media_type, path, parent_id, mtime FROM run_attachments WHERE run_id = ? ORDER BY position",
+				runId,
+			)
+			.toArray();
+		const [first] = rows;
+		if (first === undefined) return null;
+		return {
+			parentId: first.parent_id,
+			attachments: rows.map((row) => ({ key: row.upload, name: row.name, size: row.size, mediaType: row.media_type, path: row.path, mtime: row.mtime })),
+		};
+	}
+
+	/** Inside the copy's write: the run starts from the base version its copy committed, and its planned attachments are done. */
+	setBase(runId: RunId, versionId: VersionId): void {
+		this.#sql.exec("UPDATE runs SET base_version_id = ? WHERE id = ?", versionId, runId);
+		this.#sql.exec("DELETE FROM run_attachments WHERE run_id = ?", runId);
 	}
 
 	run(id: RunId): RunRow | null {

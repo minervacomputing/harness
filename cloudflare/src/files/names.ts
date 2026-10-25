@@ -54,8 +54,9 @@ export function fit(stem: string, extension: string, suffix = ""): string {
 		const name = (points.join("").trimEnd() + suffix + extension).normalize("NFC");
 		if (utf8Length(name) <= MAX_SEGMENT_BYTES && name !== "" && name !== "." && name !== "..") return name;
 		if (points.length === 0) {
-			// Only the extension is too long, which split prevents; keep what fits, a cut character dropped.
-			return firstBytes(name, MAX_SEGMENT_BYTES) || "file";
+			// Dots and spaces alone (". ."), or an extension too long, which split prevents: keep what fits, a cut character dropped.
+			const kept = firstBytes(name, MAX_SEGMENT_BYTES);
+			return kept === "" || kept === "." || kept === ".." ? "file" : kept;
 		}
 		points = points.slice(0, -1);
 	}
