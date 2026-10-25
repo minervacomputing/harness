@@ -8,7 +8,7 @@
 // come from the test build's Sandbox.
 //
 // Three samples of each folder, one after another. The baselines are `main`'s cold starts: chunk 20's probe on `main`
-// (21.4 s for 500 files of 50 MiB) and the spike's (32.7 to 34.9 s for 200 MB, docs/plans/sandbox-snapshots.md).
+// (21.4 s for 500 files of 50 MiB) and the spike's (32.7 to 34.9 s for 200 MB).
 //
 // Run only with MINERVA_PERF=1 (vitest.faults.config.ts): `MINERVA_PERF=1 pnpm test:faults test/account/snapshot-perf.test.ts`.
 // MINERVA_PERF_OUT names a file for the numbers.

@@ -1,16 +1,16 @@
 # Agent notes
 
-Operational notes for coding agents working in this repository: Minerva's open harness, the engine that runs agent turns on Cloudflare (`cloudflare/`), and the contract of the internal API between it and Laravel's private app (`contract/`). Self-hosting is not supported. For background, read [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md); for development, testing and deploys in detail, [cloudflare/README.md](cloudflare/README.md). Work in progress is planned in [docs/plans/](docs/plans/): the current plan is [docs/plans/product-and-engine.md](docs/plans/product-and-engine.md), with its remaining chunks in [docs/plans/remaining-chunks.md](docs/plans/remaining-chunks.md).
+Operational notes for coding agents working in this repository: Minerva's open harness, the engine that runs agent turns on Cloudflare (`cloudflare/`), and the contract of the internal API between it and Laravel's private app (`contract/`). Self-hosting is not supported. For background, read [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md); for development, testing and deploys in detail, [cloudflare/README.md](cloudflare/README.md). Work in progress is planned in [docs/plans/](docs/plans/): the current plan is [docs/plans/after-the-plan.md](docs/plans/after-the-plan.md), and the decisions it builds on are in [docs/plans/product-and-engine.md](docs/plans/product-and-engine.md).
 
 ## Where docs go
 
-Each kind of doc has one home and one lifetime. The code is the source of truth, so a doc says what the code cannot: why it is shaped this way, what was decided against, and what was accepted.
+Each kind of doc has one home and one lifetime. The code is the source of truth, so a doc says what the code cannot: why it is shaped this way, what was decided against, and what was accepted. Docs describe current behaviour and future plans only, and keep no record of what was built, changed or removed, or when, since git history does.
 
 - `AGENTS.md` (this file): what every session needs, which is the environment, the commands, the settings and the rules. Every session loads it, so keep it short and put detail in the doc it points to.
 - [ARCHITECTURE.md](ARCHITECTURE.md): what stays true about the engine and why, its protocols with their decisions, the alternatives they beat and what was accepted unfixed. A change to a protocol updates its section in the same commit.
 - [cloudflare/README.md](cloudflare/README.md): how to develop, test and deploy the engine, and the procedures the operator follows by hand.
 - `docs/`: one doc per topic that outgrew ARCHITECTURE.md, [connectors.md](docs/connectors.md) and [data-processing.md](docs/data-processing.md).
-- `docs/plans/`: the plans, the designs of chunks not yet built, and [contract.md](docs/plans/contract.md), the internal API's design, which stays. Once a chunk is built, move what later chunks inherit into their sections of the plan and what stays true into ARCHITECTURE.md or cloudflare/README.md. Then delete the chunk's design. Git history keeps it, and `git log --diff-filter=D --name-only -- docs/plans/` lists the deleted designs.
+- `docs/plans/`: the plans, the designs of chunks not yet built, and [contract.md](docs/plans/contract.md), the internal API's design, which stays. Once a chunk is built, move what later chunks inherit into their sections of the plan and what stays true into ARCHITECTURE.md or cloudflare/README.md. Then delete the chunk's design and its section of the plan. Git history keeps it, and `git log --diff-filter=D --name-only -- docs/plans/` lists the deleted designs.
 - Laravel's designs are in the app's `docs/architecture/`, one doc per built feature.
 
 A lesson learned while building goes where the next agent meets it. One about how the code must behave becomes a test where it can. Any other goes into the doc that owns its topic, or into this file when every session needs it. There is no file of learnings.
@@ -69,7 +69,7 @@ This project does not use pull requests. Commit directly to `main` (or merge a s
 
 `main` is the engine. A push to `main` that changes the engine (`cloudflare/`, `contract/`, `.github/workflows/`, `package.json`, `pnpm-lock.yaml` or `pnpm-workspace.yaml`) runs `.github/workflows/main.yml`: the contract's types and OpenAPI documents, the engine's types and unit tests (job `check`) and its platform tests (job `platform`). The account suites against the CI-only test instance `minerva-cf-ci` run in `.github/workflows/account.yml`, nightly when the engine changed that day and by hand (`gh workflow run account.yml`), not on every push (cloudflare/README.md, CI's test instance). Production and staging deploy only from a commit whose engine has green runs of `main.yml` and `account.yml`, which `pnpm run deploy` checks itself (`cloudflare/scripts/ci-gate.ts`), so a commit outside the engine's paths, such as one to `docs/` or `AGENTS.md`, needs no new run. `minerva-cf-test` is the test instance that `pnpm check` and the account suites deploy. When the workflow fails, read which job and step failed. Its logs are public: never add a step that prints a secret, an account identifier or an origin.
 
-The public demo was shut down on 2026-10-22; the website now asks for early access instead. The `demo` branch keeps the demo's copy of the Django stack as history. Never merge `main` into `demo`, and do not deploy it.
+The public demo is shut down, and the website asks for early access instead. The `demo` branch keeps the demo's copy of the Django stack. Never merge `main` into `demo`, and do not deploy it.
 
 **This repository is public** (`github.com/minervacomputing/harness`). Everything you commit is published, history included. Never commit:
 
@@ -113,7 +113,7 @@ Reviews report more than is worth fixing. opencode, review subagents, and advers
 
 A fix for one of these adds code to read, a test to keep and another review to pass, and no user notices it. Record each finding you leave under "Accepted, not fixed" in the design or plan you work from, in one line that says why it is unlikely and what happens if it occurs. A reviewer still reports such a finding, marked improbable, so that it is recorded. Wrong docs and a flaky test that has actually failed are still fixed.
 
-For example, chunk 19a's review found that the bound's reset could hit a run that had just submitted. That needed an orphan to end within milliseconds of the 30 s bound and an alarm to run inside one storage sync, and the run still completed in its second attempt. It was recorded under "Accepted, not fixed" in chunk 19a's design, not fixed.
+For example, a review found that the start's bound can reset a run that has just submitted. That needs an orphan to end within milliseconds of the 30 s bound and an alarm to run inside one storage sync, and the run still completes in its next attempt. It is recorded under "Accepted, not fixed" in ARCHITECTURE.md, The harness.
 
 ## Checks
 
@@ -128,10 +128,10 @@ pnpm test:docker     # the Sandbox against the real image (needs Docker and `pnp
 pnpm startup         # the Worker's startup CPU, which Cloudflare limits
 ```
 
-`pnpm check --instance minerva-cf-test` runs what the workflow runs, `pnpm typecheck` and `pnpm openapi:check` in `contract/` included, then deploys the test build and runs the account test files the unit changed. The suites on the account (`test:deployed`, `test:faults`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance nightly and on demand, and the full suites run there once per chunk, for its regression box and before a deploy (docs/plans/remaining-chunks.md, How to read this).
+`pnpm check --instance minerva-cf-test` runs what the workflow runs, `pnpm typecheck` and `pnpm openapi:check` in `contract/` included, then deploys the test build and runs the account test files the unit changed. The suites on the account (`test:deployed`, `test:faults`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance nightly and on demand, and the full suites run there once per chunk, for its regression box and before a deploy (docs/plans/after-the-plan.md, How to read this).
 
 ## TypeScript and the contract
 
 `contract/` and `cloudflare/` typecheck with TypeScript 7 (`tsc` is the native compiler). It has no stable compiler API (7.0 ships only `typescript/unstable/*`): the one test that parses TypeScript (`cloudflare/test/unit/sources.test.ts`) imports TypeScript 6's API from `@typescript/typescript6`. Editors need TypeScript 7's language server (VS Code: the `TypeScriptTeam.native-preview` extension) or their own bundled TypeScript.
 
-The internal API between Laravel and the engine is `contract/src/internal/` ([docs/plans/contract.md](docs/plans/contract.md)), declared once with oRPC (method, path, input, output and errors) and implemented by the Worker in `cloudflare/src/internal/`, so a change to a command changes the contract and its procedure in one commit. It also regenerates the OpenAPI documents (`pnpm --dir contract openapi`, committed; CI fails when they are stale), which Laravel keeps copies of. Since chunk 8 of the product plan ran a turn between deployed sides, `v1` changes only additively, and a new kind of fact or a newly required input is deployed to the receiving side first.
+The internal API between Laravel and the engine is `contract/src/internal/` ([docs/plans/contract.md](docs/plans/contract.md)), declared once with oRPC (method, path, input, output and errors) and implemented by the Worker in `cloudflare/src/internal/`, so a change to a command changes the contract and its procedure in one commit. It also regenerates the OpenAPI documents (`pnpm --dir contract openapi`, committed; CI fails when they are stale), which Laravel keeps copies of. Laravel and the engine deploy apart, so `v1` changes only additively, and a new kind of fact or a newly required input is deployed to the receiving side first.

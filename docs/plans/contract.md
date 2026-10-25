@@ -1,24 +1,19 @@
-# Chunk 5: the contract between Laravel and the engine
+# The contract between Laravel and the engine
 
-Status: design, 2026-10-14; opencode reviewed it, and its findings are folded in (replay by conversation, conflicting repeats, the engine's requests bound to a run, retry classes, the body cap, shared delivery scenarios, credentials kept out of records). Chunk 5 of [product-and-engine.md](product-and-engine.md): the internal API that Laravel and the engine use (commands, requests, facts and errors), its OpenAPI documents, Laravel's client and the compatibility suite, both directions' authentication, the catalog with each connector's OAuth descriptor, and the fake Laravel that the engine's platform tests use. Laravel's side is designed in its repository's `docs/plans/contract.md`. This document is the seam's.
-
-It is built in two parts:
-
-- **5a (this repository):** the contract, its documents, Access verification, the internal mount with the catalog served, the engine's client for Laravel, and the fake Laravel.
-- **5b (`minervacomputing/app`):** Sanctum and the engine's tokens, the client for the engine, its copies of the documents, and the compatibility suite.
+The internal API that Laravel and the engine use ([product-and-engine.md](product-and-engine.md), Decision 5): commands, requests, facts and errors, its OpenAPI documents, both directions' authentication, the catalog with each connector's OAuth descriptor, and the fake Laravel that the engine's platform tests use. Laravel's client, its copies of the documents and the compatibility suite are in its repository's `docs/architecture/contract.md`. This document is the seam's.
 
 ## The shape
 
-**One contract, two halves,** in `contract/src/internal/`, exported as `@minerva/contract/internal`. It is kept apart from the public contract that the frontend uses, which leaves in chunk 13.
+**One contract, two halves,** in `contract/src/internal/`, exported as `@minerva/contract/internal`. The shapes runs, events and folders share are in `contract/src/shapes.ts`.
 
 - **`engine`:** the commands. The engine serves them, and Laravel calls them.
 - **`laravel`:** the requests and the deliveries of facts. Laravel serves them, and the engine calls them.
 
-Each half is an oRPC contract, the same tool as the public API. The engine implements `engine` with `implement()`, and calls `laravel` through oRPC's typed client, so neither side of the engine can drift from the declaration.
+Each half is an oRPC contract. The engine implements `engine` with `implement()`, and calls `laravel` through oRPC's typed client, so neither side of the engine can drift from the declaration.
 
 **Paths.** Both halves are served under `/internal/v1/` on their own hosts. Every operation is a `POST` with a JSON body, except the catalog, which is a `GET`. It is an internal RPC: ids and scope travel in the body, never in a URL or a log line. Neither side ever redirects.
 
-**Versions.** `v1` is a draft until chunk 8 first runs a turn between deployed sides. Until then it changes in place, freely. After that, a change within `v1` must be additive:
+**Versions.** A change within `v1` must be additive:
 
 - a new operation;
 - a new optional input field;
@@ -28,7 +23,7 @@ Anything else is `v2`, which the engine serves beside `v1` until Laravel has mov
 
 Some changes need the receiving side deployed first, in two steps, expand then contract:
 - **A new kind of fact.** Laravel must apply every fact it acknowledges, so Laravel's support for it is deployed before the engine sends it.
-- **An input that becomes required**, such as chunk 14's allowances. It is first optional and then sent, and only after that required.
+- **An input that becomes required.** It is first optional and then sent, and only after that required.
 
 Readers on both sides ignore fields they do not know (zod's objects strip them, and Laravel's client reads only what it names).
 
@@ -38,27 +33,26 @@ Readers on both sides ignore fields they do not know (zod's objects strip them, 
 
 **Scope.** Every command except the catalog carries `scope: {environment, organization, workspace}`, and a command about a conversation also carries `conversation`.
 - **Environment.** The engine is configured with its environment (`MINERVA_ENVIRONMENT`, for example `staging`). It refuses a command that names another environment with `WRONG_ENVIRONMENT` (409), so a Laravel configured with the wrong engine fails loudly rather than writing into it.
-- **Organization and workspace.** An execution object (a Conversation, and the recovery index's rows) stores the organization and workspace it was created for, and refuses a command that names others with `SCOPE_MISMATCH` (409). Built in chunk 6.
+- **Organization and workspace.** An execution object (a Conversation, and the recovery index's rows) stores the organization and workspace it was created for, and refuses a command that names others with `SCOPE_MISMATCH` (409).
 
 **Answers.**
 - **An outcome is a 200.** A command's definite outcome is answered 200, including a refusal: for example `startRun`'s `{outcome: "refused", code, message}`, which Laravel records as the run's end.
 - **An error is not an outcome.**
   - 401 and 403: authentication.
   - 409: the wrong environment or scope.
-  - 410 `FACTS_PRUNED`, with `data: {floor}`: a `replayFacts` from below the lowest fact the engine still holds (chunk 15a). Only `replayFacts` answers it.
+  - 410 `FACTS_PRUNED`, with `data: {floor}`: a `replayFacts` from below the lowest fact the engine still holds. Only `replayFacts` answers it.
   - 422 `VALIDATION_FAILED`, with the issues: a bug on the caller's side.
-  - 501 `NOT_IMPLEMENTED`: an operation declared before its chunk.
+  - 501 `NOT_IMPLEMENTED`: an operation declared but not served (`admission`).
   - 500 and 503: a failure. Commands are idempotent, so a queued job retries them.
-- **The error's shape** is the public API's: `{defined, code, status, message, data?}`. The codes and their statuses are a set of their own, `INTERNAL_REFUSALS`, so the internal API's codes never mix with the public one's.
+- **The error's shape** is `{defined, code, status, message, data?}`. The codes and their statuses are a set of their own, `INTERNAL_REFUSALS`, apart from the `REFUSALS` of the Worker's other routes.
 
 **Idempotency.**
-- **Durable commands** (`startRun`, `cancelRun`, `deleteConversation`, `admission`) repeat their first answer.
+- **Durable commands** (`startRun`, `cancelRun`, `deleteConversation`) repeat their first answer.
   - The engine keeps a digest of `startRun`'s input with its outcome, and a repeat with a different input is `IDEMPOTENCY_CONFLICT` (409).
   - A repeated `cancelRun` keeps its first reason.
-  - A repeated `admission` changes nothing unless its revision is higher.
 - **Reads** (`catalog`, `folder`, `resolveDownload`, `replayFacts`, `listConversations`) and **the settings calls** (`describeAccount`, `listResources`, `checkGrantEdit`) are not idempotent by an id. They answer what is true when they are asked.
 
-**Size.** A body may be up to 16 MB (`MAX_INTERNAL_BODY`), declared and checked as the public API's 2.5 MB is.
+**Size.** A body may be up to 16 MB (`MAX_INTERNAL_BODY`), declared and checked.
 - **Fields** have their own limits, but those do not bound the whole body: three layers of grants can in theory be larger.
 - **Laravel** therefore measures the encoded command before sending it. It refuses a start that would exceed the cap itself, with a reason it shows, rather than sending something the engine must refuse. In practice the largest input is `startRun`'s history: 20 messages of up to 100,000 characters each.
 
@@ -72,55 +66,55 @@ The same classes hold for the engine's client of Laravel.
 
 ## Commands (`engine`)
 
-Each is idempotent by its own ids. The engine's chunk that implements each command is in brackets. Until then the command answers 501.
+Each is idempotent by its own ids.
 
-- **`catalog`** `GET /internal/v1/catalog` [5]: the catalog (below).
-- **`startRun`** `/runs/start` [6]. Its inputs:
+- **`catalog`** `GET /internal/v1/catalog`: the catalog (below).
+- **`startRun`** `/runs/start`. Its inputs:
   - `scope`, `conversation` and `run`;
   - `user`;
   - `agent`: `{id, instructions, model}`;
   - `message`: `{id, content, attachments: [{upload, name, size, mediaType}]}`, where `upload` is the R2 staging key Laravel reserved;
   - `history`: the conversation's newest messages, up to 20, oldest first, each `{id, role, content, attachments, run, createdAt, changes}`. The engine applies `history.ts`'s selection and clipping.
   - `authority`, the raw inputs with their revisions:
-    - `connections`: the agent's, each `{id, provider, owner, status, createdAt, scopes, revision}`, and optionally `tenant`, its account's tenant as `describeAccount` answered it (chunk 17);
+    - `connections`: the agent's, each `{id, provider, owner, status, createdAt, scopes, revision}`, and optionally `tenant`, its account's tenant as `describeAccount` answered it;
     - `layers`: `ceiling`, `user` and `agent`, each null or `{restricted, revision, grants: [{connection, kind, resource, name, actions, effect}]}`;
     - optionally `policy`, the organization's connection policy: `{revision, connectors: [{provider, tenants}]}`, the connectors it offers, each with the tenants it allows or null for any. Without it, every connector is offered with any tenant. The engine offers no tools on a connection the policy refuses, so it is not in `authorized`, and checks each resource's tenant before each call and on its results for a connector with a tenant per resource.
   - optionally `allowance`: what the run may spend, in micro-dollars (µ$). The engine refuses the run's next model call once it has spent this, and the run fails with the code `budget_reached`. Without it the run has no budget.
 
   It answers one of two outcomes:
   - `{outcome: "accepted", catalog, compiler, digest, authorized: [connection ids], attachments: [{path, size, mediaType}]}`: the catalog's and the compiler's versions, the snapshot's digest, the run's authorized set, and the message's attachments as the folder holds them, which Laravel stores on the message;
-  - `{outcome: "refused", code, message}`. The codes are today's `beginRun` refusals (`TOO_MANY_ATTACHMENTS`, `ATTACHMENT_UNAVAILABLE`, `FOLDER_FULL`, …), plus `CONVERSATION_BUSY`, `CANCELLED` (the run is tombstoned), `CONVERSATION_DELETED` and `ADMISSION_CLOSED`.
+  - `{outcome: "refused", code, message}`. The codes include the attachments' and the folder's (`TOO_MANY_ATTACHMENTS`, `ATTACHMENT_UNAVAILABLE`, `FOLDER_FULL`, …), `CONVERSATION_BUSY`, `CANCELLED` (the run is tombstoned) and `CONVERSATION_DELETED`. `ADMISSION_CLOSED` is declared and never sent.
 
   A repeat with the same run id gets the same answer. It compiles once.
-- **`cancelRun`** `/runs/cancel` [6]: `scope`, `conversation`, `run` and `reason`. The reasons are today's `CancelReason`s, plus `member_removed` and `start_expired`. It answers `{state: "cancelled" | "tombstoned" | "ended"}` once the cancellation, or the tombstone of a run the engine has not received, is durable.
-- **`replayFacts`** `/conversations/facts` [7]: `scope`, `conversation`, `after` (a sequence) and `limit` (at most 500). It answers `{conversation, facts, more}`: the conversation's retained facts after that sequence, in order, in the delivery's format, so Laravel applies them through the same path.
-  - **Retention** (chunk 15a). A fact is deleted 7 days after Laravel acknowledged it, never before; the lowest sequence still held is the floor. An `after` below `floor − 1` is refused `FACTS_PRUNED` (410) with `data: {floor}` rather than answered with a page that starts later; `after ≥ floor − 1` is answered as before.
-  - **Not per run, as the plan first had it (`runReport`).** A run's facts are not contiguous in its conversation, since a write that settles after a cancellation can come after the next run's facts, so recovery reads by conversation from Laravel's watermark.
-  - **Finding the conversations to replay** after a restore is `listConversations` (chunk 15c, below).
-- **`describeAccount`** `/connections/account` [9]: `scope`, `connection: {id, provider}` and `credential`. It answers either `{outcome: "described", account: {id, label, tenant, tenants}}` or `{outcome: "refused", code: "CREDENTIAL_REFUSED" | "PROVIDER_FAILED", message}`. `tenant` is the account's one tenant for a connector with a tenant per account, else null; `tenants` (chunk 17, optional) lists `{id, name}` of the tenants the account reaches now: its one tenant or none for a connector with a tenant per account, those it can list for one with a tenant per resource, absent for unknown tenancy.
-- **`listResources`** `/connections/resources` [11]: `scope`, `connection`, `credential`, `kind`, and either `query` or `parent`, with a `cursor`. It answers `{items: [{id, name, expandable}], next}`, or a refusal as above, or `INVALID_RESOURCE_ID` and `INVALID_CURSOR` for a parent or a page token the provider cannot take. A browsable kind without a query is listed level by level; the account kind is the connection itself, named by its account. A kind the connector does not declare, or a `parent` where nothing is browsed, is `VALIDATION_FAILED`. With `policy` (chunk 17), and the connection's `tenant` in `connection`, a connection the policy refuses answers `CONNECTION_NOT_ALLOWED`, and a page leaves out the items of tenants the policy does not allow.
-- **`checkGrantEdit`** `/connections/check-grants` [11]: `scope`, `connection`, `credential`, `layer: {level, subject, revision, restricted, grants}` and `changes: [{kind, id, actions}]`, an empty `actions` removing the grant. It answers `{outcome: "valid", grants}`, the layer's grants after the edit: every grant that is not an allow on this connection kept in place and order, then this connection's allow grants sorted by kind and resource, those newly allowed named by the provider's `describe` (accounts by the account); or `{outcome: "invalid", message}`, also for a resource the account cannot see; or a refusal as above. Only resources and accounts newly allowed are asked of the provider, so an edit that only removes grants works with any credential, an empty secret included (Laravel's `docs/architecture/grants.md`). The checks do not depend on the layer's level, subject or `restricted`. With `policy` (chunk 17), an edit that allows anything on a connection the policy refuses answers `CONNECTION_NOT_ALLOWED`, and one that allows a resource of a tenant the policy does not allow answers `TENANT_NOT_ALLOWED`; Laravel words both itself, and commits a valid answer only while the policy's revision is the one sent, as for the layer's.
-- **`folder`** `/conversations/folder` [12]: `scope`, `conversation` and `version`. It answers the listing at that version, the public contract's `Folder`.
-- **`resolveDownload`** `/conversations/download` [12]: `scope`, `conversation`, `version` and `path`. It answers `{key, size, sha256, mediaType}`, or `{outcome: "missing"}`.
-- **`deleteConversation`** `/conversations/delete` [12]: `scope` and `conversation`. It answers once the tombstone is durable.
-- **`admission`** `/admission` [14]: `{environment, open, revision, reason}`, the emergency stop. The highest revision wins, so a repeat or a late delivery changes nothing.
-- **`listConversations`** `/recovery/conversations` [15]: `{environment, after, limit}`, `after` a conversation id or null and `limit` from 1 to 1,000. It answers `{conversations: [{conversation, organization, workspace, factSeq, deletedAt, purgedAt}], more}`: every row of the recovery index after `after`, in order of id, whatever its state, and whether more follow. `factSeq` is the highest fact sequence the engine ever sent Laravel; `deletedAt` and `purgedAt` are null until the conversation is deleted and purged. Laravel pages through it from null, each page after the last id of the one before, and compares each row with what a restore left it. It names no scope, as `catalog` does not, and is a read.
+- **`cancelRun`** `/runs/cancel`: `scope`, `conversation`, `run` and `reason`, one of the contract's `CancelReason`s. It answers `{state: "cancelled" | "tombstoned" | "ended"}` once the cancellation, or the tombstone of a run the engine has not received, is durable.
+- **`replayFacts`** `/conversations/facts`: `scope`, `conversation`, `after` (a sequence) and `limit` (at most 500). It answers `{conversation, facts, more}`: the conversation's retained facts after that sequence, in order, in the delivery's format, so Laravel applies them through the same path.
+  - **Retention.** A fact is deleted 7 days after Laravel acknowledged it, never before; the lowest sequence still held is the floor. An `after` below `floor − 1` is refused `FACTS_PRUNED` (410) with `data: {floor}` rather than answered with a page that starts later.
+  - **By conversation, not per run.** A run's facts are not contiguous in its conversation, since a write that settles after a cancellation can come after the next run's facts, so recovery reads by conversation from Laravel's watermark.
+  - **Finding the conversations to replay** after a restore is `listConversations` (below).
+- **`describeAccount`** `/connections/account`: `scope`, `connection: {id, provider}` and `credential`. It answers either `{outcome: "described", account: {id, label, tenant, tenants}}` or `{outcome: "refused", code: "CREDENTIAL_REFUSED" | "PROVIDER_FAILED", message}`. `tenant` is the account's one tenant for a connector with a tenant per account, else null; `tenants` (optional) lists `{id, name}` of the tenants the account reaches now: its one tenant or none for a connector with a tenant per account, those it can list for one with a tenant per resource, absent for unknown tenancy.
+- **`listResources`** `/connections/resources`: `scope`, `connection`, `credential`, `kind`, and either `query` or `parent`, with a `cursor`. It answers `{items: [{id, name, expandable}], next}`, or a refusal as above, or `INVALID_RESOURCE_ID` and `INVALID_CURSOR` for a parent or a page token the provider cannot take. A browsable kind without a query is listed level by level; the account kind is the connection itself, named by its account. A kind the connector does not declare, or a `parent` where nothing is browsed, is `VALIDATION_FAILED`. With `policy`, and the connection's `tenant` in `connection`, a connection the policy refuses answers `CONNECTION_NOT_ALLOWED`, and a page leaves out the items of tenants the policy does not allow.
+- **`checkGrantEdit`** `/connections/check-grants`: `scope`, `connection`, `credential`, `layer: {level, subject, revision, restricted, grants}` and `changes: [{kind, id, actions}]`, an empty `actions` removing the grant. It answers `{outcome: "valid", grants}`, the layer's grants after the edit: every grant that is not an allow on this connection kept in place and order, then this connection's allow grants sorted by kind and resource, those newly allowed named by the provider's `describe` (accounts by the account); or `{outcome: "invalid", message}`, also for a resource the account cannot see; or a refusal as above. Only resources and accounts newly allowed are asked of the provider, so an edit that only removes grants works with any credential, an empty secret included (Laravel's `docs/architecture/grants.md`). The checks do not depend on the layer's level, subject or `restricted`. With `policy`, an edit that allows anything on a connection the policy refuses answers `CONNECTION_NOT_ALLOWED`, and one that allows a resource of a tenant the policy does not allow answers `TENANT_NOT_ALLOWED`; Laravel words both itself, and commits a valid answer only while the policy's revision is the one sent, as for the layer's.
+- **`folder`** `/conversations/folder`: `scope`, `conversation` and `version`. It answers the listing at that version, the contract's `Folder`.
+- **`resolveDownload`** `/conversations/download`: `scope`, `conversation`, `version` and `path`. It answers `{key, size, sha256, mediaType}`, or `{outcome: "missing"}`.
+- **`deleteConversation`** `/conversations/delete`: `scope` and `conversation`. It answers once the tombstone is durable.
+- **`admission`** `/admission`: `{environment, open, revision, reason}`. It is declared, answers 501 and stays unused, since the emergency stop is Laravel's alone (ARCHITECTURE.md, Strict revocation).
+- **`listConversations`** `/recovery/conversations`: `{environment, after, limit}`, `after` a conversation id or null and `limit` from 1 to 1,000. It answers `{conversations: [{conversation, organization, workspace, factSeq, deletedAt, purgedAt}], more}`: every row of the recovery index after `after`, in order of id, whatever its state, and whether more follow. `factSeq` is the highest fact sequence the engine ever sent Laravel; `deletedAt` and `purgedAt` are null until the conversation is deleted and purged. Laravel pages through it from null, each page after the last id of the one before, and compares each row with what a restore left it. It names no scope, as `catalog` does not, and is a read.
 
-**Credentials in settings calls.** `describeAccount`, `listResources` and `checkGrantEdit` carry the credential in the command, `{kind, secret, generation}`. The plan had the engine lease it with `leaseToken` instead. Sending it in the command gives the same bound, since the engine sees that access token either way, and saves a round trip and a registry of pending settings calls in Laravel. When the provider refuses it, the answer says `CREDENTIAL_REFUSED`, and Laravel marks the connection itself. `leaseToken` is for runs only.
+**Credentials in settings calls.** `describeAccount`, `listResources` and `checkGrantEdit` carry the credential in the command, `{kind, secret, generation}`, rather than the engine leasing it with `leaseToken`. Sending it in the command gives the same bound, since the engine sees that access token either way, and saves a round trip and a registry of pending settings calls in Laravel. When the provider refuses it, the answer says `CREDENTIAL_REFUSED`, and Laravel marks the connection itself. `leaseToken` is for runs only.
 
 ## Requests and facts (`laravel`)
 
-- **`leaseToken`** `/leases` [7, served in 8]: `scope`, `conversation`, `run`, `attempt` and `connection`. It answers one of two outcomes:
+- **`leaseToken`** `/leases`: `scope`, `conversation`, `run`, `attempt` and `connection`. It answers one of two outcomes:
   - `{outcome: "leased", kind, secret, scopes, generation, expiresAt}`;
   - `{outcome: "refused", code, message}`, with the codes `RUN_NOT_ACTIVE`, `NOT_AUTHORIZED` (not in the run's authorized set), `RECONNECT_NEEDED` and `PROVIDER_UNAVAILABLE`.
-- **`reportUnauthorized`** `/connections/unauthorized` [7, served in 8]: `scope`, `conversation`, `run`, `attempt`, `connection` and `generation`. It answers `{marked}`, fenced by the generation. Only a run reports, since the settings calls answer `CREDENTIAL_REFUSED` instead, so Laravel checks the connection against that run's authorized set, as for a lease.
-- **`deliverFacts`** `/facts` [7, served in 8]: `scope`, `conversation`, and `facts`, a non-empty list in `seq` order. Laravel applies the batch in one transaction and answers `{acknowledged: seq}`, the highest it holds.
+- **`reportUnauthorized`** `/connections/unauthorized`: `scope`, `conversation`, `run`, `attempt`, `connection` and `generation`. It answers `{marked}`, fenced by the generation. Only a run reports, since the settings calls answer `CREDENTIAL_REFUSED` instead, so Laravel checks the connection against that run's authorized set, as for a lease.
+- **`deliverFacts`** `/facts`: `scope`, `conversation`, and `facts`, a non-empty list in `seq` order. Laravel applies the batch in one transaction and answers `{acknowledged: seq}`, the highest it holds.
   - Facts at or below that sequence are repeats, and are compared with what was applied.
   - A repeat that differs is `FACT_CONFLICT` (409), which stops that conversation's delivery for the operator.
   - A gap is `FACT_GAP` (409), whose `data` carries `{acknowledged}`, and the engine sends again from there.
   - A fact whose run the conversation does not hold is `NOT_FOUND`, like an unknown conversation.
   - A refused batch applies none of its facts, not even those before the one refused.
-  - The rules are written once, as scenarios in `contract/scenarios/facts.json`: batches to deliver, and the answer each must get. Both the fake Laravel (in this chunk) and Laravel's route (in chunk 8) must pass them, so the fake cannot drift from the real thing on the rule that matters most.
+  - The rules are written once, as scenarios in `contract/scenarios/facts.json`: batches to deliver, and the answer each must get. Both the fake Laravel and Laravel's route must pass them, so the fake cannot drift from the real thing on the rule that matters most.
 
 **Laravel checks what a request names.** A token proves that the caller is an engine, nothing about the scope it names. Laravel answers only within its own environment, and for a run that it holds under that organization, workspace and conversation. A lease and a report are also limited to a connection in that run's authorized set. Any mismatch is the same refusal as an unknown run, so a request learns nothing about other organizations.
 
@@ -129,13 +123,13 @@ Each is idempotent by its own ids. The engine's chunk that implements each comma
 | `type` | Data |
 |---|---|
 | `run.status` | `status` (`provisioning`, `running`) and `attempt` |
-| `run.tool_call` | The public contract's `ToolCallEventData`: name, label, arguments, decision, title, count, write, repeat, code and message. Never a provider's result. The arguments are their JSON as a string, cut to 2000 characters (`truncated`), so they reach PHP exactly as written |
+| `run.tool_call` | The contract's `ToolCallEventData`: name, label, arguments, decision, title, count, write, repeat, code and message. Never a provider's result. The arguments are their JSON as a string, cut to 2000 characters (`truncated`), so they reach PHP exactly as written |
 | `run.local_tool` | `LocalToolEventData` |
 | `run.write` | A write's settlement: `write` (the keyed hash), `tool`, `connection`, `outcome` (`done`, `failed` or `uncertain`) and `afterCancel` |
 | `run.usage` | One model call's reported usage: `call`, `model`, `inputTokens`, `outputTokens`, `cachedTokens` (cache reads) and `reasoningTokens`; optionally `provider` (with `model`, the route that prices it), `cacheWriteTokens`, `requestBytes` (the UTF-8 length of the request's JSON), and `costMicros` with `prices` (the call's charge in µ$, and the version of the price table that priced it). It can follow `run.finished`, when the run's end cut the call |
 | `run.unmetered` | One counted model call with no reported usage: `call`, `provider`, `model`, `cause`, `inputTokens`, `outputTokens`, `estimated`, and optionally `requestBytes`, `costMicros` and `prices`, as on `run.usage`. `cause: "refused"` (a 4xx) has zero tokens and `estimated: false`; `no_usage`, `stopped`, `failed` and `lost` carry the call's reservation and `estimated: true`. Like `run.usage`, it can follow `run.finished` |
 | `run.settled` | A run's totals, once, after `run.finished` and every `run.usage` and `run.unmetered` of the run: `modelCalls` (which those facts number exactly), `refusedCalls`, `unmeteredCalls`, the reported `inputTokens`, `outputTokens`, `cachedTokens`, `cacheWriteTokens` and `reasoningTokens`, `estimatedInputTokens` and `estimatedOutputTokens`, `containers`, `containerMs` and `containerEstimated`, `scripts`, `scriptMs` and `scriptEstimated`; optionally, all together, the run's charge in µ$: `modelMicros` (its calls' `costMicros`), `containerMicros` (its container time, priced by the table `prices` names), `scriptMicros` and their sum `chargedMicros`. The barrier for accounting, as `run.finished` is for the transcript |
-| `run.finished` | `status` (`completed`, `failed`, `cancelled` or `timed_out`), `error`, optionally `code` (why it ended, for code: `budget_reached`, `folder_limit`, …; empty when it completed), `message` (`{id, content}` or null), `folder` (`{base, result, changes, warnings}` or null), and optionally `storedBytes`, the bytes the conversation's folder keeps once the run has ended (each distinct contents of every version it keeps once, in whole 4 KiB pages; since chunk 14d). The only terminal fact. Laravel marks a run finished only from it |
+| `run.finished` | `status` (`completed`, `failed`, `cancelled` or `timed_out`), `error`, optionally `code` (why it ended, for code: `budget_reached`, `folder_limit`, …; empty when it completed), `message` (`{id, content}` or null), `folder` (`{base, result, changes, warnings}` or null), and optionally `storedBytes`, the bytes the conversation's folder keeps once the run has ended (each distinct contents of every version it keeps once, in whole 4 KiB pages). The only terminal fact. Laravel marks a run finished only from it |
 
 `text_delta`, `reasoning_delta` and `phase` are not facts. They are run events that the browser streams (Decisions 7).
 
@@ -156,12 +150,12 @@ A user's identity token (one with `email` and no `common_name`) fails that last 
 
 **Settings:** `MINERVA_ENVIRONMENT`, `MINERVA_ACCESS_ISSUER` (`https://<team>.cloudflareaccess.com`), `MINERVA_ACCESS_AUDIENCE` and `MINERVA_ACCESS_CLIENTS` (client ids, comma separated).
 - None of them is a secret, but they are account identifiers, so they live in an instance's `vars.env` and never in the repository.
-- **All or none.** Without them the internal API is off: every `/internal/` path is 404, as on production until chunk 8.
+- **All or none.** Without them the internal API is off: every `/internal/` path is 404.
 - **The parser** refuses an issuer that is not an `https` origin, and a list of client ids that is empty.
 
 **Rotation.** A new service token is added to `MINERVA_ACCESS_CLIENTS`, and Laravel switches to it. The old one is then removed from the list and revoked in Access.
 
-**Before the router.** The static assets' `runWorkerFirst` gains `/internal/*`. The router gives `/internal/*` the security headers and its own body cap. It gets no CSRF check, since no cookie authenticates it.
+**The router** gives `/internal/*` the security headers and its own body cap. It gets no CSRF check, since no cookie authenticates it.
 
 **Tests.** The key set comes from a port, `ACCESS_KEYS`, as `PROVIDER_NETWORK` does for providers. Platform tests replace it with a local key set and sign their own assertions.
 
@@ -185,10 +179,10 @@ A user's identity token (one with `email` and no `common_name`) fails that last 
 **Each connector:**
 - `slug` and `name`;
 - `auth`;
-- `kinds` (the public `ResourceKind`, `browsable` included) and `actions`;
-- `operations`: `{name, title, needs: [[kind, action]], consent, mutates, offered}`. Laravel needs them to ask for the right scopes. Where `consentNeeded` and the reconnect's scopes are computed (in a command, or ported with fixtures) is chunk 10's question;
+- `kinds` (the contract's `ResourceKind`, `browsable` included) and `actions`;
+- `operations`: `{name, title, needs: [[kind, action]], consent, mutates, offered}`. Laravel computes from them the scopes a connection lacks (`consentNeeded`) and those a reconnect asks for;
 - `manage`: `{label, url}` or null;
-- `tenancy` (chunk 17, optional in the contract, always sent by an engine that has it): `{kind: "account" | "resource" | "unknown", label}`, how the connector's resources belong to organizations and what people call its tenant.
+- `tenancy` (optional in the contract, always sent): `{kind: "account" | "resource" | "unknown", label}`, how the connector's resources belong to organizations and what people call its tenant.
 
 **`auth`** is one of three:
 - `{type: "builtin"}`;
@@ -208,7 +202,7 @@ A user's identity token (one with `email` and no `common_name`) fails that last 
   | `pkce` | |
   | `registrationUrl` | Dynamic registration, or null |
 
-**Refresh behaviour** has no field, because no connector varies today. The rules are the same for every connector, and chunk 9 ports them with parity fixtures from `workspace/credentials.ts`:
+**Refresh behaviour** has no field, because no connector varies. Laravel's refresh follows the same rules for every connector:
 - Send `Accept: application/json`, and never follow a redirect.
 - Use the stored `token_url` and the issuing client.
 - 400 or 401, a 403 with `invalid_grant`, or a known dead-token error, means reconnect.
@@ -223,7 +217,7 @@ A connector that departs from these rules gets a field then.
 `pnpm --dir contract openapi` writes `contract/openapi/engine-v1.json` and `contract/openapi/laravel-v1.json`. It uses oRPC's `OpenAPIGenerator` with the zod 4 converter (`@orpc/zod`, a dev dependency). The output is OpenAPI 3.1, whose schemas are JSON Schema 2020-12. The documents are committed.
 
 - **A unit test** fails when a committed document differs from what the contract generates. Every change to the interface is therefore visible in review.
-- **Laravel keeps copies** of both documents. Its suite (below) validates against them, and its CI checks that they still equal this repository's `main`.
+- **Laravel keeps copies** of both documents. Its suite validates against them, and its CI checks that they still equal this repository's `main`.
 
 ## The engine's client for Laravel, and the fake Laravel
 
@@ -233,38 +227,8 @@ A connector that departs from these rules gets a field then.
 - it has a timeout of 20 seconds;
 - it never follows a redirect.
 
-Chunk 7 is its first real caller.
-
-**The fake Laravel.** `cloudflare/src/faults/laravel.ts` implements the `laravel` contract with oRPC, over state the test sets. Platform tests route `LARAVEL_NETWORK` to it, so the engine's real client reaches it in-process. It does what Laravel will do:
+**The fake Laravel.** `cloudflare/src/faults/laravel.ts` implements the `laravel` contract with oRPC, over state the test sets. Platform tests route `LARAVEL_NETWORK` to it, so the engine's real client reaches it in-process. It does what Laravel does:
 - **Leases.** It answers from runs and connections the test registers, with the refusals above.
 - **Unauthorized connections.** It marks them only when the generation matches.
 - **Facts.** It applies them in order per conversation. A repeat is applied once, a repeat that differs is `FACT_CONFLICT`, and a gap is `FACT_GAP`.
 - **Its token.** It checks the bearer token, and it records every call.
-
-Chunks 6 and 7 test against it. In this chunk, a test runs the client against it, with the right token and a wrong one, and the fake passes the delivery scenarios.
-
-## Tests (this repository)
-
-**Unit:**
-- The Access verification: a valid assertion; a wrong issuer or audience; an expired one; an unknown `common_name`; an identity token; the `none` algorithm and HS256; a key not in the set.
-- The settings: all or none, and an issuer that is not an `https` origin.
-- The catalog from the registry: every connector, each `Auth` mapped to its descriptor, and a stable version.
-- The committed documents equal the generated ones.
-
-**Platform**, the internal mount in workerd:
-- off without the settings (404);
-- 401 without an assertion, with a bad one, and with an unknown client;
-- the catalog answered;
-- an unimplemented command is 501 in the error shape;
-- `WRONG_ENVIRONMENT` is 409;
-- `VALIDATION_FAILED` with the issues;
-- the body cap.
-
-Also, the engine's client against the fake Laravel.
-
-## Out of scope
-
-- The commands' behaviour (chunks 6, 7, 9, 11, 12, 14 and 15).
-- Laravel's routes for the engine's requests (chunk 8).
-- The Access application and the service token on the account. These are the owner's, asked for when a staging engine is deployed (chunk 8).
-- Local development of both sides together (chunk 8). The offline dev server has no Access, so the internal API stays off there until that chunk chooses a local way in.

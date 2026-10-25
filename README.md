@@ -115,9 +115,9 @@ docs/        connectors, images and plans
 
 Minerva is early. The permissions, the sandbox and the connectors work against live accounts, and the engine runs on Cloudflare with fault tests for its protocols. [ARCHITECTURE.md](ARCHITECTURE.md) says what is built and what is open.
 
-**Available now:** agents with their own instructions and connections, chat that shows every tool call, 20 connectors with resource-level permissions, a sealed sandbox per answer, files the agent works on with commands, and two-factor sign-in.
+**Available now:** agents with their own instructions and connections, chat that shows every tool call, search across your chats, 20 connectors with resource-level permissions, connection policies per organization, a sealed sandbox per conversation, files the agent works on with commands, budgets per run and an emergency stop, deletion and retention, billing per seat, and two-factor sign-in.
 
-**Next:** budgets per run and an emergency stop, deletion and retention, billing, then schedules and triggers, agents you can reach from Slack and Teams, asking you to allow a single action, and an audit log.
+**Next:** memory across conversations, then schedules and triggers, agents you can reach from Slack and Teams, asking you to allow a single action, and an audit log.
 
 **Later:** SSO and directory sync, a second person for high-risk actions, and dedicated deployments.
 
