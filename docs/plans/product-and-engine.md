@@ -71,10 +71,6 @@ The test for every decision is what is best for Minerva as a hosted business. Se
 - **The cost of a typical turn** is about $0.02 on `gpt-6.1-sol` and $0.002 on GLM, at list prices. A stopped call is charged at the route's limits, about 15 typical turns on `gpt-6.1-sol`.
 - **Retention periods.** A restore window of 7 days; run events and run inputs kept 30 days after the run, and the conversation's pi conversation until the conversation is deleted; facts 7 days after acknowledgement; transcripts and files until deletion, and deleted conversations removed physically 7 days later; usage and audit at least a year. The budget's unit is money.
 
-## Before open sign-up
-
-While sign-up is open, every new account's personal organization gets the free allowance, so opening sign-up needs a limit on how accounts are made.
-
 ## Sources
 
 - [Laravel starter kits](https://laravel.com/docs/starter-kits), [Fortify](https://laravel.com/docs/fortify) (passkeys included), [Sanctum](https://laravel.com/docs/sanctum), [Scout](https://laravel.com/docs/scout), [Cashier](https://laravel.com/docs/billing), [Pennant](https://laravel.com/docs/pennant), [Reverb](https://laravel.com/docs/reverb), [file storage](https://laravel.com/docs/filesystem) (`temporaryUploadUrl`)
