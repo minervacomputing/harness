@@ -5,7 +5,7 @@
 import { z } from 'zod'
 import type { Attachment, FolderChanges, FolderWarnings, LocalToolEventData } from '../shapes.ts'
 import { PricesVersion } from './catalog.ts'
-import { Id, Seq, Time } from './common.ts'
+import { Id, Provider, Seq, Time } from './common.ts'
 
 /** A file a message attached, as added to the folder. */
 export const AttachedFile = z.object({ path: z.string(), size: z.int().min(0), mediaType: z.string() })
@@ -37,6 +37,21 @@ export const FolderWarningsSchema = z.object({
 /** A tool call's arguments are cut to this many characters. */
 export const MAX_ARGUMENTS = 2000
 
+/** A run holds at most this many calls for approval. */
+export const MAX_HOLDS = 10
+
+/** A held call's arguments are at most 1.5 MiB of UTF-8, the engine's measure, and so at most this many characters. */
+export const MAX_HELD_ARGUMENTS = 1_572_864
+
+/** 32 lowercase hex, a keyed hash of (run, write key): the same for a write and its repeat, different across runs. */
+const Write = z.string()
+
+/** A held call's place in its run, from 1. */
+const HeldPosition = z.int().min(1).max(MAX_HOLDS)
+
+/** The held call a continuation carried out or refused. */
+const Approved = z.object({ run: Id, position: HeldPosition })
+
 /** A connector tool call that finished, as the page shows it: never a provider's result. */
 const ToolCall = z.object({
   /** The tool name cut to 64 characters, `todoist2_list_tasks`. */
@@ -50,6 +65,7 @@ const ToolCall = z.object({
   arguments: z.string().max(MAX_ARGUMENTS),
   /** Whether `arguments` was cut. */
   truncated: z.boolean(),
+  approved: Approved.optional(),
 })
 
 const ToolCallData = z.discriminatedUnion('decision', [
@@ -57,13 +73,33 @@ const ToolCallData = z.discriminatedUnion('decision', [
     decision: z.literal('allowed'),
     title: z.string(),
     count: z.int().min(0).nullable(),
-    /** For a write: 32 hex, a keyed hash of (run, write key). */
-    write: z.string().optional(),
+    /** For a write. */
+    write: Write.optional(),
     /** The same write asked for again, answered from the run's record. */
     repeat: z.literal(true).optional(),
   }),
-  ToolCall.extend({ decision: z.enum(['denied', 'error']), code: z.string(), message: z.string() }),
+  ToolCall.extend({
+    decision: z.enum(['denied', 'error']),
+    code: z.string(),
+    message: z.string(),
+    /** For a call held for approval (`APPROVAL_REQUIRED`): its `run.held_call`'s. */
+    write: Write.optional(),
+  }),
 ])
+
+/** One resource and action a held call needs, named as a grant names them, and what the layers make of it. */
+const HeldRequirement = z.object({
+  kind: z.string().min(1).max(64),
+  kindLabel: z.string(),
+  resource: z.string().min(1).max(200),
+  /** The provider's name for the resource; absent when it could not be read or left it out. */
+  name: z.string().max(300).optional(),
+  action: z.string().min(1).max(64),
+  actionLabel: z.string(),
+  effect: z.enum(['ask', 'allow']),
+  /** The layers that asked; empty on an allow. */
+  asked: z.array(z.enum(['ceiling', 'agent', 'user'])),
+})
 
 /** A read, write, edit or bash call in the folder that finished. */
 const LocalToolData = z.object({ tool: z.enum(['read', 'write', 'edit', 'bash']), summary: z.string(), ok: z.boolean(), excerpt: z.string() })
@@ -129,16 +165,35 @@ export const Fact = z.discriminatedUnion('type', [
   /** The run started an attempt, or is running it. A run's first `running` comes only after its attachments are copied. */
   fact('run.status', z.object({ status: z.enum(['provisioning', 'running']), attempt: z.int().min(1) })),
   fact('run.tool_call', ToolCallData),
+  /** A write held for the user's approval, written with its hold, before the call's refused `run.tool_call`. */
+  fact(
+    'run.held_call',
+    z.object({
+      position: HeldPosition,
+      /** As `run.tool_call` names it. */
+      tool: z.string(),
+      /** `Gmail: Send mail`. */
+      label: z.string(),
+      connection: Id,
+      provider: Provider,
+      operation: z.string().min(1).max(64),
+      requirements: z.array(HeldRequirement).min(1),
+      /** The validated fields' canonical JSON as a string, as on `run.tool_call`, but never cut. */
+      arguments: z.string().max(MAX_HELD_ARGUMENTS),
+      write: Write,
+    }),
+  ),
   fact('run.local_tool', LocalToolData),
   /** A write's settlement, also one that settles after the run was cancelled, for the audit log. */
   fact(
     'run.write',
     z.object({
-      write: z.string(),
+      write: Write,
       tool: z.string(),
       connection: Id,
       outcome: z.enum(['done', 'failed', 'uncertain']),
       afterCancel: z.boolean(),
+      approved: Approved.optional(),
     }),
   ),
   /** One model call's usage, as the provider reported it. */

@@ -2055,6 +2055,397 @@
           }
         }
       ]
+    },
+    {
+      "name": "a held call, its refused call, and the write and call of the continuation that names it are applied, and their repeats are acknowledged",
+      "steps": [
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.held_call",
+                "data": {
+                  "position": 1,
+                  "tool": "gmail_send_message",
+                  "label": "Gmail: Send mail",
+                  "connection": "0199e000-0000-7000-8000-0000000000d1",
+                  "provider": "gmail",
+                  "operation": "send_message",
+                  "requirements": [
+                    {
+                      "kind": "recipient",
+                      "kindLabel": "Recipient",
+                      "resource": "someone@example.com",
+                      "action": "send",
+                      "actionLabel": "Send mail",
+                      "effect": "ask",
+                      "asked": [
+                        "agent",
+                        "user"
+                      ]
+                    },
+                    {
+                      "kind": "recipient",
+                      "kindLabel": "Recipient",
+                      "resource": "team@example.com",
+                      "name": "Team",
+                      "action": "send",
+                      "actionLabel": "Send mail",
+                      "effect": "allow",
+                      "asked": []
+                    }
+                  ],
+                  "arguments": "{\"bcc\":[],\"body\":\"The notes are attached.\",\"cc\":[\"team@example.com\"],\"subject\":\"Notes\",\"to\":[\"someone@example.com\"]}",
+                  "write": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:04.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "gmail_send_message",
+                  "label": "Gmail: Send mail",
+                  "arguments": "{\"bcc\":[],\"body\":\"The notes are attached.\",\"cc\":[\"team@example.com\"],\"subject\":\"Notes\",\"to\":[\"someone@example.com\"]}",
+                  "truncated": false,
+                  "decision": "denied",
+                  "code": "APPROVAL_REQUIRED",
+                  "message": "This call waits for the user to approve it.",
+                  "write": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+                }
+              },
+              {
+                "seq": 5,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:05.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "The mail waits for your approval."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 5
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:06.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 7,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:07.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 8,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:08.000Z",
+                "type": "run.write",
+                "data": {
+                  "write": "f9e8d7c6b5a4938271605f4e3d2c1b0a",
+                  "tool": "gmail_send_message",
+                  "connection": "0199e000-0000-7000-8000-0000000000d1",
+                  "outcome": "done",
+                  "afterCancel": false,
+                  "approved": {
+                    "run": "0199e000-0000-7000-8000-0000000000a1",
+                    "position": 1
+                  }
+                }
+              },
+              {
+                "seq": 9,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:09.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "gmail_send_message",
+                  "label": "Gmail: Send mail",
+                  "arguments": "{\"bcc\":[],\"body\":\"The notes are attached.\",\"cc\":[\"team@example.com\"],\"subject\":\"Notes\",\"to\":[\"someone@example.com\"]}",
+                  "truncated": false,
+                  "approved": {
+                    "run": "0199e000-0000-7000-8000-0000000000a1",
+                    "position": 1
+                  },
+                  "decision": "allowed",
+                  "title": "Sent",
+                  "count": 1,
+                  "write": "f9e8d7c6b5a4938271605f4e3d2c1b0a"
+                }
+              },
+              {
+                "seq": 10,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:10.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Sent."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 10
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 1,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:01.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 2,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:02.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 3,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:03.000Z",
+                "type": "run.held_call",
+                "data": {
+                  "position": 1,
+                  "tool": "gmail_send_message",
+                  "label": "Gmail: Send mail",
+                  "connection": "0199e000-0000-7000-8000-0000000000d1",
+                  "provider": "gmail",
+                  "operation": "send_message",
+                  "requirements": [
+                    {
+                      "kind": "recipient",
+                      "kindLabel": "Recipient",
+                      "resource": "someone@example.com",
+                      "action": "send",
+                      "actionLabel": "Send mail",
+                      "effect": "ask",
+                      "asked": [
+                        "agent",
+                        "user"
+                      ]
+                    },
+                    {
+                      "kind": "recipient",
+                      "kindLabel": "Recipient",
+                      "resource": "team@example.com",
+                      "name": "Team",
+                      "action": "send",
+                      "actionLabel": "Send mail",
+                      "effect": "allow",
+                      "asked": []
+                    }
+                  ],
+                  "arguments": "{\"bcc\":[],\"body\":\"The notes are attached.\",\"cc\":[\"team@example.com\"],\"subject\":\"Notes\",\"to\":[\"someone@example.com\"]}",
+                  "write": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+                }
+              },
+              {
+                "seq": 4,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:04.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "gmail_send_message",
+                  "label": "Gmail: Send mail",
+                  "arguments": "{\"bcc\":[],\"body\":\"The notes are attached.\",\"cc\":[\"team@example.com\"],\"subject\":\"Notes\",\"to\":[\"someone@example.com\"]}",
+                  "truncated": false,
+                  "decision": "denied",
+                  "code": "APPROVAL_REQUIRED",
+                  "message": "This call waits for the user to approve it.",
+                  "write": "0a1b2c3d4e5f60718293a4b5c6d7e8f9"
+                }
+              },
+              {
+                "seq": 5,
+                "run": "0199e000-0000-7000-8000-0000000000a1",
+                "at": "2026-10-14T12:00:05.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "The mail waits for your approval."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 10
+          }
+        },
+        {
+          "deliver": {
+            "scope": {
+              "environment": "test",
+              "organization": "0199e000-0000-7000-8000-000000000001",
+              "workspace": "0199e000-0000-7000-8000-000000000002"
+            },
+            "conversation": "0199e000-0000-7000-8000-00000000000a",
+            "facts": [
+              {
+                "seq": 6,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:06.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "provisioning",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 7,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:07.000Z",
+                "type": "run.status",
+                "data": {
+                  "status": "running",
+                  "attempt": 1
+                }
+              },
+              {
+                "seq": 8,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:08.000Z",
+                "type": "run.write",
+                "data": {
+                  "write": "f9e8d7c6b5a4938271605f4e3d2c1b0a",
+                  "tool": "gmail_send_message",
+                  "connection": "0199e000-0000-7000-8000-0000000000d1",
+                  "outcome": "done",
+                  "afterCancel": false,
+                  "approved": {
+                    "run": "0199e000-0000-7000-8000-0000000000a1",
+                    "position": 1
+                  }
+                }
+              },
+              {
+                "seq": 9,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:09.000Z",
+                "type": "run.tool_call",
+                "data": {
+                  "tool": "gmail_send_message",
+                  "label": "Gmail: Send mail",
+                  "arguments": "{\"bcc\":[],\"body\":\"The notes are attached.\",\"cc\":[\"team@example.com\"],\"subject\":\"Notes\",\"to\":[\"someone@example.com\"]}",
+                  "truncated": false,
+                  "approved": {
+                    "run": "0199e000-0000-7000-8000-0000000000a1",
+                    "position": 1
+                  },
+                  "decision": "allowed",
+                  "title": "Sent",
+                  "count": 1,
+                  "write": "f9e8d7c6b5a4938271605f4e3d2c1b0a"
+                }
+              },
+              {
+                "seq": 10,
+                "run": "0199e000-0000-7000-8000-0000000000a2",
+                "at": "2026-10-14T12:00:10.000Z",
+                "type": "run.finished",
+                "data": {
+                  "status": "completed",
+                  "error": "",
+                  "message": {
+                    "id": "0199e000-0000-7000-8000-0000000000c1",
+                    "content": "Sent."
+                  },
+                  "folder": null
+                }
+              }
+            ]
+          },
+          "answer": {
+            "acknowledged": 10
+          }
+        }
+      ]
     }
   ]
 }

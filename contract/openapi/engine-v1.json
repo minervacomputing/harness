@@ -682,6 +682,23 @@
                       "truncated": {
                         "type": "boolean"
                       },
+                      "approved": {
+                        "type": "object",
+                        "properties": {
+                          "run": {
+                            "$ref": "#/components/schemas/Id"
+                          },
+                          "position": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10
+                          }
+                        },
+                        "required": [
+                          "run",
+                          "position"
+                        ]
+                      },
                       "decision": {
                         "const": "allowed"
                       },
@@ -733,6 +750,23 @@
                       "truncated": {
                         "type": "boolean"
                       },
+                      "approved": {
+                        "type": "object",
+                        "properties": {
+                          "run": {
+                            "$ref": "#/components/schemas/Id"
+                          },
+                          "position": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10
+                          }
+                        },
+                        "required": [
+                          "run",
+                          "position"
+                        ]
+                      },
                       "decision": {
                         "enum": [
                           "denied",
@@ -744,6 +778,9 @@
                         "type": "string"
                       },
                       "message": {
+                        "type": "string"
+                      },
+                      "write": {
                         "type": "string"
                       }
                     },
@@ -757,6 +794,141 @@
                       "message"
                     ]
                   }
+                ]
+              }
+            },
+            "required": [
+              "seq",
+              "run",
+              "at",
+              "type",
+              "data"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "run": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "type": {
+                "const": "run.held_call"
+              },
+              "data": {
+                "type": "object",
+                "properties": {
+                  "position": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10
+                  },
+                  "tool": {
+                    "type": "string"
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "connection": {
+                    "$ref": "#/components/schemas/Id"
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "operation": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "requirements": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "kindLabel": {
+                          "type": "string"
+                        },
+                        "resource": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "name": {
+                          "type": "string",
+                          "maxLength": 300
+                        },
+                        "action": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64
+                        },
+                        "actionLabel": {
+                          "type": "string"
+                        },
+                        "effect": {
+                          "enum": [
+                            "ask",
+                            "allow"
+                          ],
+                          "type": "string"
+                        },
+                        "asked": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "ceiling",
+                              "agent",
+                              "user"
+                            ],
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "kindLabel",
+                        "resource",
+                        "action",
+                        "actionLabel",
+                        "effect",
+                        "asked"
+                      ]
+                    }
+                  },
+                  "arguments": {
+                    "type": "string",
+                    "maxLength": 1572864
+                  },
+                  "write": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "position",
+                  "tool",
+                  "label",
+                  "connection",
+                  "provider",
+                  "operation",
+                  "requirements",
+                  "arguments",
+                  "write"
                 ]
               }
             },
@@ -864,6 +1036,23 @@
                   },
                   "afterCancel": {
                     "type": "boolean"
+                  },
+                  "approved": {
+                    "type": "object",
+                    "properties": {
+                      "run": {
+                        "$ref": "#/components/schemas/Id"
+                      },
+                      "position": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 10
+                      }
+                    },
+                    "required": [
+                      "run",
+                      "position"
+                    ]
                   }
                 },
                 "required": [
