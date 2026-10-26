@@ -1,8 +1,7 @@
 // The Web connector in Laravel's runs: the test build has no BROWSER binding, so the Conversation's browser port is
-// replaced by test/fixtures/connectors/web/fake-browser.ts, counted per run as the port counts the binding. A run's
-// read_page opens a page through it under an organization's list of domains, and a cancel while the browser renders
-// ends the run.
+// replaced by test/fixtures/connectors/web/fake-browser.ts, counted per run as the port counts the binding.
 
+import type { TranscriptContext } from "@earendil-works/pi-ai";
 import { env } from "cloudflare:workers";
 import type { Fact, StartRun } from "@minerva/contract/internal";
 import { beforeAll, beforeEach, expect, test } from "vitest";
@@ -11,21 +10,28 @@ import type { LaravelView } from "../../src/faults/laravel.ts";
 import { faultConversationPorts, providerOf } from "../../src/faults/ports.ts";
 import { heldRun } from "../../src/faults/world.ts";
 import { RunBrowser } from "../../src/gateway/http.ts";
+import { base64 } from "../../src/lib/bytes.ts";
 import { uuid7 } from "../../src/lib/random.ts";
-import type { FakeScript } from "../../src/model/fake.ts";
-import { FakeBrowser, rendered } from "../fixtures/connectors/web/fake-browser.ts";
+import { type FakeScript, fakeUpstream } from "../../src/model/fake.ts";
+import { FakeBrowser, captured, jpeg, rendered } from "../fixtures/connectors/web/fake-browser.ts";
 import { commands, scope, signedAssertions, startOf } from "./internal-support.ts";
 
 signedAssertions();
 
 let browser = new FakeBrowser();
+let contexts: TranscriptContext[] = [];
 
 beforeAll(() => {
-	PORTS.factory = () => ({ ...faultConversationPorts(defaultPorts), browser: () => new RunBrowser(browser) });
+	PORTS.factory = () => ({
+		...faultConversationPorts(defaultPorts),
+		browser: () => new RunBrowser(browser),
+		upstream: () => fakeUpstream({ input: ["text", "image"], onCall: (_call, context) => contexts.push(context) }),
+	});
 });
 
 beforeEach(() => {
 	browser = new FakeBrowser();
+	contexts = [];
 });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -103,4 +109,21 @@ test("a cancel while the browser renders ends the run", async () => {
 	answer();
 	expect(state.facts.find((fact) => fact.type === "run.finished")).toMatchObject({ data: { status: "cancelled" } });
 	expect(browser.calls).toHaveLength(1);
+});
+
+test("a screenshot as large as the model takes reaches it whole, as an image after the record", async () => {
+	const bytes = jpeg(1152 * 1024);
+	browser.answer = captured(bytes);
+	const start = await started({ turns: [{ tools: [{ name: "web_screenshot_page", arguments: { url: "https://en.wikipedia.org/wiki/Owl" } }] }, { text: "An owl." }] }, ["wikipedia.org"]);
+	const state = await settled(start);
+	expect(state.facts.find((fact) => fact.type === "run.finished")).toMatchObject({ data: { status: "completed" } });
+	const result = contexts
+		.at(-1)
+		?.messages.filter((message) => message.role === "toolResult")
+		.at(-1);
+	const record = { url: "https://en.wikipedia.org/wiki/Owl", content_type: "image/jpeg", width: 1280, height: 800 };
+	expect(result?.content).toEqual([
+		{ type: "text", text: JSON.stringify({ items: [record], count: 1 }) },
+		{ type: "image", mimeType: "image/jpeg", data: base64(bytes) },
+	]);
 });

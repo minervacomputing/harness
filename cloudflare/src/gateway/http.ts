@@ -46,8 +46,10 @@ export interface WriteAttempt {
 	closed: boolean;
 }
 
+export type QuickAction = ["markdown", BrowserRunMarkdownOptions] | ["screenshot", BrowserRunScreenshotOptions];
+
 export interface BrowserIo {
-	quickAction(action: "markdown", options: BrowserRunMarkdownOptions): Promise<Response>;
+	quickAction(...call: QuickAction): Promise<Response>;
 }
 
 export interface ProviderIo {
@@ -252,7 +254,7 @@ export class CallIo implements ProviderIo {
 		this.#admits = options.admits;
 		this.fetch = (input, init) => this.#send(input, init);
 		const browser = options.browser ?? null;
-		this.browser = browser === null ? null : { quickAction: (action, render) => this.#admitted(() => browser.quickAction(action, render)) };
+		this.browser = browser === null ? null : { quickAction: (...call) => this.#admitted(() => browser.quickAction(...call)) };
 	}
 
 	now(): number {
@@ -304,10 +306,10 @@ export class RunBrowser implements BrowserIo {
 		this.#binding = binding;
 	}
 
-	quickAction(action: "markdown", options: BrowserRunMarkdownOptions): Promise<Response> {
+	quickAction(...call: QuickAction): Promise<Response> {
 		if (this.#sent >= BROWSER_CALLS) return Promise.reject(new OperationError("LIMIT_REACHED", "This run has opened as many pages as it may."));
 		this.#sent++;
-		return this.#binding.quickAction(action, options);
+		return this.#binding.quickAction(...call);
 	}
 }
 

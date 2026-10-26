@@ -148,7 +148,7 @@ export class Lab extends DurableObject<LabEnv> {
 
 	async #tool(name: string, args: Json | undefined): Promise<ToolCallOutcome> {
 		const input = (args ?? {}) as { ms?: number; tag?: string; key?: string };
-		const ok = (items: { [key: string]: Json }[]): ToolCallOutcome => ({ ok: true, result: { items, count: items.length }, title: name, repeat: false, writeKey: null, event: null });
+		const ok = (items: { [key: string]: Json }[]): ToolCallOutcome => ({ ok: true, result: { items, count: items.length }, images: [], title: name, repeat: false, writeKey: null, event: null });
 		this.#inFlight++;
 		this.#maxInFlight = Math.max(this.#maxInFlight, this.#inFlight);
 		try {

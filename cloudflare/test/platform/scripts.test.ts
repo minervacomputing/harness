@@ -42,7 +42,7 @@ function session(): ScriptSession {
 				async (): Promise<ToolCallOutcome> => {
 					calls.push(declaration.name);
 					if (declaration.name === "never") await new Promise(() => {});
-					return { ok: true, result: { items: [{ args: (args ?? null) as Json }], count: 1 }, title: "t", repeat: false, writeKey: null, event: null };
+					return { ok: true, result: { items: [{ args: (args ?? null) as Json }], count: 1 }, images: [], title: "t", repeat: false, writeKey: null, event: null };
 				},
 				() => drop.throwIfAborted(),
 			),
@@ -248,7 +248,7 @@ describe("ending guests", () => {
 		const port = {
 			invoke: (declaration: ToolDeclaration) => {
 				calls.push(declaration.name);
-				return Promise.resolve<ToolCallOutcome>({ ok: true, result: { items: [], count: 0 }, title: "t", repeat: false, writeKey: null, event: null });
+				return Promise.resolve<ToolCallOutcome>({ ok: true, result: { items: [], count: 0 }, images: [], title: "t", repeat: false, writeKey: null, event: null });
 			},
 		};
 		const first = await executeScript({ ...options("for (;;) { await tools.list_things({}); await new Promise((resolve) => setTimeout(resolve, 10)) }", 150), port });

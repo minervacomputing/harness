@@ -1098,6 +1098,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			locals,
 			(declaration) => connectorTool(declaration, host),
 			(all) => scriptTool(all, this.#scriptHost(host)),
+			(declaration) => declaration.images === true,
 		);
 		return { name: "minerva", tools };
 	}

@@ -67,7 +67,7 @@ export function declaration(name: string, write = false): ToolDeclaration {
 }
 
 export function ok(items: { [key: string]: Json }[]): ToolCallOutcome {
-	return { ok: true, result: { items, count: items.length }, title: "t", repeat: false, writeKey: null, event: null };
+	return { ok: true, result: { items, count: items.length }, images: [], title: "t", repeat: false, writeKey: null, event: null };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

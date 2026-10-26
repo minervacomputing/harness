@@ -105,6 +105,16 @@ describe("admission", () => {
 		expect(Object.keys(p.sent[1]?.args as object)).toEqual(["\\", "\n"]);
 	});
 
+	test("a call's images are the model's alone: the script gets the result", async () => {
+		const p = port();
+		const session = new ScriptSession(new ScriptCalls(), TOOLS, p);
+		const answer = session.call(READ.name, undefined);
+		await flush();
+		const result = { items: [{ url: "https://example.com/" }], count: 1 };
+		p.settle(0, { ok: true, result, images: [{ type: "image", mimeType: "image/jpeg", data: "/9j/" }], title: "t", repeat: false, writeKey: null, event: null });
+		expect(await answer).toEqual({ ok: true, value: result });
+	});
+
 	test("the 100th refusal stops the script from a microtask, so it is still answered as a refusal", async () => {
 		const session = new ScriptSession(new ScriptCalls(), TOOLS, port());
 		const answers = [];

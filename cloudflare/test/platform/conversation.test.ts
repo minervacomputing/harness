@@ -89,6 +89,7 @@ function allowed(request: ToolCallRequest, result: ToolResult): ToolCallOutcome 
 	return {
 		ok: true,
 		result,
+		images: [],
 		title: request.name,
 		repeat: false,
 		writeKey: null,

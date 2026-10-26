@@ -36,6 +36,7 @@ function declaration(fields: Partial<ToolDeclaration> = {}): ToolDeclaration {
 const ALLOWED: ToolCallOutcome = {
 	ok: true,
 	result: { items: [{ id: "1", content: "Café ☕" }], count: 1, next_cursor: "tok" },
+	images: [],
 	title: "List tasks",
 	repeat: false,
 	writeKey: null,

@@ -8,6 +8,7 @@
 // The runtime parts: lookups on a declaration, the defaults of an operation, consent, bindings and the
 // owned error.
 
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { z } from "zod";
 import type { Json } from "../lib/json.ts";
 import type { ConnectionId } from "../shared/rpc.ts";
@@ -45,6 +46,8 @@ export type Requirement = { need: Resource; action: string } | { enumerate: stri
 export interface ScopedRecord {
 	resource: Resource;
 	data: { [key: string]: Json };
+	/** Its `data` in base64. Shown to the model with its record, for an operation that declares `images`. */
+	image?: ImageContent;
 }
 
 export interface ProviderOutput {
@@ -106,6 +109,8 @@ export interface Operation<Input = Json> {
 	mutates?: boolean;
 	/** The input has `cursor`; the output may have `nextCursor`. */
 	paginated?: boolean;
+	/** Its records may carry an image (`ScopedRecord.image`). */
+	images?: boolean;
 }
 
 export type Auth =
@@ -361,6 +366,7 @@ export interface OperationTerms {
 	revision: number;
 	mutates: boolean;
 	paginated: boolean;
+	images: boolean;
 }
 
 export function termsOf(op: Operation<never>): OperationTerms {
@@ -370,6 +376,7 @@ export function termsOf(op: Operation<never>): OperationTerms {
 		revision: op.revision ?? 1,
 		mutates: op.mutates ?? false,
 		paginated: op.paginated ?? false,
+		images: op.images ?? false,
 	};
 }
 

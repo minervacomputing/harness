@@ -6,19 +6,24 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { connectorRegistry } from "../../src/connectors/index.ts";
-import { READ_PAGE, SITE, webConnector } from "../../src/connectors/web/connector.ts";
+import { READ_PAGE, SCREENSHOT_PAGE, SITE, webConnector } from "../../src/connectors/web/connector.ts";
 import { Browser, LIMITS, probeBrowser } from "../../src/connectors/web/render.ts";
-import { OperationError, termsOf } from "../../src/gateway/connector.ts";
-import type { ToolCallOutcome } from "../../src/gateway/executor.ts";
+import { OperationError, inTenant, termsOf } from "../../src/gateway/connector.ts";
+import { render } from "../../src/conversation/tools.ts";
+import { type ToolCallOutcome, visibleResult } from "../../src/gateway/executor.ts";
 import type { GrantRow } from "../../src/gateway/grants.ts";
 import { CallIo, NotSent, ProgrammingError, RunBrowser, settingsIo } from "../../src/gateway/http.ts";
+import { Layer, Policy, resource } from "../../src/gateway/policy.ts";
 import { Registry, inputSchema, validate } from "../../src/gateway/registry.ts";
 import type { ConnectionPolicy } from "../../src/gateway/tenancy.ts";
+import { MODEL_TOOLS_MAX, modelTools } from "../../src/gateway/tools.ts";
 import { validateInput } from "../../src/gateway/validation.ts";
+import { base64 } from "../../src/lib/bytes.ts";
 import type { Json } from "../../src/lib/json.ts";
 import { ancestors, canonicalHost, choices, name, parseUrl, registrable, validId } from "../../src/lib/sites.ts";
+import { IMAGE_MAX_BYTES } from "../../src/model/provider.ts";
 import type { ConnectionId } from "../../src/shared/rpc.ts";
-import { type Answer, FakeBrowser, hangs, refused, rendered, sized, stalls } from "../fixtures/connectors/web/fake-browser.ts";
+import { type Answer, FakeBrowser, captured, hangs, jpeg, refused, rendered, sized, stalls } from "../fixtures/connectors/web/fake-browser.ts";
 import { catalogEntry } from "./catalog-support.ts";
 import { Scenario, userGrants } from "./executor-fakes.ts";
 
@@ -105,7 +110,7 @@ describe("the declaration", () => {
 		const fingerprints = Object.fromEntries(webConnector().operations.map((op) => [op.name, registry.contract("web", op.name)]));
 		console.log("web fingerprints", fingerprints);
 		// A change here is a change of what a tool means: running runs fail its calls with OPERATION_CHANGED.
-		expect(fingerprints).toEqual({ read_page: "8b03d8d96e5a7d64" });
+		expect(fingerprints).toEqual({ read_page: "8b03d8d96e5a7d64", screenshot_page: "0ee25583b20916b5" });
 	});
 
 	test("the Worker's registry serves it", async () => {
@@ -129,10 +134,16 @@ describe("the declaration", () => {
 		]);
 		expect(entry.actions).toEqual([{ id: "browse", label: "Open in browser", requires: null }]);
 		expect(entry.tenancy).toEqual({ kind: "resource", label: "domain" });
-		expect(entry.operations).toEqual([{ name: "read_page", title: "Read a web page", needs: [{ kind: "site", action: "browse" }], consent: null, mutates: false, offered: true }]);
+		expect(entry.operations).toEqual([
+			{ name: "read_page", title: "Read a web page", needs: [{ kind: "site", action: "browse" }], consent: null, mutates: false, offered: true },
+			{ name: "screenshot_page", title: "Take a screenshot of a web page", needs: [{ kind: "site", action: "browse" }], consent: null, mutates: false, offered: true },
+		]);
 		expect(connector.auth).toEqual({ type: "builtin" });
 		expect([connector.browsable ?? [], connector.manageLink]).toEqual([[], undefined]);
-		expect(connector.operations.map((op) => [op.name, termsOf(op).outputAction, termsOf(op).paginated])).toEqual([["read_page", "browse", false]]);
+		expect(connector.operations.map((op) => [op.name, termsOf(op).outputAction, termsOf(op).paginated, termsOf(op).images])).toEqual([
+			["read_page", "browse", false, false],
+			["screenshot_page", "browse", false, true],
+		]);
 		for (const op of connector.operations) expect(JSON.stringify(inputSchema(op)), op.name).not.toContain('"title"');
 	});
 });
@@ -161,6 +172,17 @@ describe("inputs", () => {
 			{ url: "https://example.com/", extra: 1 },
 		] as Json[]) {
 			expect(await accepted(args), JSON.stringify(args)).toMatch(/^refused: Invalid arguments\./);
+		}
+	});
+
+	test("screenshot_page: an address of at most 2000 characters, and nothing else", async () => {
+		const accepts = async (args: Json) => {
+			const result = await validateInput(SCREENSHOT_PAGE.input as never, args);
+			return result.ok ? result.data : "refused";
+		};
+		expect(await accepts({ url: " https://example.com/ " })).toEqual({ url: "https://example.com/" });
+		for (const args of [{}, { url: "" }, { url: "u".repeat(2001) }, { url: "https://example.com/", max_chars: 500 }] as Json[]) {
+			expect(await accepts(args), JSON.stringify(args)).toBe("refused");
 		}
 	});
 });
@@ -284,6 +306,30 @@ describe("what is sent", () => {
 					gotoOptions: { waitUntil: "networkidle2", timeout: 8000 },
 					actionTimeout: 3000,
 					bestAttempt: true,
+				},
+			},
+		]);
+	});
+
+	test("screenshot_page's options, exactly: read_page's waits and pattern, the first screen as a JPEG, and every type loaded", async () => {
+		const browser = new FakeBrowser();
+		browser.answer = captured(jpeg(1000));
+		const run = await start(browser, [[SITE, "example.com", ["browse"]]]);
+		await run.ok("web_screenshot_page", { url: "http://example.com/app#/inbox" });
+		expect(browser.calls).toEqual([
+			{
+				action: "screenshot",
+				options: {
+					url: "https://example.com/app#/inbox",
+					browser: "kitesurf",
+					allowRequestPattern: ["^https://example\\.com/", "^blob:https://example\\.com/", "^data:"],
+					cacheTTL: 0,
+					userAgent: "Minerva/0.1 (governed AI agent; reads a page when a user's agent asks)",
+					gotoOptions: { waitUntil: "networkidle2", timeout: 8000 },
+					actionTimeout: 3000,
+					bestAttempt: true,
+					viewport: { width: 1280, height: 800 },
+					screenshotOptions: { type: "jpeg", quality: 80 },
 				},
 			},
 		]);
@@ -450,7 +496,7 @@ describe("what the answer becomes", () => {
 
 	test("without a browser, nothing is sent", async () => {
 		const run = await start(null, [[SITE, "example.com", ["browse"]]]);
-		expect(run.tools).toEqual(["web_read_page"]);
+		expect(run.tools).toEqual(["web_read_page", "web_screenshot_page"]);
 		expect(await run.error("web_read_page", { url: "https://example.com/" })).toEqual({ code: "BROWSER_UNAVAILABLE", message: "Minerva's browser is not available in this build." });
 	});
 
@@ -463,6 +509,74 @@ describe("what the answer becomes", () => {
 		closed.close();
 		await expect(new Browser(closed).read(visit)).rejects.toBeInstanceOf(ProgrammingError);
 		expect(browser.calls).toEqual([]);
+	});
+});
+
+describe("screenshots", () => {
+	const SHOT = { url: "https://example.com/" };
+	const RECORD = { url: "https://example.com/", content_type: "image/jpeg", width: 1280, height: 800 };
+
+	test("a short record, and the browser's JPEG as the image the model sees after it", async () => {
+		const bytes = jpeg(63_256);
+		const [run] = await opening(captured(bytes));
+		const outcome = await run.ok("web_screenshot_page", SHOT);
+		const image = { type: "image", mimeType: "image/jpeg", data: base64(bytes) };
+		expect([outcome.result, outcome.images]).toEqual([{ items: [RECORD], count: 1 }, [image]]);
+		expect(render(outcome)).toEqual({ output: [{ type: "text", text: JSON.stringify({ items: [RECORD], count: 1 }) }, image], isError: false });
+	});
+
+	test("an image as large as the model takes is given whole; a larger one, or one that is not a JPEG, is not", async () => {
+		let [run] = await opening(captured(jpeg(1152 * 1024)));
+		expect((await run.ok("web_screenshot_page", SHOT)).images.map((image) => image.data.length)).toEqual([IMAGE_MAX_BYTES]);
+		[run] = await opening(captured(jpeg(1152 * 1024 + 1)));
+		expect(await run.error("web_screenshot_page", SHOT)).toEqual({ code: "PAGE_TOO_LARGE", message: `This page is larger than Minerva reads. ${RAN}` });
+		for (const body of [new Uint8Array(0), new TextEncoder().encode("<html>"), new Uint8Array([0xff, 0xd8])]) {
+			[run] = await opening(captured(body));
+			expect(await run.error("web_screenshot_page", SHOT)).toEqual({ code: "PAGE_ERROR", message: `Minerva's browser could not open this page. ${RAN}` });
+		}
+	});
+
+	test("Browser Run's refusals and the engine's wait end it as they end a read", async () => {
+		LIMITS.waitMs = 50;
+		const failures: [Answer, string, string][] = [
+			[refused(429, []), "BROWSER_BUSY", "Minerva's browser is busy. Try again in a minute."],
+			[refused(400, [{ message: "Bad request" }]), "PAGE_ERROR", "Minerva's browser could not open this page."],
+			[hangs, "SITE_TIMEOUT", "This site took too long to open."],
+		];
+		for (const [answer, failure, message] of failures) {
+			const [run] = await opening(answer);
+			expect(await run.error("web_screenshot_page", SHOT), message).toEqual({ code: failure, message: `${message} ${RAN}` });
+		}
+	});
+
+	test("its log line names the operation and has no page status", async () => {
+		const [run] = await opening(captured(jpeg(1000)));
+		const { lines } = await logged(() => run.ok("web_screenshot_page", SHOT));
+		expect(lines).toEqual([{ message: "web browser call", operation: "screenshot_page", outcome: "ok", status: null, code: null, browserMs: 412, ms: expect.any(Number) }]);
+	});
+
+	test("an image is kept only with its record, and only for an operation that returns images", () => {
+		const connector = webConnector();
+		const ref = { connection_id: WEB, provider: "web" };
+		const policy = new Policy([Layer.build("user", true, [{ connectionId: WEB, kind: SITE, resourceId: "example.com", actions: ["browse"], effect: "allow" }])]);
+		const image = { type: "image" as const, mimeType: "image/jpeg", data: "/9j/" };
+		const shot = (host: string) => ({ resource: inTenant(resource(WEB, SITE, host, ancestors(host)), host), data: { url: `https://${host}/` }, image });
+		const output = { records: [shot("example.com"), shot("example.org")] };
+		expect(visibleResult(connector, SCREENSHOT_PAGE, ref, policy, output)).toEqual({ result: { items: [{ url: "https://example.com/" }], count: 1 }, images: [image] });
+		expect(visibleResult(connector, SCREENSHOT_PAGE, ref, policy, output, console, ["example.org"])).toEqual({ result: { items: [], count: 0 }, images: [] });
+		expect(visibleResult(connector, READ_PAGE, ref, policy, output)).toEqual({ result: { items: [{ url: "https://example.com/" }], count: 1 }, images: [] });
+	});
+
+	test("with more gateway tools than fit, screenshot_page is among the direct ones", async () => {
+		const run = await start(new FakeBrowser(), [[SITE, "example.com", ["browse"]]]);
+		const listed = run.executor.declarations();
+		expect(listed.map((tool) => [tool.name, tool.images ?? false])).toEqual([
+			["web_read_page", false],
+			["web_screenshot_page", true],
+		]);
+		const local = Array.from({ length: MODEL_TOOLS_MAX - 2 }, (_, i) => `local_${i}`);
+		const tools = modelTools(listed, local, (tool) => tool.name, (all) => `run_script(${all.length})`, (tool) => tool.images === true);
+		expect(tools.slice(0, 2)).toEqual(["web_screenshot_page", "run_script(2)"]);
 	});
 });
 
@@ -480,6 +594,18 @@ describe("the run's cap", () => {
 		run = await start(browser, [[SITE, "example.com", ["browse"]]]);
 		await run.ok("web_read_page", { url: "https://example.com/" });
 		expect(browser.calls).toHaveLength(101);
+	});
+
+	test("screenshots count toward it", async () => {
+		const browser = new FakeBrowser();
+		browser.answer = (call) => (call.action === "screenshot" ? captured(jpeg(100)) : rendered("# Hello"))(call);
+		const run = await start(browser, [[SITE, "example.com", ["browse"]]]);
+		for (let i = 0; i < 50; i++) {
+			await run.ok("web_read_page", { url: `https://example.com/${i}` });
+			await run.ok("web_screenshot_page", { url: `https://example.com/${i}` });
+		}
+		for (const tool of ["web_read_page", "web_screenshot_page"]) expect(await run.code(tool, { url: "https://example.com/" }), tool).toBe("LIMIT_REACHED");
+		expect(browser.calls).toHaveLength(100);
 	});
 });
 
@@ -523,7 +649,7 @@ describe("grants", () => {
 		expect(run.tools).toEqual([]);
 		expect(await run.code("web_read_page", { url: "https://example.com/" })).toBe("UNKNOWN_OPERATION");
 		run = await start(browser, [[SITE, "example.com", ["read", "browse"]]]);
-		expect(run.tools).toEqual(["web_read_page"]);
+		expect(run.tools).toEqual(["web_read_page", "web_screenshot_page"]);
 		expect((await record(run, { url: "https://example.com/" })).text).toBe("# Hello");
 		expect(browser.calls).toHaveLength(1);
 	});

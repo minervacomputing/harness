@@ -22,7 +22,7 @@ import type { ProviderIo } from "../../gateway/http.ts";
 import type { Resource } from "../../gateway/policy.ts";
 import { MAX_URL, PATTERN_PREFIX, WebURL, ancestors, canonicalHost, choices, isPattern, name, parseUrl, registrable, validId } from "../../lib/sites.ts";
 import { sliceText } from "../../lib/text.ts";
-import { Browser, Moved, type Visit } from "./render.ts";
+import { Browser, Moved, VIEWPORT, type Visit } from "./render.ts";
 
 export const SITE = "site";
 const BROWSE = "browse";
@@ -101,6 +101,32 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 	},
 });
 
+const ScreenshotPage = z.strictObject({
+	url: z.string().trim().min(1).max(MAX_URL),
+});
+
+export const SCREENSHOT_PAGE = defineOperation<z.output<typeof ScreenshotPage>>({
+	name: "screenshot_page",
+	title: "Take a screenshot of a web page",
+	description: "Open a web page in Minerva's browser and look at an image of its first screen. Only https pages on sites you may open.",
+	input: ScreenshotPage,
+	needs: [[SITE, BROWSE]],
+	outputAction: BROWSE,
+	images: true,
+	async prepare(binding, data): Promise<Prepared> {
+		const target = targetOf(data.url);
+		return {
+			requirements: [{ need: site(binding, target), action: BROWSE }],
+			async execute(): Promise<ProviderOutput> {
+				const image = await clientOf(binding).screenshot(target);
+				return {
+					records: [{ resource: site(binding, target), data: { url: target.url.href, content_type: image.mimeType, ...VIEWPORT }, image }],
+				};
+			},
+		};
+	},
+});
+
 /** The Web connector. A fresh declaration; the registry freezes the one it is given. */
 export function webConnector(): Connector<Browser> {
 	return {
@@ -131,7 +157,7 @@ export function webConnector(): Connector<Browser> {
 				return found;
 			},
 		},
-		operations: [READ_PAGE],
+		operations: [READ_PAGE, SCREENSHOT_PAGE],
 
 		client(_secret: string, io: ProviderIo) {
 			return new Browser(io);

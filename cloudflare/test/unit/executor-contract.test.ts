@@ -80,7 +80,7 @@ describe("records", () => {
 				{ resource: resource("c1", LABEL, "red"), data: { id: "red" } },
 			],
 		};
-		const result = visibleResult(connector, op, ref, unrestricted, output, { error() {}, warn() {} });
+		const { result } = visibleResult(connector, op, ref, unrestricted, output, { error() {}, warn() {} });
 		expect(result.items.map((item) => item.id)).toEqual(["inbox"]);
 	});
 
@@ -95,8 +95,8 @@ describe("records", () => {
 			[nothingGranted, { records }, { items: [], count: 0 }],
 		];
 		for (const [policy, output, expected] of cases) {
-			const result = visibleResult(connector, op, ref, policy, output);
-			expect(result).toEqual(expected);
+			const { result, images } = visibleResult(connector, op, ref, policy, output);
+			expect([result, images]).toEqual([expected, []]);
 			expect(matchesResultSchema(result)).toBe(true);
 		}
 		// Paginated operations add the run-bound cursor afterwards, even to an empty page.

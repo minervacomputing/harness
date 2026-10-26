@@ -57,7 +57,7 @@ export interface ToolHost {
 
 /** What the model sees of an outcome. */
 export function render(outcome: ToolCallOutcome): ToolExecutionResult {
-	if (outcome.ok) return { output: [{ type: "text", text: JSON.stringify(outcome.result) }], isError: false };
+	if (outcome.ok) return { output: [{ type: "text", text: JSON.stringify(outcome.result) }, ...outcome.images], isError: false };
 	return { output: [{ type: "text", text: outcome.error.message }], isError: true };
 }
 

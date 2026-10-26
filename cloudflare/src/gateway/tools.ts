@@ -144,16 +144,18 @@ export function toolLabel(registry: Registry, ref: ToolRef | null | undefined, n
  * The model's tools in order: the gateway tools that fit beside the local tools and
  * `run_script`, then `run_script` when the run has any gateway tool, then the local tools. When the
  * gateway tools do not fit, the first `room - 1` are offered directly and every one stays callable from
- * scripts.
+ * scripts. Those whose results carry images come first, since a script's call gets no image.
  */
 export function modelTools<Listed, Tool>(
 	listed: readonly Listed[],
 	local: readonly Tool[],
 	gatewayTool: (tool: Listed) => Tool,
 	scriptRunner: (all: readonly Listed[]) => Tool,
+	images: (tool: Listed) => boolean,
 ): Tool[] {
 	const room = MODEL_TOOLS_MAX - local.length;
-	const direct = listed.length < room ? listed : listed.slice(0, room - 1);
+	const ordered = [...listed.filter(images), ...listed.filter((tool) => !images(tool))];
+	const direct = ordered.length < room ? ordered : ordered.slice(0, room - 1);
 	const tools = direct.map(gatewayTool);
 	if (listed.length) tools.push(scriptRunner(listed));
 	tools.push(...local);

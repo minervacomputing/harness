@@ -392,8 +392,8 @@ test("kind and action ids are only names, even __proto__", async () => {
 	expect(Object.keys(meaning(proto, proto.operations[0]!).kinds as object)).toEqual(["__proto__"]);
 });
 
-test("an operation's defaults: reads, no consent, revision 1, not mutating, not paginated", () => {
-	expect(termsOf(mixedConnector().operations[0]!)).toEqual({ outputAction: "read", consent: null, revision: 1, mutates: false, paginated: false });
+test("an operation's defaults: reads, no consent, revision 1, not mutating, not paginated, no images", () => {
+	expect(termsOf(mixedConnector().operations[0]!)).toEqual({ outputAction: "read", consent: null, revision: 1, mutates: false, paginated: false, images: false });
 	expect(termsOf(mixedConnector().operations[1]!).mutates).toBe(true);
 	expect(termsOf(mixedConnector().operations[2]!).consent).toEqual([["labels"]]);
 });

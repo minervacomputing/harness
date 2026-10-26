@@ -15,6 +15,7 @@
 // outcome, under the host's `waitUntil` (ARCHITECTURE.md: Writes), bounded by its request's timeout and the
 // backstop.
 
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { z } from "zod";
 import type { Json } from "../lib/json.ts";
 import type { AttemptFence, ConnectionId, EpochMs, RunId, UserId } from "../shared/rpc.ts";
@@ -68,6 +69,8 @@ export interface ToolDeclaration {
 	inputSchema: { [key: string]: Json };
 	outputSchema: { [key: string]: Json };
 	annotations: { readOnlyHint: boolean };
+	/** Its result can carry images (`Operation.images`). */
+	images?: true;
 }
 
 export interface ToolCallRequest {
@@ -89,13 +92,15 @@ export interface ToolCallRequest {
 }
 
 /**
- * The outcome of `invoke`. The model sees the result's JSON as text plus the structured result, or the
- * error's message with `isError`.
+ * The outcome of `invoke`. The model sees the result's JSON as text plus the structured result, then its
+ * images, or the error's message with `isError`.
  */
 export type ToolCallOutcome =
 	| {
 			ok: true;
 			result: ToolResult;
+			/** Shown to the model after the result; a script gets the result alone. */
+			images: ImageContent[];
 			title: string;
 			/** The same write was asked for earlier in this run and is answered from its record. */
 			repeat: boolean;
@@ -273,11 +278,12 @@ export function visibleResult(
 	output: ProviderOutput,
 	log: ExecutorLog = console,
 	tenants: readonly string[] | null = null,
-): ToolResult {
+): { result: ToolResult; images: ImageContent[] } {
 	const terms = termsOf(op);
 	const kinds = new Set(op.needs.map(([kind]) => kind));
 	const requires = requiresOf(connector);
 	const items: ToolResult["items"] = [];
+	const images: ImageContent[] = [];
 	for (const record of output.records) {
 		const resource = record?.resource;
 		if (
@@ -290,11 +296,13 @@ export function visibleResult(
 			log.error(`Connector ${ref.provider}.${op.name} returned a record with ${describe(resource)}`);
 			continue;
 		}
-		if (inTenants(tenants, resource) && policy.permits(resource, terms.outputAction, requires)) items.push(record.data);
+		if (!inTenants(tenants, resource) || !policy.permits(resource, terms.outputAction, requires)) continue;
+		items.push(record.data);
+		if (terms.images && record.image !== undefined) images.push(record.image);
 	}
 	const result: ToolResult = { items, count: items.length };
 	if (output.incomplete) result.incomplete = true;
-	return result;
+	return { result, images };
 }
 
 /** The snapshot's tenants by connection; throws on a malformed map, so a run whose limits cannot be read never calls a tool. */
@@ -374,6 +382,7 @@ class Slots {
 
 interface Done {
 	result: ToolResult;
+	images: ImageContent[];
 	title: string;
 	repeat: boolean;
 	writeKey: string | null;
@@ -425,13 +434,15 @@ export class ToolExecutor implements Executor {
 		for (const ref of this.#tools) {
 			const op = this.#registry.resolve(ref.provider, ref.operation, ref.contract);
 			if (op === null) continue;
+			const terms = termsOf(op);
 			out.push({
 				name: ref.name,
 				title: op.title,
 				description: op.description,
 				inputSchema: inputSchema(op),
 				outputSchema: RESULT_SCHEMA,
-				annotations: { readOnlyHint: !termsOf(op).mutates },
+				annotations: { readOnlyHint: !terms.mutates },
+				...(terms.images ? { images: true } : {}),
 			});
 		}
 		return out;
@@ -473,7 +484,7 @@ export class ToolExecutor implements Executor {
 		if (!this.#run.isActive(this.#runId)) return { ok: false, error: { code: "RUN_ENDED", message: RUN_ENDED_MESSAGE }, event: null };
 		// Recorded for a call a replaced attempt started too: what it did is still part of the run.
 		const event = allowedEvent(shown, done.title, done.result.count, write, done.repeat);
-		return { ok: true, result: done.result, title: done.title, repeat: done.repeat, writeKey: done.writeKey, event };
+		return { ok: true, result: done.result, images: done.images, title: done.title, repeat: done.repeat, writeKey: done.writeKey, event };
 	}
 
 	#refused(shown: ShownCall, request: ToolCallRequest, error: unknown): ToolCallOutcome {
@@ -548,12 +559,12 @@ export class ToolExecutor implements Executor {
 				const answer = knownAnswer(known);
 				if (answer.kind === "refused") throw new OperationError(answer.code, answer.message);
 				// The hash stored with the write, so a repeat matches it even if MINERVA_SECRET_KEY was rotated since.
-				return { result: answer.result, title: op.title, repeat: true, writeKey: key, write: known.write ?? write };
+				return { result: answer.result, images: [], title: op.title, repeat: true, writeKey: key, write: known.write ?? write };
 			}
 		}
 		const writing = key === null || write === null ? null : { key, note: { tool: request.name, connection: ref.connection_id, write } };
-		const [result, repeat] = await this.#perform(request, ref, op, terms, data, hash, writing);
-		return { result, title: op.title, repeat, writeKey: key, write };
+		const [result, repeat, images] = await this.#perform(request, ref, op, terms, data, hash, writing);
+		return { result, images, title: op.title, repeat, writeKey: key, write };
 	}
 
 	/** A lease for the call's attempt, checked before it is asked for and after it is given (ARCHITECTURE.md: Attempts and recovery, Fencing). */
@@ -574,7 +585,7 @@ export class ToolExecutor implements Executor {
 		data: { [key: string]: unknown },
 		hash: string,
 		writing: { key: string; note: WriteNote } | null,
-	): Promise<[ToolResult, boolean]> {
+	): Promise<[result: ToolResult, repeat: boolean, images: ImageContent[]]> {
 		const connector = this.#registry.get(ref.provider);
 		const lease = await this.#lease(request, ref.connection_id);
 		const io = new CallIo({
@@ -592,6 +603,7 @@ export class ToolExecutor implements Executor {
 		request.signal?.addEventListener("abort", cancel, { once: true });
 		let output: ProviderOutput | null = null;
 		let result: ToolResult;
+		let images: ImageContent[] = [];
 		let repeat = false;
 		try {
 			// Before prepare, so nothing is sent to the provider.
@@ -604,7 +616,7 @@ export class ToolExecutor implements Executor {
 			this.#ensureCurrent(request);
 			if (writing === null) {
 				output = await unlessAborted(prepared.execute(), request.signal);
-				result = this.#result(connector, op, terms, ref, output);
+				({ result, images } = this.#result(connector, op, terms, ref, output));
 			} else {
 				[result, repeat] = await this.#write(request, connector, op, terms, ref, writing.key, writing.note, prepared, io);
 			}
@@ -624,7 +636,7 @@ export class ToolExecutor implements Executor {
 			if (token === null) throw new OperationError("LIMIT_REACHED", LIMIT_REACHED_MESSAGE);
 			result = { ...result, next_cursor: token };
 		}
-		return [result, repeat];
+		return [result, repeat, images];
 	}
 
 	/** A token the provider rejected marks the connection Needs reconnecting, unless it got new credentials meanwhile. */
@@ -691,7 +703,7 @@ export class ToolExecutor implements Executor {
 		if (outside) throw tenantRefused(connector);
 	}
 
-	#result(connector: Connector, op: Operation<never>, _terms: OperationTerms, ref: ToolRef, output: ProviderOutput): ToolResult {
+	#result(connector: Connector, op: Operation<never>, _terms: OperationTerms, ref: ToolRef, output: ProviderOutput): { result: ToolResult; images: ImageContent[] } {
 		return visibleResult(connector, op, ref, this.#policy, output, this.#log, this.#tenants.get(ref.connection_id) ?? null);
 	}
 
@@ -742,7 +754,7 @@ export class ToolExecutor implements Executor {
 			try {
 				const output = await this.#backstop(prepared.execute(), deadline + BACKSTOP_MS, io);
 				if (attempt.outcome() === "unknown") throw new OperationError("PROVIDER_UNAVAILABLE", "The write did not report its outcome.");
-				result = this.#result(connector, op, terms, ref, output);
+				result = this.#result(connector, op, terms, ref, output).result;
 			} catch (error) {
 				const effect = attempt.outcome();
 				if (effect === "not_applied") {

@@ -198,12 +198,13 @@ describe("instructions", () => {
 
 describe("the model's tools", () => {
 	const local = ["read", "write", "edit", "bash"];
-	const assemble = (count: number) =>
+	const assemble = (count: number, listed = Array.from({ length: count }, (_, i) => `t${i}`)) =>
 		modelTools(
-			Array.from({ length: count }, (_, i) => `t${i}`),
+			listed,
 			local,
 			(tool) => tool,
 			(all) => `run_script(${all.length})`,
+			(tool) => tool.startsWith("image"),
 		);
 
 	test("direct gateway tools, run_script, then the local tools", () => {
@@ -223,6 +224,15 @@ describe("the model's tools", () => {
 			expect(tools.slice(0, room - 1)).toEqual(Array.from({ length: room - 1 }, (_, i) => `t${i}`));
 			expect(tools[room - 1]).toBe(`run_script(${count})`);
 		}
+	});
+
+	test("those whose results carry images come first, so they are offered directly when not all fit", () => {
+		expect(assemble(0, ["t0", "image_a", "t1", "image_b"])).toEqual(["image_a", "image_b", "t0", "t1", "run_script(4)", ...local]);
+		const room = MODEL_TOOLS_MAX - local.length;
+		const listed = [...Array.from({ length: room }, (_, i) => `t${i}`), "image_a"];
+		const tools = assemble(0, listed);
+		expect(tools.slice(0, 2)).toEqual(["image_a", "t0"]);
+		expect(tools[room - 1]).toBe(`run_script(${room + 1})`);
 	});
 });
 

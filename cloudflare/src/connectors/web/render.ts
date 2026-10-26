@@ -12,29 +12,36 @@
 //   own script or form is not in `finalUrl`, so that page comes back as the host's (ARCHITECTURE.md: Connectors).
 // - The engine waits 15 s per call, its answer read. `quickAction` takes no signal, so a cancel or the wait only
 //   stops the engine waiting: the render goes on at Cloudflare until it ends, and its result is dropped.
+// - A screenshot comes back without `meta`, so a page that moved is pictured under the address asked for
+//   (ARCHITECTURE.md: Connectors).
 // - Every failure after a call was sent says that the page's scripts may have run, since nothing tells how far the
 //   browser got.
 // - Each call logs one line: the operation, an outcome from a fixed set, the page's status, Browser Run's error code,
 //   its browser time and the duration. Never the address or Browser Run's message, which can quote it and any token
 //   in it.
 
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { z } from "zod";
 import { type ErrorCode, OperationError, type ProviderClient } from "../../gateway/connector.ts";
 import { type BrowserIo, NotSent, ProgrammingError, type ProviderIo } from "../../gateway/http.ts";
 import { readBytes } from "../../http/body.ts";
-import { utf8 } from "../../lib/bytes.ts";
+import { base64, utf8 } from "../../lib/bytes.ts";
 import { type Json, parseJsonBytes } from "../../lib/json.ts";
 import { type WebURL, parseUrl } from "../../lib/sites.ts";
+import { IMAGE_MAX_BYTES } from "../../model/provider.ts";
 
 const USER_AGENT = "Minerva/0.1 (governed AI agent; reads a page when a user's agent asks)";
 const MAX_RESPONSE = 8 * 1024 * 1024;
 const MAX_TEXT_BYTES = 3 * 1024 * 1024;
+const MAX_SCREENSHOT = (IMAGE_MAX_BYTES / 4) * 3;
+export const VIEWPORT = { width: 1280, height: 800 };
 export const LIMITS = { waitMs: 15_000 };
 
 const RAN = "Its scripts may have run.";
 const HTML_TYPES: ReadonlySet<string> = new Set(["text/html", "application/xhtml+xml"]);
 const TEXT_TYPES: ReadonlySet<string> = new Set(["text/plain", "text/markdown", "text/x-markdown", "text/csv", "application/json", "application/xml", "text/xml"]);
 const NOT_CONVERTED = 2012;
+const JPEG = [0xff, 0xd8, 0xff];
 /** The YAML front matter Browser Run's Markdown starts with when the page has a title. */
 const FRONT_MATTER = /^---\n(?:[^\n]*\n)*?---(?:\n+|$)/;
 
@@ -103,6 +110,10 @@ function browserOptions(url: WebURL): BrowserRunBaseOptions & BrowserRunAlternat
 
 function markdownOptions(visit: Visit): BrowserRunMarkdownOptions {
 	return { url: visit.withFragment, ...browserOptions(visit.url), rejectResourceTypes: ["image", "media", "font"] };
+}
+
+function screenshotOptions(visit: Visit): BrowserRunScreenshotOptions {
+	return { url: visit.withFragment, ...browserOptions(visit.url), viewport: VIEWPORT, screenshotOptions: { type: "jpeg", quality: 80 } };
 }
 
 const Meta = z.object({
@@ -215,7 +226,7 @@ export class Browser implements ProviderClient {
 
 	async read(visit: Visit): Promise<Page | Moved> {
 		const log = new CallLog("read_page");
-		const page = await this.#send(log, (browser) => browser.quickAction("markdown", markdownOptions(visit)), (body) => {
+		const page = await this.#send(log, (browser) => browser.quickAction("markdown", markdownOptions(visit)), MAX_RESPONSE, (body) => {
 			const parsed = Markdown.safeParse(parseJsonBytes(body));
 			if (!parsed.success) throw failed();
 			return pageOf(visit, log, parsed.data);
@@ -224,14 +235,24 @@ export class Browser implements ProviderClient {
 		return page;
 	}
 
-	async #send<T>(log: CallLog, send: (browser: BrowserIo) => Promise<Response>, take: (body: Uint8Array) => T): Promise<T> {
+	async screenshot(visit: Visit): Promise<ImageContent> {
+		const log = new CallLog("screenshot_page");
+		const image = await this.#send(log, (browser) => browser.quickAction("screenshot", screenshotOptions(visit)), MAX_SCREENSHOT, (body): ImageContent => {
+			if (!JPEG.every((byte, at) => body[at] === byte)) throw failed();
+			return { type: "image", mimeType: "image/jpeg", data: base64(body) };
+		});
+		log.write("ok");
+		return image;
+	}
+
+	async #send<T>(log: CallLog, send: (browser: BrowserIo) => Promise<Response>, limit: number, take: (body: Uint8Array) => T): Promise<T> {
 		const browser = this.#io.browser;
 		if (browser === null) throw new OperationError("BROWSER_UNAVAILABLE", "Minerva's browser is not available in this build.");
 		const answered = (async () => {
 			const response = await send(browser);
 			const used = Number(response.headers.get("x-browser-ms-used") ?? Number.NaN);
 			log.browserMs = Number.isFinite(used) ? used : null;
-			const body = await readBytes(response, MAX_RESPONSE);
+			const body = await readBytes(response, limit);
 			if (body === null) throw tooLarge();
 			if (response.status !== 200) throw refusal(log, response.status, body);
 			return take(body);
