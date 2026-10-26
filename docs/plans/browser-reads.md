@@ -1,135 +1,205 @@
-# Browser reads design: every page opens in Cloudflare's browser
+# Browser reads design: every page opens in Kitesurf
 
-Status: proposed, 2026-10-26, with every owner question answered. Not built, and nothing deployed. Line numbers are at `5d85043` (harness) and at `a6bed42` of `minervacomputing/app` ("the app's" below). Browser Run's behaviour comes from Cloudflare's docs, read 2026-10-25 and 2026-10-26 (each cited with the date its page was last updated), and from the runtime types the build generates (`cloudflare/.cloudflare/types/index.d.ts`, "the types" below). A claim about code with no label was read at the lines cited. One marked (measured) was run on 2026-10-26, one marked (inferred) follows from code or docs that were read, and one marked (guess) rests on platform behaviour no document states. Once built, what stays true moves into ARCHITECTURE.md, docs/connectors.md, docs/data-processing.md and cloudflare/README.md, and this file is deleted.
+Status: proposed 2026-10-26, with the owner's requirements of that day. Not built, and nothing deployed. Line numbers are at `dfc7d0f` (harness, whose engine is unchanged since `5d85043`) and at `a6bed42` of `minervacomputing/app` ("the app's" below). Browser Run's behaviour comes from Cloudflare's docs, read 2026-10-25 and 2026-10-26 (each cited with the date its page was last updated), from the runtime types the build generates (`cloudflare/.cloudflare/types/index.d.ts`, "the types" below) and from probes. A claim about code with no label was read at the lines cited. One marked (documented) is in Cloudflare's docs or the types, one marked (measured) was run, one marked (inferred) follows from code or docs that were read, and one marked (guess) rests on behaviour nothing states. Once built, what stays true moves into ARCHITECTURE.md, docs/connectors.md, docs/data-processing.md and cloudflare/README.md, and this file is deleted.
 
-This design replaces an earlier one that kept Minerva's own fetcher and rendered only pages that came back empty, with Kitesurf and then Chromium. The owner chose on 2026-10-26 to move every page read to Browser Run, Kitesurf only, and to delete the fetcher. Findings of that design's reviews that still apply are folded in.
-
-Review: opencode reviewed this design adversarially on 2026-10-26. The findings that held and can happen in real use are folded in (Amendments after the review).
+An earlier version of this design read pages with scripts off and added a second permission to run them. Kitesurf cannot turn scripts off (Evidence so far), and the owner chose on 2026-10-26 to let every page's scripts run under one permission.
 
 ## Why
 
 - **Some pages arrive empty.** `read_page` fetches a page once and reduces its HTML to text (`cloudflare/src/connectors/web/connector.ts:149-155`). A site that builds its content with scripts sends a shell, and the reducer drops scripts and `<noscript>` (`cloudflare/src/lib/markdown.ts:11-15`), so the model gets a title and almost no text (inferred).
-- **The fetcher is code Minerva keeps.** Redirects, decompression, charsets, size and time limits and the platform's refusal are 559 lines in `fetch.ts`, `inflate.ts` and `pako.d.ts`, with the `pako` dependency and their tests. Browser Run does all of it, and returns Markdown.
-- **Cloudflare can open the page in one call.** Browser Run's Quick Actions load a page in a browser and return the result, with no session kept between calls (developers.cloudflare.com/browser-run/quick-actions, Oct 10 2026). Its engine Kitesurf is "an ephemeral, fully-isolated, stateless engine designed to exist only for the duration of a task", and is free during its beta (/browser-run/kitesurf, Oct 6 2026).
-- **Cloudflare's Markdown for Agents does not fix empty pages.** It converts the HTML a site's server sends, with scripts stripped, and only on sites whose owner turned it on (/fundamentals/reference/markdown-for-agents, Oct 9 2026). Minerva's Accept header lists `text/markdown` beside `text/html` (`cloudflare/src/connectors/web/fetch.ts:35`), and with it Cloudflare's blog and docs answered HTML; only an Accept that prefers `text/markdown` got Markdown (measured).
+- **The model cannot see a page.** Nothing returns a picture of a page, so a layout, a chart or a page whose text is in images is lost.
+- **The fetcher is code Minerva keeps.** Redirects, decompression, charsets, size and time limits and the platform's refusal are 559 lines in `fetch.ts`, `inflate.ts` and `pako.d.ts`, with the `pako` dependency and their tests. Browser Run loads the page and returns Markdown.
+- **Cloudflare opens a page in one call.** Browser Run's Quick Actions load a page in a browser and return the result, with no session kept between calls (developers.cloudflare.com/browser-run/quick-actions, Oct 10 2026, documented). Its engine Kitesurf is "an ephemeral, fully-isolated, stateless engine designed to exist only for the duration of a task", free during its beta (/browser-run/kitesurf, Oct 6 2026, documented).
 
 ## The owner's requirements
 
 The owner's requirements, 2026-10-26:
 
-1. Every page the agent opens goes through Browser Run. Minerva's own fetcher is deleted.
-2. Kitesurf only. Chromium is not used.
-3. Reading stays read-only: the page's scripts do not run, so nothing but GET requests to the granted host is sent, and as little as possible beside the page itself loads.
-4. A separate permission, **Open in browser**, runs the page's scripts and returns Markdown or a screenshot.
-5. Only https pages are opened.
-6. No browser session stays open between calls, and per-site grants keep working as today.
+1. Every page the agent opens goes through Kitesurf. Minerva's fetcher is deleted, with no plain fetch and no fallback for thin pages. Chromium is not used.
+2. Only Browser Run's `markdown` and `screenshot` Quick Actions. No browser sessions, no clicking or typing, no automation framework.
+3. The page's scripts run. No mode without scripts, no interception that allows only GET, no classifier of safe requests. A page may send any method within the permitted network boundary.
+4. Opening pages in the browser is an explicit permission, allowed for chosen sites or for all sites in Minerva's existing permission system. Without it the page is refused, never read another way.
+5. The permission is to visit and render a page, not a promise that the visit changes nothing. Docs say what scripts, sign-in links, redirects, retries and repeated renders can do on the site. Nothing calls it read-only.
+6. Authorization before any browser call, deny precedence, https only, isolation between calls and the same-host boundary all stay. A page referring to another host does not open that host.
+7. Screenshots reach the model as images, within the existing limits on image size and storage.
+8. Curated site lists ("General reference", "Developer resources") are later work, and when built they only fill in grants.
+9. An organization's admin can allow browser access on chosen sites only, such as Wikipedia, and members cannot go beyond it.
 
 ## What this design changes
 
-- **`read_page` opens the page in Kitesurf with scripts off** and returns Browser Run's Markdown. Its input and record keep today's fields.
-- **`browse_page` opens it with scripts on** and returns Markdown. **`screenshot_page`** does the same and returns an image the model sees.
-- **The Web site kind gains the action `browse`** ("Open in browser"), which requires `read` on the same site. Both new operations need it. A site granted only `read` today is not browsable until someone grants `browse`. A layer that is unrestricted allows every action (`cloudflare/src/gateway/policy.ts:140-142`), so where every layer of a run is unrestricted, `browse` is allowed from the engine's deploy on, before Laravel approves the new entry (owner question 10).
-- **The browser reaches only the granted host.** Every request it makes must match the page's own origin on https. A move to another host gives today's `redirect_to` record.
-- **http addresses open as https** on the same host (owner question 2). A site without https fails with a message.
-- **At most 100 browser calls per run** across the three operations (owner question 3).
+- **`read_page` opens the page in Kitesurf with its scripts running** and returns Browser Run's Markdown. Its input and record keep today's fields.
+- **`screenshot_page`**, a new operation, opens the page the same way and returns a short record and one JPEG the model sees.
+- **The Web site kind's one action becomes `browse`**, labelled "Open in browser", replacing `read` ("Read pages"). Both operations need it.
+- **Web gets a tenant per site, its registrable domain**, so an organization's connection policy can offer Web on a list of domains (Allowed apps, the app's `docs/architecture/connection-policies.md`), which members' grants cannot pass.
+- **Web search is removed.** No deployed build has its key, and its need on the account has no tenant (The organization's site list).
+- **The browser loads only the page's host**, over https. What a page loads from another host is blocked, but a redirect or the page itself can move the browser to another host, so information can reach the allowed sites and wherever they redirect (owner question 14). A page that ends on another host gives today's `redirect_to` record, its content withheld.
+- **http addresses open as https** on the same host.
+- **At most 100 browser calls per run.**
 - **Screenshots travel as images in the tool result**, a new path from a connector to the model.
-- **No setting.** Every build with the `BROWSER` binding reads through it. The dev server offline and the test build have no binding, and their `read_page` reached no page before either.
-- **No change to the contract or to Laravel's code.** The catalog's version changes (a new action, two operations and a new site note), so the operator approves Web once on staging and once on production.
+- **No setting.** Every build with the `BROWSER` binding reads through it. The dev server offline and the test build have none, and their `read_page` reached no page before either.
+- **No contract change.** The catalog's version changes, so the operator approves Web once on staging and once on production. Laravel gains how a typed domain is written for Web's list (Unit 4).
 
-**What this does not promise.** Pages behind bot protection or a login stay unreadable, since Browser Run "does not bypass CAPTCHAs, Turnstile challenges, or any other bot protection mechanisms" (crawl endpoint docs, in llms-full.txt), and Kitesurf cannot "negotiate a bot-challenge handshake with real TLS fingerprints" or play video or WebGL (/browser-run/kitesurf). A page whose scripts or data come from another host stays thin, since the browser may not reach that host. Kitesurf trades away "pixel-perfect rendering" (/browser-run/kitesurf), so a screenshot may differ from Chrome's.
+**What this does not promise.** Pages behind bot protection or a login stay unreadable, since Browser Run "does not bypass CAPTCHAs, Turnstile challenges, or any other bot protection mechanisms" (crawl endpoint docs, in llms-full.txt, documented). Kitesurf cannot "negotiate a bot-challenge handshake with real TLS fingerprints" or play video or WebGL, and trades away "pixel-perfect rendering" (/browser-run/kitesurf, documented). A page whose scripts, styles or data come from another host stays thin or looks broken (Only the page's host, only https).
+
+## What a visit can do
+
+This is what the permission grants, and what docs/connectors.md, the public Web page and the site note say in their own words:
+
+- **The page's scripts run.** They can send any request, POST included, to the page's own host, with the cookies the site set during that visit. A page that confirms, approves, unsubscribes or submits a form when it loads does so.
+- **A sign-in link signs the browser in** for that visit, whether the server or a script handles it, and the model reads that account's pages (measured, Evidence so far).
+- **Redirects are followed, to any host.** A redirect, a script or a form can move the browser to another host, which then receives the address or the form's fields (measured). When `finalUrl` names another host, the engine withholds that page and returns `redirect_to`. A move made by the page's own script or form does not show in `finalUrl`, so that page comes back as the allowed host's (measured).
+- **A visit can happen more than once.** Each continuation with `offset` and each screenshot opens the page again, the engine replays a read up to twice after a restart (`REPLAYS_ALLOWED`, `cloudflare/src/conversation/tools.ts:38`), and the model may call again. Whether Browser Run retries a navigation itself is not documented.
+- **The site sees Cloudflare, not the user.** Requests come from Cloudflare's addresses, carry Web Bot Auth signatures and are "always ... identified as a bot" (/browser-run/quick-actions/markdown-endpoint, Sep 26 2026, documented), with Minerva's user agent on the page and a desktop Chrome user agent on some frame requests (measured).
+- **The address carries whatever the agent puts in it** to the site, as today.
 
 ## What the code does today
 
 | Claim | What the code does |
 |---|---|
-| `read_page` fetches only after authorization | `prepare` parses the address and asks for read on the site (`connector.ts:143-147`); `execute` calls `fetcher.get` (`:149`). |
+| `read_page` fetches only after authorization | `prepare` parses the address and asks for `read` on the site (`connector.ts:143-147`); `execute` calls `fetcher.get` (`:149`). |
 | A move to another host goes back to the model | The fetcher follows a redirect only on the same host and never from https to http, and returns `Moved` otherwise (`fetch.ts:385-399`); the record carries `redirect_to` and `MOVED_NOTE` (`connector.ts:134`, `:150-152`). |
 | The record | `url`, `title`, `content_type`, `text`, `offset`, `total_chars`, `next_offset`, on the resource of the host the fetch ended at (`connector.ts:153-174`). |
 | Its errors | `SITE_UNREACHABLE`, `PAGE_TOO_LARGE`, `SITE_NOT_PUBLIC`, `UNSUPPORTED_CONTENT`, `PAGE_ERROR` and `SITE_TIMEOUT` (`fetch.ts:93-101`, `:145`, `:360-408`). |
 | What it reads | HTML, and JSON, XML, plain text, Markdown and CSV as they are (`fetch.ts:62-63`, `:137-145`), up to 3 MB in 25 s (`:48-51`). |
-| Private addresses | `lib/sites.ts` refuses IP literals and special-use names before anything is sent (`cloudflare/src/lib/sites.ts:8-11`). The platform refuses a Worker's request to a private address, and `platformRefusal` recognises it (`cloudflare/src/gateway/http.ts:405-412`). That refusal is measured, not documented (ARCHITECTURE.md, Spike results). |
+| Private addresses | `lib/sites.ts` refuses IP literals and special-use names before anything is sent (`cloudflare/src/lib/sites.ts:8-11`). The platform refuses a Worker's request to a private address, and `platformRefusal` recognises it (`cloudflare/src/gateway/http.ts:405-412`), measured rather than documented (ARCHITECTURE.md, Spike results). |
 | Who uses the fetcher | Only the Web connector. `platformRefusal` has no other caller; its test is in `test/unit/http-client.test.ts:341-343`. `pako` is imported only by `inflate.ts`. |
-| Who uses the converter | `htmlToText` (`lib/markdown.ts`) also reduces Gmail's HTML parts and Google Calendar's descriptions (`src/connectors/gmail/mime.ts`, `src/connectors/google_calendar/connector.ts`), so it stays. `lib/charset.ts` stays for Gmail. |
-| The site kind and its actions | One action, `read` ("Read pages"), and a note the granting person sees (`connector.ts:198-212`). An action may name the action it `requires` on the same resource (`cloudflare/src/gateway/connector.ts:20-21`). |
-| Laravel's grant editor | Built from the approved catalog's kinds, actions and `requires` (the app's `resources/js/components/connections/access.ts`; `docs/architecture/connectors.md:19`), so a new action needs no Laravel code. |
-| The catalog's version | Hashes each connector's entry: its kinds with their actions and notes, its actions with their `requires`, and each operation's name, title, needs, consent, `mutates` and `offered` (`cloudflare/src/internal/catalog.ts:40-86`), not descriptions or revisions. |
-| A connector's result | JSON records only (`ProviderOutput`, `gateway/connector.ts:45-56`). The executor drops a record on a host the policy denies (`visibleResult`, `cloudflare/src/gateway/executor.ts:267-294`). The model reads the `ToolResult`'s JSON as one text part (`render`, `cloudflare/src/conversation/tools.ts:59-62`), and `ToolResult`'s schema is closed (`cloudflare/src/gateway/results.ts:18-33`). |
-| Images to the model | Only through `read`, from a file in the folder, at most 2000 pixels a side and `IMAGE_MAX_BYTES` (1.5 MB of base64), since pi keeps a tool's result in one SQLite row (`cloudflare/src/model/provider.ts:146-152`; ARCHITECTURE.md, The harness). pi-ai's tool result content may hold images, and a model that takes text only gets a placeholder (`cloudflare/src/model/policy.ts:44-62`). |
-| The deployed model | Staging and production run OpenAI's `gpt-6.1-sol` (their `vars.env`), which the engine treats as taking images (`cloudflare/src/model/route.ts:85`). |
+| Who uses the converter | `htmlToText` (`lib/markdown.ts`) also reduces Gmail's HTML parts and Google Calendar's descriptions, so it stays. `lib/charset.ts` stays for Gmail. |
+| The Web connector | Kinds `account` (action `search`) and `site` (action `read`, wildcard, hierarchical); tenancy `unknown`; `search` offered only with a Brave key (`connector.ts:194-225`). |
+| Policy | ceiling ∩ user ∩ agent, a deny in any layer wins, and an unrestricted layer passes every action its denies do not block (`cloudflare/src/gateway/policy.ts:24-29`, `:140-142`, `:181-184`). A user layer that is missing allows nothing; only the operator makes one unrestricted (the app's `docs/architecture/grants.md`, 11a). |
+| A grant naming an unknown action | Compiles into the policy as a key no operation needs (`grants.ts` `enforceable` checks only the kind). A grant edit naming one is refused (`checkChanges`, `cloudflare/src/gateway/grants.ts:118-121`). |
+| Connection policies | Per connector, offered or not, and for a tenancy of `account` or `resource` a list of tenants or any (`cloudflare/src/gateway/tenancy.ts:20-39`). Under a list, every resource a call touches must name a listed tenant (`inTenants`, `:42-44`; `executor.ts:651`, `:671`), records of other tenants are dropped (`executor.ts:292`), and a grant edit allowing a resource of another tenant is refused with `TENANT_NOT_ALLOWED`, `*` excepted (`cloudflare/src/internal/connections.ts:175-205`). A connector with a tenant per resource whose resource names none is a connector bug (`shapeProblem`, `executor.ts:253`). Laravel's Allowed apps gives a list only to a tenancy of `account` or `resource`, and Web has none today (the app's `connection-policies.md`, 16). |
+| A connector's result | JSON records only (`ProviderOutput`, `gateway/connector.ts:45-56`). The executor drops a record on a host the policy denies (`visibleResult`, `executor.ts:267-294`). The model reads the `ToolResult`'s JSON as one text part (`render`, `conversation/tools.ts:59-62`), and `ToolResult`'s schema is closed (`gateway/results.ts:18-33`). |
+| Images to the model | Only through `read`, from a file in the folder, at most 2000 pixels a side and `IMAGE_MAX_BYTES` (1.5 MB of base64), since pi keeps a tool's result in one SQLite row and a row holds at most 2 MB (`cloudflare/src/model/provider.ts:146-152`). A model that takes text only gets pi-ai's placeholder (`cloudflare/src/model/policy.ts:44-62`). |
 | What Laravel gets of a call | The `tool_call` event: tool, label, arguments and decision, never the result (`contract/src/shapes.ts:77-103`). |
-| Laravel's chat and images | Markdown images are never loaded; they show "[image not loaded]" (the app's `resources/js/components/chat/thread.tsx:494-499`). |
 | The io | The connector's only network is the call's io (`connector.ts:221-225`). `CallIo.#send` checks `admits()` synchronously before each request (`http.ts:276-283`). A cancel stops the wait (`executor.ts:584-602`). |
-| Ports | The executor's context is built per run (`cloudflare/src/conversation/conversation.ts:1347-1369`) from the ports (`cloudflare/src/conversation/ports.ts:128-134`). The Images binding is left out offline (`cloudflare/cloudflare.config.ts:169-171`). The test build's ports reach only `*.fake.invalid` (`cloudflare/src/faults/ports.ts:64-66`, `:209`). |
-| The fingerprint | Covers `revision`, not the description (`cloudflare/src/gateway/registry.ts:256-271`). `read_page`'s is pinned (`cloudflare/test/unit/connectors-web.test.ts:105`). A changed fingerprint refuses the tool with `OPERATION_CHANGED` for the rest of a run in progress (`registry.ts:383-388`). |
-| Reads repeat | A read replays after a restart up to twice (`REPLAYS_ALLOWED`, `tools.ts:38`), and a continuation with `offset` fetches again. |
+| The fingerprint | Covers `revision` and the connector's tenancy, not the description (`cloudflare/src/gateway/registry.ts:256-271`; ARCHITECTURE.md, Permissions). `read_page`'s is pinned (`cloudflare/test/unit/connectors-web.test.ts:105`). A changed fingerprint refuses the tool with `OPERATION_CHANGED` for the rest of a run in progress (`registry.ts:383-388`). |
+| Grants stored now | Production's Laravel has no `connections`, `layers` or `connection_policies` tables. Staging has 2 Web connections, one layer with one Web site grant (an allow of `read` on `*`), no denies, no unrestricted user layer, and one connection policy, which lists Web (measured 2026-10-26, counts only). |
 
 ## What Browser Run offers
 
-- **The calls.** `env.BROWSER.quickAction("markdown", options)` answers JSON `{success: true, result, meta}` with Markdown in `result` (the types, `:11831-11837`, `:12136-12152`). `quickAction("screenshot", options)` answers the image's bytes with its type, and no `meta` (`:12020-12036`). An error is JSON `{success: false, errors}` with status 400, 422, 429, 500 or 503 (`:11839-11847`). `quickAction` takes no abort signal.
-- **`meta`.** `status` and `title` of the rendered page, optional `headers` (the origin's, lowercased), optional `finalUrl` ("URL that served the response, after any redirects the browser followed") and optional `redirectChain`, whose hops carry their `location` header and which leaves out client-side moves (`:11679-11698`).
-- **Kitesurf.** `browser: "kitesurf"` on `markdown` and `screenshot` (`:11539-11546`, `:11574-11581`). `snapshot`, which returns Markdown and a screenshot in one call, rejects it (`:11539-11542`).
-- **Options shared by every action** (`:11439-11537`): `setJavaScriptEnabled`, `allowRequestPattern` or `rejectRequestPattern` (regular expressions on request URLs), `allowResourceTypes` or `rejectResourceTypes`, `gotoOptions` (`timeout` at most 60 s, `waitUntil`), `bestAttempt`, `actionTimeout`, `userAgent`, `viewport` (default 1920 by 1080), `cacheTTL` (default 5 s). None matches a request's method. The content endpoint's page says "only allow requests that match `allowRequestPattern` or `allowResourceTypes`" (Sep 26 2026), so whether a pattern and a type filter together mean both or either is not documented. Whether Kitesurf honours each option is not documented.
-- **Screenshots.** `screenshotOptions` with `type` (`png`, `jpeg`, `webp`), `quality`, `fullPage` and `clip` (`:11555-11573`).
-- **Measurement.** `X-Browser-Ms-Used`, set when the status is under 500 (`:12034`). Whether Kitesurf sets it is not stated.
-- **Limits and price.** Quick Actions are capped at 30 requests a second per account (/browser-run/limits, Oct 14 2026). Kitesurf "is in beta and available for free, behind per-account limits", with no numbers and no price for after the beta (/browser-run/kitesurf).
-- **Where and what is kept.** "Close to the incoming request", with no jurisdiction option (/browser-run/faq, Jul 17 2026). Content is "immediately discarded" after the response, and output is cached 5 s per account unless `cacheTTL` is 0. Browser Run is not in the data localization compatibility table (Oct 15 2026).
-- **What a site sees.** Requests from Cloudflare's IP ranges with `cf-brapi-request-id` and Web Bot Auth signature headers; "Requests from Browser Run will always be identified as a bot" (/browser-run/quick-actions/markdown-endpoint, Sep 26 2026).
-- **No local simulator.** Without remote mode, `quickAction` fails with "The RPC receiver does not implement the method" (/browser-run/quick-actions).
+- **The calls.** `env.BROWSER.quickAction("markdown", options)` answers JSON `{success: true, result, meta}` with Markdown in `result`; `quickAction("screenshot", options)` answers the image's bytes, with no `meta`. An error is JSON `{success: false, errors}` with status 400, 422, 429, 500 or 503. `quickAction` takes no abort signal (the types, `:11831-11847`, `:12020-12036`, `:12136-12152`, documented).
+- **`meta`.** `status` and `title` of the rendered page, optional `headers` (the origin's, lowercased), optional `finalUrl` ("URL that served the response, after any redirects the browser followed") and optional `redirectChain`, whose hops carry their headers and which leaves out client-side moves (`:11679-11698`, documented).
+- **Options shared by every action** (`:11439-11537`, documented): `allowRequestPattern` or `rejectRequestPattern` (lists of regular expressions on request URLs), `allowResourceTypes` or `rejectResourceTypes`, `gotoOptions` (`timeout` at most 60 s, `waitUntil`), `bestAttempt`, `actionTimeout`, `userAgent`, `viewport` (default 1920 by 1080), `cacheTTL` (default 5 s), `browser: "kitesurf"`. None matches a request's method. Whether Kitesurf honours each option is not documented.
+- **Screenshots.** `screenshotOptions` with `type` (`png`, `jpeg`, `webp`), `quality`, `fullPage` and `clip` (`:11555-11573`, documented).
+- **Limits and price.** Quick Actions are capped at 30 requests a second per account on Workers Paid (/browser-run/limits, Oct 14 2026, documented). Kitesurf "is in beta and available for free, behind per-account limits", with no numbers and no price for after the beta (/browser-run/kitesurf, documented).
+- **Where and what is kept.** "Close to the incoming request", with no jurisdiction option (/browser-run/faq, Jul 17 2026). Content is "immediately discarded" after the response, and output is cached 5 s per account unless `cacheTTL` is 0 (documented). Browser Run is not in the data localization compatibility table (Oct 15 2026).
+- **No local simulator.** Without remote mode, `quickAction` fails with "The RPC receiver does not implement the method" (/browser-run/quick-actions, documented).
+
+## Evidence so far
+
+Run on 2026-10-26 against the test instance's account: 35 Kitesurf calls over the REST endpoints that `cf browser-run quick-action` calls (where `browser=kitesurf` and `cacheTTL=0` are query parameters), one at a time and at least 3 s apart, on throwaway pages of two public request-inspection services. Each result below is one run unless it says otherwise, so it is evidence, not proof.
+
+- **Scripts always run on Kitesurf.** `setJavaScriptEnabled: false` answers HTTP 500, code 2000, "not yet implemented by kitesurf". With every option set Kitesurf accepts, a page's inline script ran, rewrote a paragraph, sent a same-host `fetch` and submitted a form by POST to the page's host (measured).
+- **The pattern held with scripts running.** With `allowRequestPattern` on the page's host, an iframe, an image, a stylesheet, a font and a no-cors `fetch` aimed at another host never arrived; a control without the pattern received all five (measured).
+- **A pattern and a type filter must both match.** With the pattern and `allowResourceTypes: ["document"]` an iframe on another host was blocked; with the type filter alone it arrived (measured).
+- **Same-host frames load,** and the frame was fetched twice per call, once with `USER_AGENT` and once with a desktop Chrome user agent. The page, its sub-resources, the `fetch` and the POST carried `USER_AGENT` (measured).
+- **Cookies last for a call.** A same-host address that answered 302 with `Set-Cookie` led to an account page whose request carried the cookie, and the Markdown was the account page's (measured).
+- **Redirects.** A same-host 302 gave `meta.finalUrl` at the target and a `redirectChain` of one hop with `url`, `status` 302 and its `headers`, `location` among them (measured). A cross-host redirect was not measured.
+- **A page's CSP is honoured for scripts.** Under `script-src 'none'` no script ran and the external one was not requested, though frames loaded despite `frame-src 'none'` (measured).
+- **Connection hints.** `preconnect` and `dns-prefetch` to names under another host caused no DNS lookup of those names, the control included (measured).
+- **What comes back.** Every successful call returned `X-Browser-Ms-Used` (301 to 1,465 ms on these pages, 1,234 ms for the screenshot); the 500 returned none. Each call took 0.6 to 2.2 s from the laptop. Every `markdown` call returned `meta.status`, `meta.title`, `meta.headers` and `meta.finalUrl`, and `result` starts with YAML front matter holding the title, as `---\ntitle: "Example Domain"\n---` (measured).
+- **Options accepted** with Kitesurf, each alone on `https://example.com/`: both request patterns, both type filters, `gotoOptions` with `timeout` and each `waitUntil`, `actionTimeout`, `bestAttempt`, `userAgent`, `viewport`, `cookies`, and `screenshot` with JPEG at quality 80 (measured). Accepted is not honoured: only the pattern, both type filters and `userAgent` were seen at work. `networkidle2` used about 900 ms of browser time where `domcontentloaded` used about 360 ms (measured), which suggests it waits (inferred).
+- **Screenshot size.** `https://example.com/` at 1280 by 800, JPEG quality 80, was 63,256 bytes (measured, one page).
+- **`snapshot` accepts Kitesurf over REST** (measured), though the types say it does not. Requirement 2 leaves it unused.
+- **Markdown for Agents does not help.** It converts the HTML a site's server sends, scripts stripped, on sites that turned it on (/fundamentals/reference/markdown-for-agents, Oct 9 2026, documented), and Cloudflare's own blog and docs answered HTML to today's Accept header (measured).
+- **Cloudflare's Markdown against Minerva's converter.** On the one page compared, 18,091 characters against 13,549, with image links kept (measured).
+
+**C2 and C3, run on 2026-10-26** against a throwaway fixture of two workers.dev hosts on the test instance's account (deleted the same day), with `read_page`'s and `screenshot_page`'s exact options, one run each:
+
+- **Sub-resources to another host were blocked.** With the pattern, a stylesheet, a `<script src>`, an iframe, XHR, `fetch` by GET and by POST, an EventSource and a WebSocket aimed at the other host never arrived. In the control without the pattern, all eight did. The same mechanisms on the page's own host arrived in both runs, POST included (measured).
+- **Navigations to another host were not blocked.** With the pattern, a script setting `location.href`, a form submitted by GET, a form submitted by POST (its field in the body) and a script's click on a `target=_blank` link each reached the other host, and the Markdown returned was the other host's page. `meta.finalUrl` still named the first host in every one of these. The screenshot with the pattern also reached the other host through the `_blank` link (measured).
+- **A 302 to another host was followed with the pattern,** and `meta.finalUrl` and `meta.redirectChain` named the other host. A 302 from https to http on the same host was followed too, and `finalUrl` was the http address (measured).
+- **A meta refresh did not navigate,** with the pattern or without (measured).
+- **No request arrived on either host** for `sendBeacon`, dedicated, shared and service workers, `<a ping>`, a speculation-rules prefetch or `window.open`, in the control too. The page's own report was lost when the `_blank` link replaced its text, so whether these ran is not known (inconclusive).
+- **User agents.** The same-host frame was fetched twice again, once with a desktop Chrome user agent. The WebSocket request carried no user agent (measured).
+
+**Results that contradict a decision.** Only the page's host, only https: the pattern does not hold the browser to the host. A page can move the browser to any host, by script, by a form that posts its fields, by a link or by a redirect, and the call returns that host's page under the first host's authorization, with `finalUrl` naming the first host for every move made in the page. A redirect can also leave https. Requirement 6 does not hold on Kitesurf with these options. The owner accepted this on 2026-10-26 (owner question 14): the engine withholds a page `finalUrl` places on another host, and the docs and the site note say information can reach the allowed sites and wherever they redirect.
+
+**C4 is not run.** Minerva sends no probe requests at private or cloud-metadata addresses through Cloudflare's service. Whether Browser Run refuses them is a question for Cloudflare, and until it answers, `lib/sites.ts`' own refusal of IP literals and special-use names is the only guard Minerva can show.
+
+**C4 and C7, run on 2026-10-26** with `read_page`'s exact options, one run each:
+
+- **Invalid certificates are refused.** badssl.com's expired, self-signed and wrong-host certificates each gave `success: true` with `meta.status` 526 and Cloudflare's "Invalid SSL certificate" page; badssl.com itself gave 200 (measured).
+- **Text files come back inside a fence.** CSV, plain text, Markdown and XML came back as their exact bytes between a line of three backticks and a closing one. JSON came back as the text of Chrome's JSON viewer followed by the same fence around the exact payload (measured).
+- **HTML.** A page in ISO-8859-1 was decoded correctly. A page with known sentences, a table and a relative link kept all three sentences, the table as a Markdown table and the link made absolute (measured).
+- **Other files.** A PDF gave an empty `result` and no content type in `meta.headers`. A PNG gave `![]()` with `image/png`. A 404 gave `meta.status` 404 and the page's text. A 204 gave `meta.status` 200 and an empty `result`. A 3.2 MB page gave 3,224,039 characters after 11 s (measured).
+
+**C5, C6 and C8 are not run.** Live probing of Cloudflare's service stopped after C4 and C7. Isolation between calls rests on Cloudflare's statement that Kitesurf is "ephemeral, fully-isolated, stateless" (documented, not measured), `cacheTTL: 0` on its documentation, and how long a render runs after the caller stops is unknown. The binding (C1) is checked in Unit 2 with one call to `https://example.com/`.
 
 ## Decisions
 
-### Three operations on one site list
+### Two operations on one action
 
-| Operation | Needs | Scripts | Returns |
-|---|---|---|---|
-| `read_page` | `read` | Off | Markdown, today's record |
-| `browse_page` | `browse` (requires `read`) | On | Markdown, the same record |
-| `screenshot_page` | `browse` | On | A record and one JPEG |
+| Operation | Needs | Returns |
+|---|---|---|
+| `read_page` (revision 2) | `browse` on the site | Markdown, today's record or a `redirect_to` record |
+| `screenshot_page` (revision 1) | `browse` on the site | A short record and one JPEG |
 
-- **One list of sites.** An admin allows reading on many sites and browsing on a few, in the same editor, as Laravel draws it from the catalog. A new action on the existing kind keeps one list, where a second connector would make a second one.
-- **`browse` is a read.** Both operations declare no `mutates`. So whatever a page's scripts do, the call skips what guards a write: the write ledger and its deduplication, the pause after an uncertain write, running one at a time, and its settlement (`executor.ts:536-552`, `:601-605`; `cloudflare/src/conversation/tools.ts:98-109`). It runs in parallel with other reads and replays up to twice after a restart. It is not askable under the approvals design either (docs/plans/approvals.md, Askable actions). The `browse` grant on a site accepts all of this for that site (owner question 7). Marking it a write was rejected (Alternatives rejected).
-- **Inputs.** `read_page` and `browse_page` keep `read_page`'s input (`url`, `max_chars`, `offset`). `screenshot_page` takes `url` only. `parseUrl` drops the fragment (`cloudflare/src/lib/sites.ts:244`), which an app that routes by `#/path` needs, so `browse_page` and `screenshot_page` send the parsed address with the input's fragment put back. A fragment never reaches a server, and authorization still uses the host.
-- **Descriptions.** `browse_page`: "Open a web page in Minerva's browser, which runs its scripts, and read it as text. Use it when read_page returns little text. The page's scripts can act on the site as a visit would." `screenshot_page`: "Open a web page in Minerva's browser, which runs its scripts, and look at it as an image of its first screen."
+- **`browse` replaces `read`.** The site kind's `actions` become `["browse"]`, and the connector's actions `[{id: "browse", label: "Open in browser"}]`. A new id rather than a new label on `read`: every `read` grant was given while the public Web page said "Scripts do not run" and "Agents cannot sign in", and reusing the id would turn each into a visit nobody chose (owner question 9).
+- **Allowed per site or for all sites** with today's grants: an exact host, `*.domain` (the domain and everything under it), or `*`, which the editor shows as "All sites" (the app's `grants.md`, 11a). A deny on a domain wins over an allow on a wider one, in any layer.
+- **Both declare `outputAction: "browse"`.** The default is `read` (`gateway/connector.ts:374-376`), which no Web kind has once `browse` replaces it, and the registry refuses an operation whose output action applies to none of its kinds (measured: `web.read_page: "read" applies to none of its kinds.`).
+- **Both stay reads.** Neither declares `mutates`, so they skip what guards a write: the write ledger and its deduplication, the pause after an uncertain write, running one at a time, and settlement (`executor.ts:536-552`, `:601-605`; `conversation/tools.ts:98-109`). They run in parallel with other reads, replay up to twice after a restart, and are not askable under docs/plans/approvals.md. The grant accepts this for the site (owner question 7). Marking them writes was rejected (Alternatives rejected).
+- **Inputs.** `read_page` keeps `url`, `max_chars` and `offset`. `screenshot_page` takes `url` only. `parseUrl` drops the fragment (`lib/sites.ts:244`), which an app that routes by `#/path` needs, so both send the parsed address with the input's fragment put back. A fragment never reaches a server, and authorization still uses the host.
+- **Descriptions.** `read_page`: "Open a web page in Minerva's browser, which runs its scripts, and read it as text. Only https pages on sites you may open. A page that moves to another site returns redirect_to instead of content. Long pages are cut at max_chars; continue with offset set to the returned next_offset, which opens the page again." `screenshot_page`: "Open a web page in Minerva's browser and look at an image of its first screen. Only https pages on sites you may open."
+- **The name `read_page` stays.** It says what the model gets, and keeps the tool's name in transcripts and Laravel's tool labels. The permission's label and note are where a person learns what a visit does.
 
-### Reading with scripts off
+### The organization's site list
 
-- **The call.** `quickAction("markdown", {url, browser: "kitesurf", setJavaScriptEnabled: false, allowRequestPattern, cacheTTL: 0, userAgent: USER_AGENT, gotoOptions: {waitUntil: "domcontentloaded", timeout: 10_000}, actionTimeout: 3_000})`, and the engine stops waiting after 15 s.
-- **As little as possible beside the page.** `allowResourceTypes: ["document"]` is added beside the pattern only if P1 shows that both must match; if either is enough, a document on another host would pass. If they combine as either, `rejectResourceTypes` with every type but `document` is tried, and failing that the pattern alone is the filter, with the same host's sub-resources allowed. No filter tells the top-level page from a frame on the same host, since both are documents, so a same-host frame may load in every case (owner question 9).
-- **Why scripts off makes it a read.** Without scripts a page cannot send a POST or submit a form by itself. It can still load the same host's resources and follow a meta refresh, both GET requests to that host. One GET of a plain link can still act on sites that act on GET, as today.
-- **A browser keeps cookies within one call, scripts or not.** Today's fetch sends no cookies and keeps none between same-host redirects (`fetch.ts:14-16`, `:333-347`), so a sign-in link handled by the server ends on an anonymous page. In the browser, a link that sets a session cookie and redirects on the same host signs it in for that call, and `read_page` returns the account's page. Agents that open links from a user's mail do this in ordinary use. Nothing in Browser Run's options turns cookies off, so this is part of moving reads to a browser (owner question 9), and P1 records it.
+- **Web's tenancy becomes `{kind: "resource", label: "domain"}`.** A site resource's tenant is its registrable domain (`registrable`, `lib/sites.ts:86-92`): `en.wikipedia.org`, `wikipedia.org` and `*.wikipedia.org` are all in `wikipedia.org`. The tenancy's `tenants(client, kind, ids)` is pure: a grant id's host, without `*.`, mapped by `registrable`. Discovery items and every record name their tenant. A host that is a public suffix itself, such as `co.uk`, has no registrable domain, and `parseUrl` and `validId` accept it (measured), so Web refuses it itself: `prepare` fails with `INVALID_URL` "This address has no domain Minerva can match." before anything is sent, discovery leaves it out, and `describe` names no such id, so a grant edit for it is invalid.
+- **The policy then limits Web as it limits GitHub's owners.** An admin on Allowed apps offers Web to any domain, to a list, or not at all. Under a list, a call on a site of another domain fails with `POLICY_DENIED`, "Your organization does not allow this domain.", before anything is sent, a member's grant edit allowing a site outside the list is refused (`TENANT_NOT_ALLOWED`, which Laravel words "Your organization does not allow the domain of {site}."), and a member who grants All sites gets the list's domains. No layer, unrestricted included, passes the list, because it is checked apart from the grants (`executor.ts:671`, `:686-687`).
+- **Members still choose within it.** The policy is a limit, as for every connector: a member's own layer, restricted until they choose, decides which of the allowed sites their agents open. Allowing on the member's behalf was not built (Alternatives rejected).
+- **A domain, not a host.** The list cannot hold `en.wikipedia.org` alone. A member can narrow to it in their own grants. Later presets ("General reference") are lists of domains an admin adds to this list, or sites a member adds to their grants; neither is another way to authorize.
+- **Policies stored now keep their meaning.** Web's entry has `tenants: null` today, since its tenancy was unknown, and null stays "any domain". Staging's one policy lists Web that way.
+- **Laravel writes a typed domain as the engine does** (the app's `connection-policies.md`, 18): lowercase ASCII after IDNA, without a scheme, path, port or `*.`, reduced to its registrable domain, and refused at its place when it has none ("This is not a domain Minerva can match. Add its registrable domain, such as wikipedia.org."). That needs the Public Suffix List in Laravel; Unit 4 chooses the package, an established one per the app's AGENTS.md, and its tests take cases from `lib/sites.ts`'s.
 
-### Browsing with scripts on
+### Search is removed
 
-- **Markdown.** The same call with scripts on, `gotoOptions: {waitUntil: "networkidle2", timeout: 8_000}`, `actionTimeout: 3_000`, `bestAttempt: true` and `rejectResourceTypes: ["image", "media", "font"]` if P2 shows it keeps the pattern in force. The engine stops waiting after 15 s. Cloudflare recommends `networkidle0` or `networkidle2` for single-page apps (/browser-run/faq).
-- **The page is a visit.** Its scripts can send any method to its own host, with the cookies the site set during that load. A page that confirms, approves or unsubscribes by submitting itself does so. A sign-in link handled in the page signs the browser in for that render, and the model reads that account's pages. A page that turns its address into a form submission lets the model choose what is posted. Each continuation with `offset` and each replay renders again, so such an action can run more than once. This is what `browse` grants, and its note says so.
-- **No state between renders.** Kitesurf is documented as stateless. Every customer renders through one account, so a browser that kept a cookie or a service worker would carry one customer's session into another's render of the same site. P4 confirms it, and Kitesurf is not used if it fails.
+`search` needs the account resource, which has no tenant, so under Web's new tenancy every search would be a connector bug (`shapeProblem`). No deployed build has the Brave key, so it is offered nowhere (`connector.ts:214-216`). It is deleted with `search.ts`, the account kind, `offered`, `MINERVA_BRAVE_SEARCH_API_KEY` in `pnpm secrets` and AGENTS.md, and its tests. Search can come back as its own connector, which also lets an admin offer it apart from sites, since its queries go to Brave rather than to the sites (owner question 12).
 
-### Screenshots reach the model as an image
+### Existing grants
 
-- **The call.** `quickAction("screenshot", {url, browser: "kitesurf", allowRequestPattern, viewport: {width: 1280, height: 800}, screenshotOptions: {type: "jpeg", quality: 80}, …the waits of browse_page})`, with no resource type rejected, so the host's images show. Only the first screen, not the full page, so its size stays bounded (owner question 6). Images, stylesheets and fonts from another host, such as a CDN, are blocked by the pattern, so many sites' screenshots lack them.
-- **Size.** The response is read up to 1,152 KiB, which is `IMAGE_MAX_BYTES` once in base64. A larger one fails with `PAGE_TOO_LARGE`. P4 measures typical sizes.
-- **No `meta`.** The engine cannot see the page's status or where it ended. The pattern still keeps the browser on the host. The model sees the page as it rendered, an error page included, and the record says only what was asked: `{url, content_type: "image/jpeg", width: 1280, height: 800}`.
-- **The image's path.** `ScopedRecord` gains an optional `image: {mimeType, data}` (base64). `visibleResult` keeps a record's image only with the record, so a denied host drops both. `ToolCallOutcome`'s success gains `images`, outside `ToolResult`, whose schema stays closed. `render` appends one `{type: "image", data, mimeType}` part after the JSON text. pi keeps it in the tool result's row, within `IMAGE_MAX_BYTES`, as `read`'s images are.
-- **What else sees it.** Nothing. The `tool_call` event carries no result, the log never holds it, and a script gets the outcome's `result` only (`cloudflare/src/scripts/session.ts:184-188`), so a script's call to `screenshot_page` gives the record without the picture. pi's `outputLimits` bound only the text parts and keep image parts (`boundContent`, pi-durable `dist/harness/tool.js:708-725`).
-- **Always a direct tool.** When a run has more gateway tools than fit, only the first are offered directly and the rest only through scripts (`modelTools`, `cloudflare/src/gateway/tools.ts:143-159`), where the image would be lost. `modelTools` therefore puts operations that return images first among the direct ones, from a flag on the operation's declaration that only `screenshot_page` sets.
-- **The row.** The record's JSON is under 1 KB and the image at most `IMAGE_MAX_BYTES`, so the tool result's row stays within the bound `read`'s images use.
-- **A model that takes no images** gets pi-ai's placeholder, "(tool image omitted: model does not support images)". The operation is offered either way, since `offered` cannot see the model.
+- **A `read` grant is not converted** (owner question 9). Once the engine deploys, a `read` key compiles into the policy and no operation needs it, so a restricted layer opens no page until someone grants Open in browser. An unrestricted layer allows `browse` from the deploy on, as it allows every action (owner question 10).
+- **No migration code.** Production has no grant tables, and staging holds one `read` grant and no denies (What the code does today). The operator removes staging's grant before Web's approval there, so Laravel's editor never shows an action the approved entry lacks. A deny on `read` would need converting to `browse` before the deploy; none exists, and the operator writes denies by hand only.
 
-### Only the granted host, only https
+### The calls
 
-1. **Authorization first.** `prepare` parses the address and asks for the operation's action on its host, as today. Nothing is sent before it.
-2. **https.** An http address is opened as https on the same host. The record's `url` is the https address.
-3. **Every request the browser makes must match the page's origin.** `allowRequestPattern` is `^https://`, the host regex-escaped, then `/`. `^data:` and `^blob:` are allowed, since they reach no network themselves. Analytics, CDNs and other hosts' APIs are blocked, and so are another port and `wss:`. P1 and P2 decide which kinds of request this covers; ARCHITECTURE.md lists the kinds measured, and docs/connectors.md claims only those.
-4. **A move to another host is shown, not followed.** For Markdown, `meta.finalUrl` is parsed with `parseUrl`. Missing, or not a web address Minerva opens (`about:blank`, a `chrome-error:` page), the call failed. On the same host, it is the record's `url` and the base for relative links. On another host, the record is today's `redirect_to` record with `MOVED_NOTE`. When the pattern stopped the move, `redirect_to` comes from the last hop of `meta.redirectChain` that names another host in its `location`, if P2 shows Browser Run reports a hop it did not follow; otherwise the record has the note "This page moved to another site, which Minerva's browser did not follow." and no `redirect_to`. A move made in the page (a script, a meta refresh) is not in `finalUrl`, and only the pattern stops it.
-5. **The record names the page's host,** so the executor checks it against the policy again (`executor.ts:292`).
+- **`read_page`:** `quickAction("markdown", {url, browser: "kitesurf", allowRequestPattern, rejectResourceTypes: ["image", "media", "font"], cacheTTL: 0, userAgent: USER_AGENT, gotoOptions: {waitUntil: "networkidle2", timeout: 8_000}, actionTimeout: 3_000, bestAttempt: true})`. Images, media and fonts add requests to the site and no text. Cloudflare recommends `networkidle0` or `networkidle2` for single-page apps (/browser-run/faq).
+- **`screenshot_page`:** `quickAction("screenshot", {url, browser: "kitesurf", allowRequestPattern, cacheTTL: 0, userAgent: USER_AGENT, viewport: {width: 1280, height: 800}, screenshotOptions: {type: "jpeg", quality: 80}, gotoOptions, actionTimeout, bestAttempt})`, with the waits of `read_page` and no type rejected, so the host's images show. Only the first screen, so its size stays bounded (owner question 6).
+- **`cacheTTL: 0`** keeps the account's 5 s cache off. Every customer renders through one account, so a cached answer could hand one customer's signed-in page to another's request for the same address.
+- **The engine waits 15 s per call**, reading the body included, where today's fetch had 25 s. The timers sent bound the navigation and the action after it, not a browser's start, the conversion or the delivery, and no overall limit is documented, so a call can outlive the engine's wait (Strict revocation).
 
-**Same host, not the run's grants.** A pattern from the run's whole policy would let a page load from every granted host. It needs the policy inside the connector and denies written as lookaheads, while same host is what the grant that authorized this call covers in every case.
+### Only the page's host, only https
+
+1. **Authorization first.** `prepare` parses the address and asks for `browse` on its host, and the executor checks the grants and the organization's list before `execute` sends anything.
+2. **https.** An http address opens as https on the same host (owner question 2). The record's `url` is the https address. A site without https fails with `PAGE_ERROR`.
+3. **What the page loads must come from its host.** `allowRequestPattern` is `["^https://" + escaped host + "/", "^blob:https://" + escaped host + "/", "^data:"]`. A stylesheet, a script, a frame, XHR, `fetch`, an EventSource or a WebSocket aimed at another host is blocked (measured, C2). docs/connectors.md claims only these kinds.
+4. **Moves are not stopped, so a page from another host is withheld.** A redirect, a script setting the address, a form or a link opening a new tab takes the browser to any host, with the pattern on (measured, C2 and C3), and that host receives the address or the form's fields. `meta.finalUrl` is parsed with `parseUrl`. Missing, or not an address Minerva opens (`about:blank`, a `chrome-error:` page), the call failed. On the same host over https it is the record's `url` and the base for relative links. On another host, or on http, the record is today's `redirect_to` record with `MOVED_NOTE` and no text, so the model opens the new address only with its own permission. A move made by the page's own script or form is not in `finalUrl`, which still names the page's host, so its page comes back as that host's; the engine cannot tell.
+5. **The record names the page's host and its tenant,** so the executor checks it against the policy and the list again (`executor.ts:292`).
+
+**Where information can go.** Information the agent puts in an address reaches the allowed site, and wherever that site's redirects or scripts send the browser. A site that redirects to an address taken from its own query string forwards it anywhere. The site note, docs/connectors.md and the public Web page say so (owner question 14).
+
+**Same host, not the run's grants.** A pattern built from the whole policy would let a page load from every granted host. It needs the policy inside the connector and denies written as lookaheads, while the same host is what authorized the call in every case.
+
+**What the same host costs.** Pages built on the server keep their text, since it is in the HTML: Wikipedia's articles, most docs sites, Stack Overflow's questions, GitHub's issues (inferred). An app that loads its scripts from a CDN (`cdn.example.net`, CloudFront, unpkg) or its data from `api.example.com` stays as empty as today's fetcher leaves it, and a `*.example.com` grant does not change that, since the page on `www` still cannot load `static.example.com`. Screenshots of sites that take styles, images or fonts from another host come out unstyled. A move from `example.com` to `www.example.com` goes back to the model. How many pages this leaves thin is not measured.
 
 ### Private addresses
 
-- **Browser Run is the only guard after the host rules.** `lib/sites.ts` still refuses IP literals and special-use names before anything is sent. The Worker's own refusal no longer applies, since the Worker sends no request to the site.
-- **Browser Run's own refusal is the guard.** Kitesurf's requests go through a Worker, "SandboxOutbound" (blog.cloudflare.com/kitesurf, Aug 6 2026), so they probably meet the platform's refusal of private addresses (inferred). P3 measures it, over http so that a certificate failure cannot hide the answer, and names the refusal, which becomes `SITE_NOT_PUBLIC`. Kitesurf is not used without it.
-- **TLS helps but does not replace it.** Every request goes over TLS to the granted name, so a name an attacker points at someone else's private server meets a certificate for another name and fails, if Browser Run checks certificates, which P3 checks. It does not stop a name whose owner holds a valid certificate and points it at a private address, as split-horizon names do. Only the refusal covers that.
+- **`lib/sites.ts` still refuses IP literals and special-use names** before anything is sent.
+- **After that, what the browser may reach is Cloudflare's to decide.** Kitesurf's requests leave through a Worker, "SandboxOutbound" (blog.cloudflare.com/kitesurf, Aug 6 2026), so they probably meet the platform's refusal of private addresses (inferred). Minerva does not test it (Evidence so far, C4) and asks Cloudflare instead. Any Browser Run customer can already point the service at any address, and a move a page makes is not stopped either, so this boundary is Cloudflare's service, not Minerva's.
+- **No `SITE_NOT_PUBLIC`.** Without a refusal Minerva can name, such a failure is `PAGE_ERROR` or the site's status, and the code goes with the fetcher.
+
+### Isolation between calls
+
+Kitesurf is documented as ephemeral and stateless. Every customer renders through one account, so a cookie, storage entry, service worker or cache kept between renders would carry one customer's session into another's visit of the same site. This design relies on that statement (documented, not measured, Evidence so far) and on `cacheTTL: 0`.
+
+### Screenshots reach the model as an image
+
+- **Size.** The response is read up to 1,152 KiB, which is `IMAGE_MAX_BYTES` once in base64; a larger one fails with `PAGE_TOO_LARGE`. 1280 by 800 is within 2000 pixels a side.
+- **No `meta`.** The engine cannot see the page's status or where it ended. The model sees the page as it rendered, an error page included. A redirect, a script or a form that moves the browser to another host gives a picture of that host's page, labelled with the address the agent asked for, since nothing tells the engine the page moved. This follows from owner question 14: moves are not stopped, and only `read_page` has a `finalUrl` to withhold by. The record is `{url, content_type: "image/jpeg", width: 1280, height: 800}`.
+- **The image's path.** `ScopedRecord` gains an optional `image: {mimeType, data}` (base64). `visibleResult` keeps it only with its record, so a denied host or domain drops both. `ToolCallOutcome`'s success gains `images`, outside `ToolResult`, whose schema stays closed. `render` appends one `{type: "image", data, mimeType}` part after the JSON text. pi keeps it in the tool result's row, within `IMAGE_MAX_BYTES`, as `read`'s images are, and pi's `outputLimits` bound only text parts (`boundContent`, pi-durable `dist/harness/tool.js:708-725`).
+- **What else sees it.** Nothing. The `tool_call` event carries no result, the log never holds it, and a script gets the outcome's `result` only (`cloudflare/src/scripts/session.ts:184-188`), so a script's call gives the record without the picture.
+- **Always a direct tool.** Past `MODEL_TOOLS_MAX`, the tools that do not fit are callable only from scripts (`modelTools`, `cloudflare/src/gateway/tools.ts:143-159`), where the image would be lost, so `modelTools` puts operations that return images first among the direct ones, from a flag on the declaration that only `screenshot_page` sets.
+- **A model that takes no images** gets pi-ai's placeholder, "(tool image omitted: model does not support images)". Staging and production run a model the engine treats as taking images (`cloudflare/src/model/route.ts:85`).
 
 ### What the model sees
 
@@ -139,91 +209,104 @@ Today's record and error codes stay, so the model's handling of a failed read do
 |---|---|
 | `meta.status` 200 and `finalUrl` on the host | The record, Markdown sliced at `offset` and `max_chars` |
 | `finalUrl` or a hop on another host | The `redirect_to` record, or the record with the note when the target is unknown |
+| `meta.status` 526 | `PAGE_ERROR` "This site's certificate is not valid." |
 | `meta.status` 400 or more | `PAGE_ERROR` "The site answered with HTTP {status}." |
 | Another `meta.status` (204, a 3xx) | `PAGE_ERROR` "The site answered with HTTP {status}, which has no page." |
-| `meta.headers["content-type"]` neither HTML nor a text type | `UNSUPPORTED_CONTENT` "Minerva cannot read {type} pages yet." |
+| `meta.headers["content-type"]` neither HTML nor a text type, or missing with an empty `result` (a PDF) | `UNSUPPORTED_CONTENT` "Minerva cannot read {type} pages yet.", or "this kind of file" without a type |
 | Browser Run 429 or 503 | `BROWSER_BUSY` "Minerva's browser is busy. Try again in a minute." |
 | Browser Run 422 with code 2012 | `PAGE_ERROR` "Minerva's browser could not turn this page into text." |
 | The engine stopped waiting | `SITE_TIMEOUT` "This site took too long to open." |
-| The refusal P3 names | `SITE_NOT_PUBLIC`, today's message |
 | A response over 8 MB, Markdown over 3 MB, or an image over 1,152 KiB | `PAGE_TOO_LARGE` |
-| Anything else: a throw, Browser Run's other 400, 422 or 500, malformed JSON, no usable `finalUrl` | `PAGE_ERROR` "Minerva's browser could not open this page." |
+| Anything else: a throw, another 400, 422 or 500, malformed JSON, no usable `finalUrl` | `PAGE_ERROR` "Minerva's browser could not open this page." |
 | No binding | `BROWSER_UNAVAILABLE` "Minerva's browser is not available in this build." |
 | The run made its 100 browser calls | `LIMIT_REACHED` "This run has opened as many pages as it may." |
+| No `browse` on the site | `POLICY_DENIED`, the executor's refusal, nothing sent |
+| A domain the organization's list leaves out | `POLICY_DENIED` "Your organization does not allow this domain.", nothing sent |
 
-For `browse_page` and `screenshot_page`, every failure after the call was sent adds "Its scripts may have run.", since the engine cannot tell how far the browser got. A 422 is usually a timeout or a crashed page (/browser-run/faq), but it is not a site that answered slowly for certain, so only the engine's own wait gives `SITE_TIMEOUT`. Only a `meta.status` of 200 supplies text, so an error page with text takes its status row. The title is `meta.title`; YAML front matter at the head of `result`, if P4 finds it, is removed. `content_type` is `meta.headers["content-type"]`'s media type, or null.
+`BROWSER_BUSY` and `BROWSER_UNAVAILABLE` join `ConnectorErrorCode` (`gateway/connector.ts:237`); `LIMIT_REACHED` is a core code a connector may raise already. No code reaches the contract or Laravel. Every failure after the call was sent adds "Its scripts may have run.", since the engine cannot tell how far the browser got. Only the engine's own wait gives `SITE_TIMEOUT`. Only a `meta.status` of 200 supplies text, so an error page with text takes its status row. The title is `meta.title`, and the front matter at the head of `result` is removed. `content_type` is `meta.headers["content-type"]`'s media type, or null. For JSON, CSV, plain text, Markdown and XML (by content type), the text is the content of the last fence in `result`, which held the exact payload in C7; without a fence, `result` as it came.
 
 ### Size and time
 
-- **Markdown.** The response is read through a capped reader up to 8 MB and parsed with `parseJson` (a source rule forbids `.json()`, `cloudflare/test/unit/sources.test.ts:27`). `result` is at most 3 MB in UTF-8, today's `MAX_BODY`.
-- **Time.** Each operation waits up to 15 s, where today's fetch had 25 s, and the wait covers reading the body. The timers sent bound the navigation and the action after it, not a browser's start, the conversion or the answer's delivery, and no overall limit is documented, so a call can outlive the engine's wait in ordinary use. The call then frees its slot, its result is dropped, and Cloudflare finishes the work. P4 records how long calls run; that is an observation, not a maximum.
-- **`cacheTTL: 0`,** so a page reflects the site now and no output stays in the account's cache.
-- **`userAgent` is `USER_AGENT`,** so a site sees Minerva's name, as today.
+- **The response** is read through a capped reader up to 8 MB and parsed with `parseJson` (a source rule forbids `.json()`, `cloudflare/test/unit/sources.test.ts:27`). `result` is at most 3 MB in UTF-8, today's `MAX_BODY`.
+- **`userAgent` is `USER_AGENT`,** so a site sees Minerva's name on the page, though not on every frame request (Evidence so far).
 
-### Strict revocation
+### Strict revocation and cancellation
 
-- **No browser call starts once the run is revoked.** It goes through the call's io, which checks `admits()` synchronously right before it, as `#send` does. The io's own `NotSent` and `ProgrammingError` pass through as they are. Anything `quickAction` itself throws is `PAGE_ERROR`, so none of it reaches the executor's log of unexpected errors (`executor.ts:478`).
-- **A render already sent is handed off.** `quickAction` takes no signal, so a cancel only stops the engine waiting, and the result is dropped. The browser goes on loading the authorized host, with scripts on for `browse_page`, until Cloudflare ends it. No document bounds that time; P4 records what it observed. Today's rule, "a request already sent may complete" (ARCHITECTURE.md, Strict revocation), meant one HTTP request; ARCHITECTURE.md says what it means for a render (owner question 5).
+- **No browser call starts once the run is revoked.** It goes through the call's io, which checks `admits()` synchronously right before it, as `#send` does. The io's own `NotSent` and `ProgrammingError` pass through. Anything `quickAction` itself throws is `PAGE_ERROR`, so none of it reaches the executor's log of unexpected errors (`executor.ts:478`).
+- **A render already sent is handed off.** `quickAction` takes no signal, so a cancel or the 15 s wait only stops the engine waiting, and the result is dropped. The browser goes on loading the page's host, scripts running, until Cloudflare ends it. No document bounds that time, and it was not measured. ARCHITECTURE.md's Strict revocation says what "a request already sent may complete" means for a render (owner question 5).
 
 ### The cap, pricing and the log line
 
-- **100 browser calls per run between restarts.** The run's browser port counts every `quickAction` it sends. Past 100, the three operations fail with `LIMIT_REACHED` and send nothing. The count lives in memory with the run's executor, so a restart or a deploy starts it again and allows 100 more, which a user or a page cannot cause on purpose. It bounds what one run, or a page that injects instructions, can take of Kitesurf's per-account limits, which every customer shares, and of a price Kitesurf may get. A turn has no limit on tool calls otherwise (ARCHITECTURE.md, Permissions).
-- **Not charged.** Kitesurf is free in its beta, so nothing enters `chargedMicros`. When it gets a price, a later chunk charges it, which needs Laravel's `CheckUsage` deployed first (the app's `app/Console/Commands/CheckUsage.php:139`).
-- **One log line per browser call:** the operation, an outcome from a fixed set (`ok`, `moved`, `site_status`, `busy`, `timeout`, `too_large`, `not_public`, `unsupported`, `failed`, `capped`), `meta.status`, Browser Run's numeric error code, `X-Browser-Ms-Used` or none, and the duration. Never the address, the host, Browser Run's error `message`, `detail` or `path`, or a thrown error's message, since those can quote the address and any token in it (guess).
+- **100 browser calls per run between restarts,** across both operations (owner question 3). The run's browser port counts every `quickAction` it sends; past 100 both fail with `LIMIT_REACHED` and send nothing. The count lives in memory with the run's executor, so a restart or a deploy allows 100 more, which a user or a page cannot cause on purpose. It bounds what one run, or a page that injects instructions, takes of Kitesurf's per-account limits, which every customer shares.
+- **Not charged.** Kitesurf is free in its beta, so nothing enters `chargedMicros`. A price needs a later change, with Laravel's `CheckUsage` deployed first (the app's `app/Console/Commands/CheckUsage.php:139`).
+- **One log line per browser call:** the operation, an outcome from a fixed set (`ok`, `moved`, `site_status`, `busy`, `timeout`, `too_large`, `not_public`, `unsupported`, `failed`, `capped`), `meta.status`, Browser Run's numeric error code, `X-Browser-Ms-Used` or none, and the duration. Never the address, the host, the domain, Browser Run's error `message`, `detail` or `path`, or a thrown error's message, since those can quote the address and any token in it (guess).
 
 ### The binding and builds without it
 
-- **`BROWSER: bindings.browser({ dev: { remote: true } })`** in `cloudflare.config.ts`, left out offline and in the test build, with a comment like the Images binding's.
-- **A port,** `ConversationPorts.browser(context)`, returns null without the binding and otherwise a `quickAction` function that counts against the cap. It is called once per run's executor, so the count is the run's. `ExecutorContext` gains `browser`, `CallIo` gates it, and `ProviderIo` gains `browser: BrowserIo | null`. `settingsIo` has none.
-- **The test build returns null,** as its network reaches only `*.fake.invalid`, so a Worker that the token-gated fault driver controls never reaches Browser Run, which reaches the whole web.
-- **Mode `development`** (`pnpm exec vite`) has the binding and reads pages on the account's Browser Run, against its shared limits.
-- **The deployed probe checks the boundary, not only the binding.** Kitesurf is a beta that can change after Unit 1 measured it, so `/api/probe` gains `browser`, three fixed calls that take nothing from the request: `read_page`'s options on `https://example.com/` (status, text length, whether `finalUrl` and `X-Browser-Ms-Used` came back, duration); and two calls with `html` set to a fixed page whose script writes a marker and sends a `no-cors` `fetch` to `https://example.org/`, writing whether it was blocked, under the pattern for `example.com`. With scripts off the marker must be absent; with scripts on it must be present and the fetch blocked. Without a binding `browser` is `null`. `test:deployed` asserts the three on staging and production, after every deploy and in the monthly check, and asserts `null` on the test instances, whose build has no binding. P4 checks that the canary works on Kitesurf.
+- **`BROWSER: bindings.browser({ dev: { remote: true } })`** in `cloudflare.config.ts`, left out offline and in the test build, with a comment like the Images binding's (`cloudflare.config.ts:169-171`).
+- **A port,** `ConversationPorts.browser(context)`, returns null without the binding and otherwise a `quickAction` function that counts against the cap, called once per run's executor. `ExecutorContext` gains `browser`, `CallIo` gates it, and `ProviderIo` gains `browser: BrowserIo | null`. `settingsIo` has none.
+- **The test build returns null,** since its network reaches only `*.fake.invalid` (`cloudflare/src/faults/ports.ts:64-66`, `:209`) and a Worker that the token-gated fault driver controls must never reach Browser Run.
+- **Mode `development`** (`pnpm exec vite`) has the binding and opens pages on the account's Browser Run.
+- **The deployed probe checks the boundary, not only the binding.** Kitesurf is a beta that can change after Unit 1, so `/api/probe` gains `browser`: two fixed calls that take nothing from the request. One opens `https://example.com/` with `read_page`'s options (status, text length, whether `finalUrl` and `X-Browser-Ms-Used` came back, duration). The other renders, with `html` set and the pattern for `example.com`, a fixed page whose script writes a marker and sends two no-cors `fetch` calls, one to `https://example.com/` and one to `https://example.org/`, writing whether each settled or was blocked. The marker must be present, the fetch to `example.com` must settle, which shows scripts ran and the pattern lets the page's host through, and the fetch to `example.org` must be blocked. Without a binding `browser` is `null`. `test:deployed` asserts both on staging and production after every deploy and in the monthly check, and `null` on the test instances.
 
 ### The contract, the catalog and the fingerprints
 
-- **No contract change.** No fact, command or price changes, so Laravel deploys nothing.
-- **The catalog.** The site kind's `actions` become `["read", "browse"]`, the connector's actions gain `{id: "browse", label: "Open in browser", requires: "read"}`, and the note becomes: "Search for a domain or paste an address to add it. Pages open in Cloudflare's browser. Agents can send information to the sites they may read, in the addresses they open. Open in browser also runs a page's scripts, which can act on the site, so allow it only on sites you trust. A block on a domain wins over access to a wider one." The note keeps one sentence per risk, since it is all the granting person sees. The detail (sign-in links, repeats, same-host frames, where pages are processed) goes in docs/connectors.md and in the public page about connectors' permissions that the owner plans for the website, which a later change links from the grant editor. The operator runs `minerva:catalog --approve --only=web` once on staging and once on production after the engine's deploy (the app's `docs/architecture/connectors.md:16-19`). Until then Laravel shows the old entry, so nobody can grant `browse`, and `read_page` works.
-- **`read_page`'s revision becomes 2.** Its input and record are unchanged, but the address now goes to Cloudflare's browser and http opens as https, a change of meaning the declaration does not show. A run in progress at the deploy loses `read_page` until its next message. `browse_page` and `screenshot_page` start at 1. The pin at `connectors-web.test.ts:105` gains both.
+- **No contract change.** No command, fact or price changes. Tenants are strings within the contract's bounds already.
+- **The catalog.** Web's kinds become one, `site`, with `actions: ["browse"]`; its actions `[{id: "browse", label: "Open in browser"}]`; its tenancy `resource` with label `domain`. The note: "Search for a domain or paste an address to add it. Open in browser loads pages in Cloudflare's browser and runs their scripts, which can act on the site as a visit would, such as following a sign-in link. Agents can also send information in the addresses they open, to these sites and to wherever they redirect, so allow only sites you trust. A block on a domain wins over access to a wider one." The detail goes in docs/connectors.md and the public Web page, which the editor links (the app's `resources/js/components/connections/access.ts`, `DOCS_PAGES`). The operator runs `minerva:catalog --approve --only=web` once on staging and once on production after the engine's deploy. Until then Laravel shows the old entry, nobody can grant `browse`, and no restricted layer opens a page.
+- **Fingerprints.** `read_page`'s revision becomes 2 and `screenshot_page` starts at 1. The tenancy changes every Web fingerprint, so a run in progress at the deploy loses the Web tools until its next message. The pin at `connectors-web.test.ts:105` gains `screenshot_page`.
 
 ### Where it runs and what Cloudflare sees
 
-- **Every page the agent opens goes to Browser Run:** the address, which can carry whatever the agent put in it, tokens included; the page and its own host's resources; with `browse`, the session a sign-in link sets and the account's pages it shows.
+- **Every page the agent opens goes to Browser Run:** the address, with whatever the agent put in it, tokens included; the page and its own host's resources; the session a sign-in link sets and the account pages it shows; and the screenshot.
 - **Where:** "close to the incoming request", with no location guarantee, so possibly outside the EU, also for an EU workspace's conversation (owner question 1).
-- **Kept:** page content is discarded after the response, and `cacheTTL: 0` turns the cache off. How long addresses and request metadata are kept is not documented.
+- **Kept:** page content is discarded after the response and `cacheTTL: 0` turns the cache off (documented). How long addresses and request metadata are kept is not documented. A screenshot stays in the conversation's engine storage, in the tool result's row, as `read`'s images do.
 
 ## What is deleted
 
 In Unit 2's commit, with their tests:
 
-- `cloudflare/src/connectors/web/fetch.ts`, `inflate.ts` and `pako.d.ts`, and `pako` from `cloudflare/package.json` and the lockfile. `USER_AGENT` moves to the new `render.ts`.
+- `cloudflare/src/connectors/web/fetch.ts`, `inflate.ts`, `pako.d.ts` and `search.ts`, and `pako` from `cloudflare/package.json` and the lockfile. `USER_AGENT` moves to the new `render.ts`.
 - `platformRefusal` and its header line in `cloudflare/src/gateway/http.ts` (`:19`, `:405-412`), and its test in `http-client.test.ts`.
-- `test/fixtures/connectors/web/fake.ts`, replaced by `fake-browser.ts`, and the fetch cases of `connectors-web.test.ts`.
+- Web's account kind, `search`, `offered`, `WebOptions` and `MINERVA_BRAVE_SEARCH_API_KEY` (in `pnpm secrets`, AGENTS.md and the docs).
+- `test/fixtures/connectors/web/fake.ts`, replaced by `fake-browser.ts`, and the fetch and search cases of `connectors-web.test.ts`.
 - The Web connector's mentions in the headers of `lib/markdown.ts` and `lib/charset.ts`, which keep Gmail and Google Calendar.
+
+## Unit 1: the checks
+
+No engine code. The owner approved on 2026-10-26 a throwaway fixture Worker on the test instance's account and the checks below. The fixture lives in the scratchpad, not the repository, and is deleted after the unit; nothing about its hosts is committed. It serves probe pages on one host and records every request that reaches a second host, which the checks read back. Calls go to Browser Run's REST endpoints with cf's sign-in, one at a time and at least 3 s apart, and every check has a positive control (the same call without the pattern, or the same mechanism aimed at the page's own host) that must show the request arriving, or the check proves nothing. A mechanism that never runs on Kitesurf, even in the control, is recorded as unsupported, not blocked, and docs claim nothing for it.
+
+- **C2, the boundary with scripts running.** `read_page`'s exact options, then `screenshot_page`'s. A page on the first host sends to the second: `fetch` by GET and by POST (no-cors), `navigator.sendBeacon`, a `WebSocket`, an EventSource, an `<a ping>` clicked by script, a `<script src>`, a dedicated worker's `fetch`, a shared worker, workers built from `blob:` and `data:`, a service worker registered on the first host that fetches the second, WebRTC with an ICE server on the second host, and a speculation-rules prefetch. Then the moves: `location.href`, a meta refresh, a form that submits itself by GET and by POST, `window.open`, links and forms with `target=_blank`. The page reports in its text which mechanisms ran. Pass: nothing reaches the second host, every mechanism that ran reaches it in the control, and a same-host `fetch` and POST arrive. A kind that gets through is tried with its type in `rejectResourceTypes`; if that blocks it, the type joins the options, and otherwise Kitesurf fails.
+- **C3, redirects.** A `url` that answers 302 to the second host, with the pattern and without: `meta.finalUrl`, `meta.redirectChain` and the status, to decide how `redirect_to` is found. A 302 from https to http on the same host.
+- **C4, certificates.** badssl.com's expired, self-signed and wrong-host test certificates. Pass: each fails. No call is aimed at a private or metadata address (Evidence so far).
+- **C5, C6 and C8 are not run** (Evidence so far): isolation between calls and the cache rest on Cloudflare's documentation, and a render's lifetime after the caller stops is unknown.
+- **C7, content.** Fixtures with exact payloads: JSON, CSV, plain text, Markdown and XML; a page in a charset other than UTF-8; a page with known sentences, a table and relative links; a PDF, an image, a 404, a 204 and a page over 3 MB. Recorded: what `result`, `meta.status` and `meta.headers["content-type"]` hold for each. Pass: the sentences and links come back, and each text payload comes back exactly or inside a wrapper the engine can remove.
+- **C1, the binding,** runs in Unit 2, since it needs the Worker: `/api/probe` in mode `development` before the commit, with the same options as over REST.
+
+The unit records each result in Evidence so far, with its label, and anything that contradicts a decision here goes back to the owner before Unit 2.
 
 ## Deploy order and rollback
 
-Deploys of staging and production ask the owner first (AGENTS.md, Cloudflare). Laravel's code is not deployed.
+Deploys of staging and production ask the owner first (AGENTS.md, Cloudflare); so does pushing the app's `main`, which deploys Laravel's staging, and publishing the docs site.
 
-1. **Unit 1, the probes,** with the owner's go. If Kitesurf fails P1 to P4, or P5 falls below its mark, the design goes back to the owner before any code. There is no other engine to fall back on.
+1. **Unit 1, the checks.**
 2. **Units 2 and 3,** two commits: `pnpm check --instance minerva-cf-test`, push `main`, green `main.yml`, then `account.yml` (`gh workflow run account.yml --ref main`) with all of `test:faults` and `test:deployed`, since `cloudflare.config.ts` changes.
-3. **`minerva-cf-staging`,** once the owner says so: `pnpm run deploy`, `pnpm test:deployed --instance minerva-cf-staging`, then `minerva:catalog --approve --only=web` on Laravel's staging, then the live checks.
-4. **`minerva-cf`,** only after staging's live checks pass and the owner says so (owner question 8): the deploy, then the Web approval on Laravel's production.
-5. **A usage notification for Browser Run** on the account, with the owner's go, since it changes the account. It warns when browser hours pass the 10 included a month, so a price for Kitesurf shows within days rather than at the monthly check.
+3. **Unit 4** committed in the app, pushed with the owner's go, which deploys Laravel's staging. Allowed apps then offers a list for Web only after the approval in step 4, since it reads the approved entry.
+4. **`minerva-cf-staging`,** with the owner's go: `pnpm run deploy`, `pnpm test:deployed --instance minerva-cf-staging`, staging's one `read` grant removed, `minerva:catalog --approve --only=web` on Laravel's staging, then the live checks.
+5. **Unit 5,** the public Web page, published with the owner's go once staging's live checks pass.
+6. **`minerva-cf`,** with the owner's go after staging's live checks (owner question 8): the deploy, then the Web approval on Laravel's production.
+7. **A usage notification for Browser Run** on the account, with the owner's go, so a price for Kitesurf shows within days rather than at the monthly check.
 
-**Rollback** is reverting the commits and deploying, which needs green runs of `main.yml` and `account.yml` on the revert (AGENTS.md, Git). No storage or contract changed. The old engine compiles runs from its own catalog, so `browse_page` and `screenshot_page` are not offered, and a stored `browse` grant becomes a policy key no operation needs (`cloudflare/src/gateway/policy.ts:125`). Laravel shows the approved entry with Open in browser until Web is approved again, and a grant edit that names `browse` is refused meanwhile (`checkChanges`, `cloudflare/src/gateway/grants.ts:118-121`). There is no switch that brings back the plain fetch while Browser Run is down (owner question 4).
+**Rollback** is reverting the commits and deploying, which needs green runs of `main.yml` and `account.yml` on the revert (AGENTS.md, Git). No storage or contract changed. The old engine's catalog has `read` and no tenancy for Web, so stored `browse` grants become keys no operation needs, nobody can read pages until `read` is granted again, and a list on Web's policy entry refuses Web entirely (`admission`'s `unknown` case). There is no switch back to the plain fetch while Browser Run is down (owner question 4).
 
 ## Units
 
 Each unit is for one fresh agent, in this order.
 
-1. **The probes (no code).** The agent runs `cf browser-run quick-action markdown` and `screenshot` with `--browser kitesurf` (cf 1.0.0-beta.13 has both) against the test instance's account, after the owner's go. It creates nothing on the account. Requests that must be seen arriving go to a public request-inspection service chosen at the time, on throwaway paths that carry no data, and pages the probes need are served from a host the agent controls for the probe; nothing about either is committed. Every probe has a positive control: the same call without the pattern, or with scripts on, must show the request arriving, or the probe proves nothing. The agent records the results in this design and in the unit's ARCHITECTURE.md text.
-   - **P1, reading with scripts off.** `read_page`'s exact options on a page whose script writes text into the page and sends a same-host and an other-host request, and which has an `<iframe>`, an `<img>`, a stylesheet and a font on another host, a form set to submit itself by POST, `<link rel=preconnect>` and `dns-prefetch`. Pass: no script effect, no POST, nothing arrives at the other host, and the text of the HTML comes back. Then each filter set of Reading with scripts off in turn, with a same-host image and a same-host frame as detectors, to choose the first that loads the least beside the page. Recorded: a same-host link that sets a session cookie and redirects to a page that shows whether the cookie came back.
-   - **P2, browsing with scripts on.** `browse_page`'s exact options, then with the pattern alone. A script on the page sends to another host: `fetch` by GET and by POST with `mode: "no-cors"`, an `<img>` and a `<script src>`, `navigator.sendBeacon`, an `<iframe>`, a `WebSocket`, a `fetch` from a dedicated worker, a shared worker, workers built from `blob:` and `data:`, and a service worker registered from the page's host; `<a ping>`, an EventSource, a speculation-rules prefetch, WebRTC with an ICE server whose log can be read, and connection hints to a subdomain whose DNS log can be read. Then the moves: `location.href`, a meta refresh, a form that submits itself by GET and by POST, `window.open`, links and forms with `target=_blank`, and a `url` that answers 302 to another host. The page reports in its own text whether each mechanism ran at all. Pass: none arrives at the other host, every one that ran arrives without the pattern, and a same-host `fetch` reaches. A mechanism that never runs on Kitesurf, even without the pattern, is recorded as unsupported, not as blocked, and docs/connectors.md does not claim it. A connection hint that arrives only as a DNS lookup or a connection is recorded for owner question 7. A kind that arrives is tried again with its type added to `rejectResourceTypes`; if that blocks it, the type joins the options, and otherwise Kitesurf fails. For the 302, `meta.finalUrl` and `meta.redirectChain` are recorded with the pattern (to choose how `redirect_to` is found) and without it. The same moves run once through `screenshot`.
-   - **P3, private addresses.** No pattern, through `url`, with scripts off and on, over http so that no certificate failure hides Browser Run's own answer, and over https: the private, loopback, CGNAT, link-local and metadata names and IP literals of the removed account test (`git show c23b43e^:cloudflare/test/account/web-egress.test.ts`, its `PRIVATE` and `OTHER` lists), a name from a public rebinding service whose answers alternate between a public and a private address, run ten times, and a public redirector's 302 to `http://169.254.169.254/` and to a name for 10.0.0.1. Pass: every case ends in a refusal the agent can name (Cloudflare's error 1002, 1003 or 1102 in the page or `meta`, or a Browser Run error that says the address is blocked); a timeout or an unexplained failure is inconclusive, and Kitesurf is not used with one. Then a public service's hosts with an expired, a self-signed and a wrong-name certificate. Pass: each fails.
-   - **P4, options, lifetime and state.** Kitesurf honours `setJavaScriptEnabled`, `networkidle2`, `bestAttempt`, `actionTimeout`, `rejectResourceTypes`, `userAgent`, `viewport` and `screenshotOptions`; `cacheTTL: 0` gives two calls, under 5 s apart, on a page that writes `Date.now()` two different texts; the deployed probe's canary works; whether `X-Browser-Ms-Used`, `meta.finalUrl` and `meta.headers` come back; whether `result` starts with front matter; the response's size against `result`'s on a large page; screenshot sizes at 1280 by 800, quality 80, on five busy pages; and Kitesurf's per-account limits as Cloudflare states them, without bursting requests to find them. **How long a call runs:** a page whose script keeps more than two requests open at all times, so `networkidle2` never comes, and sends a beacon every 500 ms, timed to the last beacon, once with the caller waiting and once with the caller stopping early; the answer must show that the wait ran out, or the page went quiet and the case is run again. The same with a page that only loads slowly, and with a screenshot. **State between renders:** a page that sets a cookie, a `localStorage` key and an IndexedDB entry, registers a service worker and caches a resource, and reports in its text that each was set, then several more calls that report what they find, and whether the service worker's beacons go on after its call. Pass for state: the first call shows each was set, nothing set in it is seen in another, and no beacon goes on.
-   - **P5, what reading loses or gains.** 40 typical work addresses chosen at the time, or the targets of staging's `web_read_page` calls with the owner's go (not committed). For each, today's fetch and `htmlToText` from the laptop, then `read_page`'s and `browse_page`'s options: outcome, status, content type, text length, and whether three sentences picked from the page as a browser shows it are in the text. The laptop's fetch is not the deployed Worker's, so it approximates today's results. Then fixtures on the probe's host with known content: a page with known sentences, a table and relative links, a page in a charset other than UTF-8, a JSON, a CSV, a plain text, a Markdown and an XML file with exact payloads, a PDF, an image, a 404 and a page over 3 MB. Pass: `read_page` succeeds wherever today's fetch does on at least 36 of the 40 and keeps all three sentences on at least 36 (guess at the marks), the fixtures' sentences and links come back, and each text file's payload comes back exactly, apart from a wrapper the engine can remove. Recorded: how many thin pages `browse_page` fixes, and what the PDF and the image give. Below a mark, the design goes back to the owner (owner question 7).
-2. **Reading through the browser (harness).** One commit: `read_page` through the port with scripts off, the binding, the port and its cap, the error table, the log line, the probe, the deletions, the tests and the docs for reading. It runs `pnpm exec vite` (mode `development`, which needs `CLOUDFLARE_API_TOKEN`) and calls its `/api/probe` with the token derived from `.dev.vars`' `MINERVA_SECRET_KEY`, never printed, so the binding's answer is seen before any deploy. Done when `pnpm check --instance minerva-cf-test` passes and it is committed.
-3. **Open in browser (harness).** One commit: the `browse` action, `browse_page`, `screenshot_page`, the image's path through `ScopedRecord`, `visibleResult`, `ToolCallOutcome` and `render`, the new note, the tests and the docs for browsing. Done as Unit 2. opencode reviews both diffs, since they change what a site grant lets reach.
+1. **The checks.** As above.
+2. **Reading through the browser (harness).** One commit: `read_page` through the port, the `browse` action, Web's tenancy, search and the fetcher deleted, the binding, the port and its cap, the error table, the log line, the probe, the tests, and the docs for reading and the site list. It runs C1 in `pnpm exec vite` (mode `development`, which needs `CLOUDFLARE_API_TOKEN`) through `/api/probe` with the token derived from `.dev.vars`' `MINERVA_SECRET_KEY`, never printed. Done when `pnpm check --instance minerva-cf-test` passes and it is committed.
+3. **Screenshots (harness).** One commit: `screenshot_page`, the image's path through `ScopedRecord`, `visibleResult`, `ToolCallOutcome` and `render`, `modelTools`' order, the tests and the docs. Done as Unit 2. opencode reviews both diffs, since they change what a site grant lets reach.
+4. **Web's site list (app).** One commit: how a typed Web domain is written and refused, its tests, Allowed apps' words for a domain list, and the app's `connection-policies.md` (16 and 18) and `connectors.md` (Built-in services, which says Web searches). Committed, pushed only with the owner's go.
+5. **The public Web page (landing-page).** `docs/src/content/docs/connectors/web.md`: the permission, the organization's list, What a visit can do, the same-host rule and its cost, screenshots, and the limits. Its "How pages are opened" and "What agents cannot do" are false once this ships.
 
 ## Tests
 
@@ -231,216 +314,105 @@ All run in Node or local workerd, with no account (`vitest.platform.config.ts:30
 
 - **A fake browser,** `cloudflare/test/fixtures/connectors/web/fake-browser.ts`. It records each call's action and options, and answers what a test scripts: Markdown with a `meta`, an image, an error status, a throw, a hang, a `finalUrl`, a `redirectChain` or none, an oversized body.
 - **`connectors-web.test.ts`, reading:**
-  - a granted https page gives today's record with the fake's Markdown, `meta.title` and the content type; a slice at `offset` and `max_chars` as today;
-  - the options sent: `markdown`, `kitesurf`, scripts off, the filter set Unit 1 chose, the exact pattern, `cacheTTL: 0`, the user agent and the timeouts;
-  - an http address opens as https; an IP literal, `localhost` and a site the policy denies send no call;
-  - each row of What the model sees, with the exact code and message;
-  - `finalUrl` on another host, or on http, gives `redirect_to`; a hop in `redirectChain` gives it when the call stopped there; missing, `about:blank` and `chrome-error://chromewebdata/` fail; on the same host it is the `url` and the links' base;
+  - a granted https page gives today's record with the fake's Markdown, `meta.title` and the content type, front matter removed; a slice at `offset` and `max_chars` as today;
+  - the options sent: `markdown`, `kitesurf`, the exact pattern list, the rejected types, `cacheTTL: 0`, the user agent and the timeouts;
+  - an http address opens as https; the fragment is sent; an IP literal, `localhost` and a site the policy denies send no call;
+  - each row of What the model sees, with the exact code and message, and the scripts sentence after a call was sent;
+  - `finalUrl` on another host or on http gives `redirect_to` and no text; missing, `about:blank` and `chrome-error://chromewebdata/` fail; on the same host it is the `url` and the links' base;
   - a response over 8 MB, Markdown over 3 MB, malformed JSON and `success: false`;
   - a hang is cut at the wait, on lowered limits, and the wait covers a body that stalls;
   - the pattern for a host with a hyphen and a punycode label, an address whose query holds another host, and the same host on another port;
-  - the cap: after 100 calls in one run, of any operation, the next is `LIMIT_REACHED` with no call, and a run with its own executor starts at 0;
+  - the cap: after 100 calls in one run, of either operation, the next is `LIMIT_REACHED` with no call, and a run with its own executor starts at 0;
   - the log line: each outcome from the fixed set, and no part of the address when the fake's error `message`, `detail` and `path`, or a thrown message, hold it;
-  - no binding gives `BROWSER_UNAVAILABLE`;
-  - `NotSent` and `ProgrammingError` from a revoked or closed io pass through.
-- **`connectors-web.test.ts`, browsing:** `browse_page` and `screenshot_page` need `browse` and send scripts on; `read` alone refuses them; a screenshot gives the record and one image of the fake's bytes; an image over 1,152 KiB is `PAGE_TOO_LARGE`; the failure messages add the scripts sentence.
-- **The image's path:** a screenshot's image is the part after the JSON in `render`'s output; a record that `visibleResult` drops drops its image; a script's call gets the record and no image; a 1.5 MB image reaches the model's context whole.
-- **The fingerprints:** the pin at `connectors-web.test.ts:105` gains `browse_page` and `screenshot_page` and changes `read_page`'s.
+  - no binding gives `BROWSER_UNAVAILABLE`; `NotSent` and `ProgrammingError` from a revoked or closed io pass through.
+- **`test/platform/internal-connections.test.ts`:** the account's name (`:143`) and the `search` edit (`:238-247`) go with the account kind; the site edit (`:250-269`) grants `browse`, `read` becomes invalid with `search`; the list case (`:339-340`) becomes a list that Web accepts by domain, with a site outside it refused.
+- **The site list:** each resource and record names its registrable domain as tenant; `tenants` maps `en.wikipedia.org`, `*.wikipedia.org` and `wikipedia.org` to `wikipedia.org`; under a list without the domain a call is `POLICY_DENIED` with the domain's message and sends nothing, and an edit allowing such a site is `TENANT_NOT_ALLOWED`, while `*` is allowed; under a list with it the call is sent; an unrestricted layer does not pass the list; `https://co.uk/` is `INVALID_URL` with no call, discovery of `co.uk` is empty, and a grant edit for `co.uk` is invalid.
+- **Grants:** `read` alone refuses both operations; `browse` allows them; a deny on `browse` on a domain wins over an allow on `*`.
+- **Screenshots:** `screenshot_page` needs `browse`; it gives the record and one image of the fake's bytes; an image over 1,152 KiB is `PAGE_TOO_LARGE`; the image is the part after the JSON in `render`'s output; a record that `visibleResult` drops drops its image; a script's call gets the record and no image; a 1.5 MB image reaches the model's context whole; with more gateway tools than fit, `screenshot_page` is among the direct ones.
+- **The fingerprints:** the pin at `connectors-web.test.ts:105` gains `screenshot_page` and changes `read_page`'s.
 - **`executor-revocation.test.ts`:** no browser call once the run is revoked, and a cancel during a call drops its result.
-- **One platform test,** `test/platform/web-render.test.ts`, with its own ports: the browser port gets the fake, and a run's `read_page` reads through it; a `cancelRun` during the call ends the run.
-- **The probe:** `test:deployed` checks `/api/probe`'s `browser` on staging and production (the fixed page's status 200, text and `finalUrl`; the canary's marker absent with scripts off, present with scripts on, and its fetch blocked) and `null` on the test instances. A unit test checks that the probe reads nothing from the request for it.
-- **The direct tools:** with more gateway tools than fit, `screenshot_page` is among the direct ones.
-- **The fragment:** `browse_page` and `screenshot_page` send `#/invoices/1` with the address, and `read_page` does not.
-- **`pnpm startup`** stays within its limit; one dependency, `pako`, is removed and none added.
+- **One platform test,** `test/platform/web-render.test.ts`, with its own ports: the browser port gets the fake, and a run's `read_page` reads through it, under a policy with a domain list; a `cancelRun` during the call ends the run.
+- **The probe:** `test:deployed` checks `/api/probe`'s `browser` on staging and production and `null` on the test instances. A unit test checks that the probe reads nothing from the request for it.
+- **`pnpm startup`** stays within its limit; `pako` is removed and nothing added.
+- **The app (Unit 4):** typed domains written as the engine writes them (case, IDNA, `*.`, a scheme, a path, a subdomain reduced), a public suffix and an IP refused with the message, and a policy saved with a Web list sent in a start.
 
 ## Docs to update
 
-- **docs/connectors.md, The Web:** Fetching becomes "Opening pages": every page opens in Cloudflare's browser, https only, the browser reaches only the page's host for the kinds of request Unit 1 measured, Read pages runs no scripts, but a sign-in link handled by the server still signs the browser in for that read, and a frame or image on the same host may load. Open in browser runs the page's scripts, which can act on the site as a visit would, sign in through a link and do so more than once per read. Agents can gains screenshots. Limits: bot-protected pages stay unreadable, a continuation opens the page again and may differ, a run opens at most 100 pages, a screenshot shows only the first screen and reaches only models that take images, and the refusal of private addresses is what P3 measured.
-- **docs/data-processing.md:** the "Web fetch and search" row says pages are opened by Cloudflare Browser Run, receiving the address with whatever the agent put in it, the page and its host's resources, and with Open in browser the session a sign-in link sets; location "close to the incoming request", with no guarantee and possibly outside the EU; page content discarded after the response, addresses and request metadata not documented. The Subprocessors' Cloudflare row lists Browser Run.
-- **ARCHITECTURE.md:**
-  - Spike results, Private addresses: the platform's refusal of the Worker's fetch is replaced by what P3 measured of Browser Run, its certificate checks and the kinds of request the pattern covers. The claim of "adversarial tests ... against the deployed Worker", whose test was removed in `c23b43e`, goes.
-  - Connectors: the two actions, why `browse_page` stays a read with safe replay while it can act on a site, and any connection hint P2 let through.
-  - Strict revocation: a call already sent, or one the engine stopped waiting for, is browser activity handed off to Cloudflare, bounded by Cloudflare rather than by the engine, with what P4 observed.
-  - Budgets: Browser Run's time is not charged, and the cap of 100 calls per run.
-  - The harness: images reach the model through `read` and through `screenshot_page`'s result.
-  - Configuration and Status: the `BROWSER` binding, and that every instance reads through it.
-  - Open questions: Browser Run among what has no EU guarantee.
-- **cloudflare/README.md:** Local development's table gains a Browser row (offline none; `pnpm exec vite` reaches the account's Browser Run); the test Worker has no browser; a monthly operator check of Kitesurf's status (still in beta, still free, its limits) and the month's browser hours on the dashboard.
+- **docs/connectors.md, The Web:** Fetching becomes "Opening pages": every page opens in Cloudflare's browser with its scripts running, https only, the browser reaches only the page's host for the kinds of request C2 measured, and What a visit can do. The organization's list by domain. Agents can gains screenshots. Search goes. Limits: bot-protected pages stay unreadable, a page whose code or data comes from another host stays thin, a continuation opens the page again and may differ, a run opens at most 100 pages, a screenshot shows only the first screen and reaches only models that take images, information can reach the allowed sites and wherever they redirect, and past Minerva's refusal of numeric addresses and local names, what the browser may reach is Cloudflare's service to decide.
+- **docs/data-processing.md:** the "Web fetch and search" row becomes Web pages opened by Cloudflare Browser Run, receiving the address with whatever the agent put in it, the page and its host's resources, the session a sign-in link sets, and screenshots; location "close to the incoming request", with no guarantee and possibly outside the EU; page content discarded after the response, addresses and request metadata not documented; screenshots kept in the conversation's engine storage. Brave Search goes. The Subprocessors' Cloudflare row lists Browser Run.
+- **ARCHITECTURE.md:** Spike results, Private addresses, becomes Minerva's own refusal before sending, Cloudflare's service deciding after it (untested by Minerva), the certificate checks C4 measured, the kinds of request the pattern blocks and the moves it does not; the claim of "adversarial tests ... against the deployed Worker", whose test was removed in `c23b43e`, goes. Connectors: `browse`, why both operations stay reads while they can act on a site, Web's tenant per domain. Tenancy: the Web is a tenant per resource. Strict revocation: a render already sent, or one the engine stopped waiting for, is handed off to Cloudflare, with no bound known. Budgets: Browser Run is not charged, and the cap of 100 calls per run. The harness: images reach the model through `read` and through `screenshot_page`. Configuration and Status: the `BROWSER` binding. Open questions: Browser Run among what has no EU guarantee.
+- **cloudflare/README.md:** Local development's table gains a Browser row (offline none; `pnpm exec vite` reaches the account's Browser Run); the test Worker has no browser; a monthly operator check of Kitesurf's status (still in beta, still free, its limits) and the month's browser hours.
+- **AGENTS.md:** `MINERVA_BRAVE_SEARCH_API_KEY` goes from Secrets.
+- **README.md:** the Web connector reads pages in Cloudflare's browser and takes screenshots.
 - **Code comments:** the header of `connector.ts` points to the new `render.ts`, whose header gives the rules above and cites ARCHITECTURE.md, never this file.
 
 ## Live checks
 
 | Check | Where | Who |
 |---|---|---|
-| P1 to P5 | The test instance's account, through `cf` | The agent |
-| `/api/probe`'s `browser` through the binding, before any deploy | `pnpm exec vite` | The agent |
+| C2, C3, C4 and C7 (done) | The test instance's account, through Browser Run's REST endpoints | The agent |
+| C1, `/api/probe`'s `browser` through the binding, before the commit | `pnpm exec vite` | The agent |
 | `pnpm test:deployed --instance minerva-cf-staging` | Staging, after its deploy | The agent |
-| A turn through `minerva:turn` reads a granted static page, and the log line shows one call | Staging | The agent, with the owner's go |
-| With `browse` granted on a single-page app from P5 in staging's workspace, `browse_page` returns its text and `screenshot_page` an image the model describes | Staging | The agent, with the owner's go |
-| A site granted only `read` refuses `browse_page`, and a host the run may not read is refused before any call | Staging | The agent |
-| The new note and the Open in browser checkbox on the Web connection's page, after the approval | Laravel's staging | The agent, with the owner's go |
-| Within 7 days of the deploy: calls per operation, failures by outcome and the summed browser time (`cf o11y` with the instance's account) | Staging, and production once deployed | The agent, with the owner's go |
+| A turn through `minerva:turn` opens a granted static page, and the log line shows one call | Staging | The agent, with the owner's go |
+| A turn opens a page built by scripts on its own host, and `screenshot_page` gives an image the model describes | Staging | The agent, with the owner's go |
+| Without `browse` on a site, both are refused and nothing is sent; a host the run may not open is refused | Staging | The agent |
+| With the "Shared" team's policy offering Web on `wikipedia.org` only, a turn opens a Wikipedia article, is refused another domain, and a grant edit allowing another domain is refused | Laravel's staging and the engine | The agent, with the owner's go |
+| The new note, the Open in browser checkbox and Web's domain list on Allowed apps, after the approval | Laravel's staging | The agent, with the owner's go |
+| Within 7 days: calls per operation, failures by outcome and summed browser time (`cf o11y` with the instance's account) | Staging, and production once deployed | The agent, with the owner's go |
 
 ## Risks
 
-- **Every read depends on a beta.** Kitesurf has unpublished limits and no price for after its beta. An outage stops all web reading, where the plain fetch did not depend on it. A price or new limits may need charging or a lower cap. The monthly check watches for it, and the deployed probe shows a change at the next `test:deployed`.
+- **Every read depends on a beta.** Kitesurf has unpublished limits and no price for after its beta. An outage stops all web reading. The monthly check and the deployed probe watch for change.
 - **A Browser Run outage** fails each read after up to 15 s and holds one of the run's 4 slots meanwhile. The model gets `BROWSER_BUSY`, `SITE_TIMEOUT` or `PAGE_ERROR`.
-- **Reads get slower.** Kitesurf's HTML extraction has a median of 820 ms (/browser-run/kitesurf), where a plain fetch is usually less (guess); Verify, perf measures it.
-- **Some sites may refuse Browser Run** more often than today's fetch, since it is always identified as a bot. P5 measures it on the sample.
-- **A cross-host redirect may lose its target.** Moving from `example.com` to `www.example.com` is common. If P2 shows that `redirectChain` does not report a hop the pattern stopped, the model gets the note without `redirect_to` and must guess the address.
-- **Open in browser can act on a site,** sign in through a link and repeat an action. Owner question 7 and the note cover it.
-- **One customer can use up the shared limits.** Kitesurf's limits are per account, and every customer reads through it. The cap bounds one run, not several: a member who starts many runs on purpose, or many runs that read at once, can make reads fail with `BROWSER_BUSY` for every customer while it lasts, and there is no plain fetch to fall back on. Admission across the account, with a share per organization, was not designed, since pilots join only by invitation (owner question 3).
-- **Screenshots of sites that use a CDN look broken,** since the pattern blocks their images, stylesheets and fonts. P4's five busy pages show how often.
+- **Reads get slower.** Kitesurf's HTML extraction has a median of 820 ms (/browser-run/kitesurf, documented), and the probes took 0.6 to 2.2 s from the laptop (measured), where a plain fetch is usually less (guess).
+- **Some sites refuse Browser Run** more often than today's fetch, since it is always identified as a bot.
+- **Redirects on allowed sites reach other hosts.** A site that forwards to an address from its query string sends what the agent put there anywhere. Accepted (owner question 14), and the note says so.
+- **A visit can act on a site,** sign in through a link and repeat an action. The note, docs/connectors.md and the public page say so.
+- **One customer can use up the shared limits.** Kitesurf's limits are per account. The cap bounds one run, not several, and there is no admission across the account while pilots join by invitation (owner question 3).
+- **Screenshots of sites that use a CDN look broken,** since the pattern blocks their styles, images and fonts.
+- **A list by domain is coarse.** An admin cannot allow one subdomain alone at the organization's level; a member can in their grants.
 
 ## Accepted, not fixed
 
 - **Browser Run ignoring `cacheTTL: 0`** would be a platform misbehaving in a way it is not known to. A page could then be up to 5 s old, from the account's cache.
-- **A request or a move of a kind neither P1 nor P2 tests** getting past the pattern needs a channel no reviewer or probe named. Another host would then receive what the granted page holds.
-- **The account's 30 Quick Actions a second** are shared by every customer. Reaching it needs about 8 runs reading at the same moment, which is unlikely at pilot scale; those reads get `BROWSER_BUSY` for that second.
+- **A move made by the page's own script or form** is not in `finalUrl`, so its page comes back labelled as the allowed host's. The page's host chose to send the browser there, and could show the same text itself.
+- **A screenshot of a page that moved** shows the other host's page under the address asked for, since a screenshot has no `meta`. The allowed host sent the browser there, the model sees only a picture, and what the other host received is what the owner accepted for moves (owner question 14).
+- **A request of a kind C2 does not test** getting past the pattern needs a channel no reviewer or check named. Another host would then receive what the page holds.
+- **The account's 30 Quick Actions a second** are shared by every customer. Reaching it needs about 8 runs opening pages at the same moment, unlikely at pilot scale; those calls get `BROWSER_BUSY` for that second.
 
 ## Owner questions
 
-1. **Processing outside the EU.** Every page the agent opens now goes to Browser Run, with no location guarantee, for every customer. Default: acceptable, and docs/data-processing.md says so. **Answered 2026-10-26:** as the default.
-2. **http addresses.** Opened as https on the same host, so an http-only site cannot be read. Default: as proposed. The alternative, opening http, has no TLS to keep a private address from answering for the name. **Answered 2026-10-26:** as the default.
-3. **The cap, and the shared limits.** 100 browser calls per run between restarts, across the three operations. It does not stop several runs from using up Kitesurf's per-account limits for every customer. Default: 100, revisited with Kitesurf's stated limits from P4, and no admission across the account while pilots join by invitation. **Answered 2026-10-26:** as the default.
-4. **No switch.** With the fetcher deleted, there is nothing to fall back to while Browser Run is down, and a rollback is a revert with its CI runs. Default: accepted. **Answered 2026-10-26:** as the default.
-5. **Revocation and a call in flight.** A call already sent goes on at Cloudflare after a cancel, or after the engine stopped waiting, for as long as Cloudflare lets it; no document bounds it, and P4 records what it observed. Default: acceptable, and ARCHITECTURE.md's Strict revocation says so. **Answered 2026-10-26:** as the default.
-6. **Screenshots.** The first screen at 1280 by 800 as a JPEG, not the full page, and the model's only way to see a page. Default: as proposed. **Answered 2026-10-26:** as the default.
-7. **What Open in browser grants, and Unit 1's marks.** A page's scripts can act on the site, sign the browser in and repeat an action, outside the write ledger, its deduplication and its pauses, in parallel, with replays, and with no approval per call. Kitesurf is used only if it passes P1 to P4, and reading moves only if P5 passes. Default: accepted for the `browse` grant; a connection hint that sends no request is accepted and recorded; any other failure comes back to the owner. **Answered 2026-10-26:** as the default. `browse_page` and `screenshot_page` stay reads.
-8. **Kitesurf in production during its beta.** Default: staging first, production only after staging's live checks, when the owner says so. **Answered 2026-10-26:** as the default.
-9. **What Read pages still does in a browser.** With scripts off, the browser still keeps cookies within one call, so a sign-in link handled by the server signs it in and `read_page` returns the account's page, where today's fetch ended on an anonymous one. A frame or an image on the same host may also load beside the page. Both are GET requests to the granted host. Default: accepted. docs/connectors.md and the planned public page about connectors' permissions say that a sign-in link signs Minerva's browser in; the site note stays short. **Answered 2026-10-26:** as the default.
-10. **Open in browser for unrestricted layers.** A layer that is unrestricted allows every action, so where every layer of a run is, `browse` is allowed from the deploy on, as any new action of an existing connector would be. Default: accepted. **Answered 2026-10-26:** as the default.
+1. **Processing outside the EU.** Every page the agent opens goes to Browser Run, with no location guarantee. **Answered 2026-10-26:** acceptable, and docs/data-processing.md says so.
+2. **http addresses.** Opened as https on the same host, so an http-only site cannot be read. **Answered 2026-10-26:** as proposed.
+3. **The cap, and the shared limits.** 100 browser calls per run between restarts, and no admission across the account while pilots join by invitation. **Answered 2026-10-26:** as proposed, revisited when Kitesurf states its limits.
+4. **No switch.** Nothing to fall back to while Browser Run is down; a rollback is a revert with its CI runs. **Answered 2026-10-26:** accepted.
+5. **Revocation and a call in flight.** A render already sent goes on at Cloudflare after a cancel for as long as Cloudflare lets it. **Answered 2026-10-26:** acceptable, and ARCHITECTURE.md's Strict revocation says so.
+6. **Screenshots.** The first screen at 1280 by 800 as a JPEG, not the full page. **Answered 2026-10-26:** as proposed.
+7. **What Open in browser grants.** A page's scripts can act on the site, sign the browser in and repeat an action, outside the write ledger and its pauses, in parallel, with replays, and with no approval per call. **Answered 2026-10-26:** accepted; both operations stay reads.
+8. **Kitesurf in production during its beta.** **Answered 2026-10-26:** staging first, production only after staging's live checks, when the owner says so.
+9. **Existing `read` grants.** **Answered 2026-10-26:** removed, not converted, after a read-only count on staging and production.
+10. **Unrestricted layers.** A layer that is unrestricted allows `browse` from the deploy on, as it allows any new action. **Answered 2026-10-26:** accepted.
+11. **Who limits browser access.** **Answered 2026-10-26:** an admin allows chosen sites, such as Wikipedia, and members cannot go beyond them. Designed as Web's domain list on Allowed apps (The organization's site list).
+12. **Removing search.** Under a tenant per domain, search's need on the account has no tenant, and no build has its key. Default: deleted, to come back as its own connector.
+13. **A list by domain.** The organization's list holds registrable domains, and members narrow within them. Default: as proposed.
+14. **The same-host rule and moves.** Kitesurf's pattern blocks what a page loads from another host, not a redirect or a move the page makes (C2, C3), and `finalUrl` hides the page's own moves. **Answered 2026-10-26:** accepted. The engine withholds a page `finalUrl` places on another host or on http, and the docs and the site note say information can reach the allowed sites and wherever they redirect.
 
 ## Alternatives rejected
 
-- **Keeping the fetcher and rendering only empty pages** (the earlier design). It kept two paths, a guess at when a page is empty, a Chromium fallback and a seven-row table of notes. The owner chose one path.
-- **Chromium as a fallback.** It doubles the engines, the timers and the probes, costs browser time, and runs a page's scripts a second time after Kitesurf.
-- **Markdown for Agents.** It runs no scripts and works only on sites that turned it on (Why).
-- **`content` with Minerva's converter.** It keeps the Web connector's own conversion, which this design removes. Cloudflare's Markdown keeps image links, which Laravel's chat never loads, and was longer on the one page measured: 18,091 characters against 13,549 (measured).
-- **`snapshot`,** Markdown and a screenshot in one call. It rejects Kitesurf.
-- **`json`, `links`, `pdf` and raw `content` as tools.** `json` runs a second model, Workers AI's Llama 3.3 70B by default, billed outside the allowance (/browser-run/quick-actions/json-endpoint, Oct 12 2026). The Markdown keeps links, and raw HTML fills the model's context.
+- **Reading with scripts off** (the earlier version). Kitesurf refuses `setJavaScriptEnabled: false` (Evidence so far), and the owner chose to let scripts run.
+- **Keeping the fetcher for pages that need no scripts.** Two paths, a guess at which page needs which, and a fallback the owner ruled out.
+- **Chromium.** It doubles the engines, timers and checks, and the owner ruled it out.
+- **Relabelling `read`.** It would turn every existing grant into a visit nobody chose.
+- **A second permission beside `read`.** With the fetcher deleted, `read` alone would open nothing.
+- **An admin-only switch for browser access, apart from connection policies.** A second place to limit the same connector; the policy's list already binds every member's connection.
+- **A policy that also grants.** Allowing the list's sites in every member's layer would make the policy authorize, where today it only limits; presets can fill a member's grants instead.
+- **Keeping search with a tenant on the account.** No tenant fits a search provider, and exempting the account from tenant lists would change what a list means for every connector.
+- **A pattern from the run's grants, or from the organization's list.** It would let a page load from every allowed host, and denies become lookaheads.
+- **`content` with Minerva's converter.** It keeps the conversion this design removes, and Cloudflare's Markdown was longer on the one page measured.
+- **`snapshot`, `json`, `links`, `pdf` and raw `content` as tools.** Requirement 2. `json` also runs a second model billed outside the allowance (/browser-run/quick-actions/json-endpoint, Oct 12 2026).
 - **A full-page screenshot.** Its size has no bound, while the model gets at most `IMAGE_MAX_BYTES`.
 - **Saving screenshots into the folder** for `read` to open. The connector would need the folder, and the user's folder would fill with screenshots.
-- **A second connector for the browser.** It would give the admin a second list of the same sites.
 - **Rendering http pages.** Without TLS, a name that resolves privately for the browser would reach the private address.
-- **A browser session with request interception,** to allow scripts but only GET. It is not a Quick Action, adds a dependency and startup CPU, and hostname guardrails do not work with Kitesurf (/browser-run/features/guardrails, Sep 26 2026).
-- **Marking `browse_page` as a write.** It would run reads one at a time, put them through the write ledger and stop replays, for the few pages whose scripts act.
-- **A setting that turns reading through the browser off.** With the fetcher deleted, off would mean no reading at all, which the emergency stop and a rollback already give.
-
-## Amendments after the review
-
-Each line is one change made from an opencode finding of 2026-10-26 that held, checked against the code at `5d85043`.
-
-- A layer that is unrestricted allows `browse` from the deploy on, before Laravel's approval (policy.ts:140-142). What this design changes says so, and owner question 10 asks.
-- No filter tells the top-level page from a same-host frame, so requirement 3 is "nothing but GET to the granted host, and as little as possible beside the page". P1's detectors gain a same-host frame, and owner question 9 asks.
-- TLS does not stop a name whose owner holds a valid certificate and points it at a private address. Browser Run's own refusal is the guard, and P3 runs over http so a certificate failure cannot hide it.
-- A browser keeps cookies within one call even with scripts off, so a server-side sign-in link signs `read_page` in. Reading with scripts off, the site note, P1 and owner question 9 say so.
-- `browse` skips every guard of a write, not only the ledger. Three operations on one site list and owner question 7 name each.
-- The timers sent do not bound a whole call, so a call can outlive the engine's wait in ordinary use. Size and time and Strict revocation say so, the claim of a bound is gone, and the line under Accepted, not fixed is removed. `read_page` gains `actionTimeout`.
-- P4's page that never goes quiet keeps more than two requests open, since `networkidle2` allows two, and the case checks that the wait ran out. P2 records mechanisms that never run on Kitesurf as unsupported. P4's state case checks that the first call set each item, and its cache case spaces calls under 5 s.
-- The deployed probe also runs a canary for scripts off, scripts on and the pattern, on staging and production after every deploy and monthly, and asserts `null` on the test instances, which have no binding.
-- `parseUrl` drops the fragment, so `browse_page` and `screenshot_page` put it back for apps that route by `#/path`.
-- Past `MODEL_TOOLS_MAX`, a tool reached only through scripts loses its image, so `modelTools` puts `screenshot_page` among the direct tools.
-- The cap is per run between restarts, and the wording says so. Risks and owner question 3 name the shared limits that several runs can use up, and Deploy order adds a usage notification for Browser Run.
-- P5 checks that known sentences, links and exact payloads come back, not only lengths, and notes that the laptop's fetch only approximates the Worker's.
-- A 422 with code 2012 is a failed conversion and other 422s are failures, not timeouts; only the engine's wait gives `SITE_TIMEOUT`. Every failure after a call was sent says the scripts may have run.
-
-Dropped: that the image tests run where the 2 MB row limit is not enforced. The record's JSON is under 1 KB and the image at most `IMAGE_MAX_BYTES`, the bound `read`'s images already use in the same row, so the arithmetic holds without an account test. opencode confirmed that pi's `boundContent` keeps image parts, which replaced a guess here.
-
-## Verification
-
-This design was checked against the harness at `5d85043` by opening each file and line it cites. Since `61a9b15`, where the earlier design was checked, the Web connector, the fetcher, `http.ts`, the executor and `config.ts` are unchanged; `conversation.ts`, `ports.ts` and `faults/ports.ts` changed with fast starts, and their lines here are current. The app was checked at `a6bed42` for `thread.tsx`, `access.ts` and `docs/architecture/connectors.md`. The Accept header and the converter comparison were run from the laptop on 2026-10-26 against `blog.cloudflare.com` and `developers.cloudflare.com`. Nothing was run against an account and nothing was deployed.
-
-# Build checklist
-
-## Unit 2: reading through the browser
-
-**Depends on.** Unit 1 passed by Kitesurf, and P5 at its marks or the owner's go below them.
-
-**Files.**
-
-- [ ] Create `cloudflare/src/connectors/web/render.ts`: the options, the pattern, the capped reads, the `finalUrl` and `redirectChain` checks, the error table and the log line.
-- [ ] Edit `cloudflare/src/connectors/web/connector.ts`: `read_page` through the port, revision 2, the description, the header.
-- [ ] Delete `fetch.ts`, `inflate.ts`, `pako.d.ts` and `pako`; delete `platformRefusal` from `gateway/http.ts`.
-- [ ] Edit `cloudflare/src/gateway/http.ts`: `BrowserIo`, `ProviderIo.browser`, `CallIo`'s gated `browser`, `settingsIo` without one.
-- [ ] Edit `cloudflare/src/gateway/executor.ts`: `ExecutorContext.browser`, passed to `CallIo`.
-- [ ] Edit `cloudflare/src/conversation/ports.ts` and `conversation.ts`: the `browser` port, its cap and its wiring.
-- [ ] Edit `cloudflare/src/faults/ports.ts`: `browser: () => null`.
-- [ ] Edit `cloudflare/cloudflare.config.ts`: the binding.
-- [ ] Edit `cloudflare/src/http/probe.ts` and `cloudflare/test/account/deployed.test.ts`: the probe's fixed page.
-- [ ] Create `cloudflare/test/fixtures/connectors/web/fake-browser.ts` and `cloudflare/test/platform/web-render.test.ts`; delete `fake.ts`.
-- [ ] Edit `connectors-web.test.ts`, `http-client.test.ts` and `executor-revocation.test.ts`.
-- [ ] Edit ARCHITECTURE.md, docs/connectors.md, docs/data-processing.md and cloudflare/README.md for reading.
-
-**Build.**
-
-- [ ] Every read is one Kitesurf `markdown` call with scripts off and the filter set Unit 1 chose; nothing is sent before authorization.
-- [ ] Every browser request matches the page's https origin; a move to another host gives `redirect_to` or the note; only a `meta.status` of 200 supplies text.
-- [ ] At most 100 browser calls per run.
-- [ ] The call is gated by `admits()`, the io's own errors pass through, anything `quickAction` throws is `PAGE_ERROR`, and a cancel drops its result.
-- [ ] One log line per call, without the address or any error text.
-- [ ] No contract change.
-
-**You see.**
-
-- [ ] On staging, a turn that reads a granted page answers from its text, as today.
-
-**Verify, unit.** Tests alone are not sufficient verification. A unit is verified only when its unit, live and perf boxes are all checked.
-
-- [ ] The reading cases in Tests pass in `pnpm test:unit` and `pnpm test:platform`.
-- [ ] `pnpm check --instance minerva-cf-test` passes.
-
-**Verify, live.**
-
-- [ ] P1 to P5 recorded.
-- [ ] `/api/probe`'s call through the binding in mode `development`, before the commit.
-- [ ] Staging's reading checks in Live checks pass, and `account.yml` is green on the commit.
-
-**Verify, perf.**
-
-- [ ] Metric. `read_page`'s duration on P5's sample on staging, from the log lines. Rule. Median under 3 s, p95 under 10 s. Over fails.
-- [ ] Metric. `pnpm startup`. Rule. Within its limit, as on `main`.
-
-**Review.**
-
-- [ ] opencode reviewed the diff.
-
-## Unit 3: Open in browser
-
-**Depends on.** Unit 2 committed.
-
-**Files.**
-
-- [ ] Edit `cloudflare/src/connectors/web/connector.ts` and `render.ts`: the `browse` action, `browse_page`, `screenshot_page`, the fragment and the note.
-- [ ] Edit `cloudflare/src/gateway/connector.ts`, `executor.ts`, `results.ts` and `cloudflare/src/conversation/tools.ts`: the image on `ScopedRecord`, `visibleResult`, `ToolCallOutcome` and `render`.
-- [ ] Edit `cloudflare/src/gateway/tools.ts`: `modelTools` puts operations that return images among the direct tools.
-- [ ] Edit `connectors-web.test.ts` and the tests of the image's path.
-- [ ] Edit ARCHITECTURE.md and docs/connectors.md for browsing.
-- [ ] Delete this design and move what stays true (Docs to update).
-
-**Build.**
-
-- [ ] `browse_page` and `screenshot_page` need `browse`, which requires `read`, and run scripts on with the pattern.
-- [ ] A screenshot is one JPEG of 1280 by 800, at most 1,152 KiB, after the JSON in the model's result, and nowhere else.
-- [ ] The catalog shows the new action, operations and note; the fingerprints pin all three operations.
-
-**You see.**
-
-- [ ] On staging, with `browse` granted on a single-page app, a turn reads it and describes its screenshot, where `read_page` returns little text.
-
-**Verify, unit.**
-
-- [ ] The browsing and image cases in Tests pass.
-- [ ] `pnpm check --instance minerva-cf-test` passes.
-
-**Verify, live.**
-
-- [ ] Staging's browsing checks and the Laravel checks in Live checks pass, and `account.yml` is green on the commit.
-
-**Verify, perf.**
-
-- [ ] Metric. `browse_page`'s and `screenshot_page`'s durations on P5's single-page apps on staging, from the log lines. Rule. Median under 6 s. Over fails.
-
-**Review.**
-
-- [ ] opencode reviewed the diff.
+- **A browser session with request interception.** Not a Quick Action (requirement 2), and hostname guardrails do not work with Kitesurf (/browser-run/features/guardrails, Sep 26 2026).
+- **Marking the operations writes.** It would run every page read one at a time, through the write ledger, with no replays, for the few pages whose scripts act.
+- **A setting that turns the browser off.** With the fetcher deleted, off means no reading, which the emergency stop and a rollback already give.
