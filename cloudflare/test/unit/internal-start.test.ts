@@ -97,8 +97,8 @@ describe("the compile", () => {
 		expect(prepared.snapshot.connectionIds).toEqual([MINE]);
 		expect(prepared.catalog).toBe((await catalogOf(registry)).version);
 		expect(prepared.compiler).toBe(COMPILER_VERSION);
-		// Raised when the instructions lost the start time.
-		expect(COMPILER_VERSION).toBe("3");
+		// Raised when grants gained asks.
+		expect(COMPILER_VERSION).toBe("4");
 	});
 
 	test("its digest names the snapshot: the same compile has the same one, another compile another", async () => {

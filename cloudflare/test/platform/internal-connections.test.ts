@@ -157,9 +157,9 @@ describe("listResources", () => {
 	});
 });
 
-type Grant = { connection: string; kind: string; resource: string; name: string; actions: string[]; effect: "allow" | "deny" };
+type Grant = { connection: string; kind: string; resource: string; name: string; actions: string[]; effect: "allow" | "deny" | "ask" };
 
-function checkGrantEdit(connection: string, grants: Grant[], changes: { kind: string; id: string; actions: string[] }[], secret = "gho_token") {
+function checkGrantEdit(connection: string, grants: Grant[], changes: { kind: string; id: string; actions: string[]; ask?: string[] }[], secret = "gho_token") {
 	return commands.checkGrantEdit({
 		scope: scope(),
 		connection: { id: connection, provider: "github" },
@@ -231,6 +231,52 @@ describe("checkGrantEdit", () => {
 		});
 		const full = Array.from({ length: 10_000 }, (_, i): Grant => ({ connection: uuid7(), kind: "repository", resource: String(i), name: "", actions: ["read"], effect: "allow" }));
 		expect(await checkGrantEdit(connection, full, [{ kind: "repository", id: "*", actions: ["read"] }])).toEqual({ outcome: "invalid", message: "A layer can have at most 10,000 permissions." });
+	});
+
+	test("asked actions become an ask row after the resource's allow row, stored rows of one resource merged, other grants kept in place", async () => {
+		const seen = fakeRepositories();
+		const connection = uuid7();
+		const other: Grant = { connection: uuid7(), kind: "repository", resource: "*", name: "", actions: ["create"], effect: "ask" };
+		const deny: Grant = { connection, kind: "repository", resource: "102", name: "example/site", actions: ["create"], effect: "deny" };
+		const app = { connection, kind: "repository", resource: "101", name: "example/app (private)" };
+		const allowed: Grant = { ...app, actions: ["create", "read"], effect: "allow" };
+		const asked: Grant = { ...app, name: "", actions: ["create"], effect: "ask" };
+		const every = { connection, kind: "repository", resource: "*", name: "" };
+		expect(await checkGrantEdit(connection, [asked, other, deny, allowed], [{ kind: "repository", id: "*", actions: ["create", "read"], ask: ["create"] }])).toEqual({
+			outcome: "valid",
+			grants: [
+				other,
+				deny,
+				{ ...every, actions: ["read"], effect: "allow" },
+				{ ...every, actions: ["create"], effect: "ask" },
+				{ ...app, actions: ["read"], effect: "allow" },
+				{ ...app, actions: ["create"], effect: "ask" },
+			],
+		});
+		expect(seen).toEqual([]);
+		// A repository newly asked before is named by the provider, as one allowed is; allowing what was asked drops the ask.
+		expect(await checkGrantEdit(connection, [], [{ kind: "repository", id: "101", actions: ["read", "create"], ask: ["create"] }])).toEqual({
+			outcome: "valid",
+			grants: [
+				{ ...app, actions: ["read"], effect: "allow" },
+				{ ...app, actions: ["create"], effect: "ask" },
+			],
+		});
+		expect(seen).toEqual(["GET /repositories/101"]);
+		expect(await checkGrantEdit(connection, [allowed, asked], [{ kind: "repository", id: "101", actions: ["create", "read"] }])).toEqual({ outcome: "valid", grants: [allowed] });
+	});
+
+	test("an ask before reading, or before an action the change does not allow, is invalid without a request", async () => {
+		const seen = fakeRepositories();
+		expect(await checkGrantEdit(uuid7(), [], [{ kind: "repository", id: "101", actions: ["read"], ask: ["read"] }])).toEqual({
+			outcome: "invalid",
+			message: "GitHub cannot ask before Read code, issues and pull requests; it is needed to read.",
+		});
+		expect(await checkGrantEdit(uuid7(), [], [{ kind: "repository", id: "101", actions: ["read"], ask: ["create"] }])).toEqual({
+			outcome: "invalid",
+			message: "GitHub cannot ask before Open issues and comment without allowing it.",
+		});
+		expect(seen).toEqual([]);
 	});
 
 	test("a Web site is named by its pattern without a request; an action sites do not have, or a host with no domain, is invalid", async () => {

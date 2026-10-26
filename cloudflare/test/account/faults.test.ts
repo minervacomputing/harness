@@ -15,6 +15,8 @@
 // - a crash mid-stream: every counted model call settles once, and run.settled sums them, their charges and the container's time;
 // - a run's budget: the first model call after its spend reached its allowance ends it, failed with budget_reached;
 // - one smoke run with Workers AI and the fake connector's tool;
+// - a turn under a user layer that asks before creating notes: the save answers APPROVAL_UNAVAILABLE, since no run holds a
+//   call yet, the read works and the turn completes; and Laravel's grant edit refusing an ask before reading;
 // - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
 //   turn's container; a detached writer, a FIFO and a symlink at the checkpoint; five attachments of 50 MiB
@@ -29,9 +31,11 @@
 // sandbox-faults.test.ts's. Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
 
 import { afterAll, describe, expect, test } from "vitest";
+import { FOLDER, notesConnection, notesLayers } from "../../src/faults/world.ts";
 import {
 	cancel,
 	cards,
+	commands,
 	delivered,
 	file,
 	finish,
@@ -260,6 +264,55 @@ describe.concurrent("attempts on the platform", () => {
 		const answer = view.events.find((event) => event.type === "message");
 		expect(String(answer?.data.content ?? "")).not.toBe("");
 		console.info(`Workers AI: ${view.seconds} s, ${view.internals.run?.model_calls} model calls; answer: ${String(answer?.data.content).slice(0, 200)}`);
+	});
+});
+
+describe.concurrent("asks", () => {
+	test("under a user layer that asks before creating notes: the save answers APPROVAL_UNAVAILABLE, the read works, and the turn completes", async () => {
+		const w = await world();
+		const layers = notesLayers(w.connectionId, [
+			{ kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" },
+			{ kind: FOLDER, resource: "*", name: "", actions: ["create"], effect: "ask" },
+		]);
+		const runId = await post(w, script([save("Asked first"), LIST_INBOX, { text: "Done." }]), [], { authority: { connections: [notesConnection(w.connectionId)], layers } });
+		const view = await settled(w, runId);
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(toolCalls(view.events)).toEqual([
+			expect.objectContaining({
+				tool: SAVE,
+				decision: "denied",
+				code: "APPROVAL_UNAVAILABLE",
+				message: "This needs the user's approval, which nobody can give in this run. Do not retry. Say what you would do.",
+			}),
+			expect.objectContaining({ tool: LIST, decision: "allowed", count: 2 }),
+		]);
+		const state = await provider(w);
+		expect(state.notes.map((note) => note.title)).toEqual(SEEDED);
+		expect(state.requests.filter((request) => request.method === "POST")).toEqual([]);
+		expect(reads(state)).toBe(1);
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
+	});
+
+	test("Laravel's grant edit: an ask before creating notes is its own row; one before reading them is refused", async () => {
+		const w = await world();
+		const edit = (ask: string[]) =>
+			commands.checkGrantEdit({
+				scope: w.scope,
+				connection: { id: w.connectionId, provider: "notes" },
+				credential: { kind: "oauth2", secret: "notes-access-0", generation: 1 },
+				layer: { level: "user", subject: "1017", restricted: true, revision: 1, grants: [] },
+				changes: [{ kind: FOLDER, id: "*", actions: ["read", "create"], ask }],
+			});
+		const every = { connection: w.connectionId, kind: FOLDER, resource: "*", name: "" };
+		expect(await edit(["create"])).toEqual({
+			outcome: "valid",
+			grants: [
+				{ ...every, actions: ["read"], effect: "allow" },
+				{ ...every, actions: ["create"], effect: "ask" },
+			],
+		});
+		expect(await edit(["read"])).toEqual({ outcome: "invalid", message: "Notes cannot ask before Read notes; it is needed to read." });
+		expect((await provider(w)).requests).toEqual([]);
 	});
 });
 

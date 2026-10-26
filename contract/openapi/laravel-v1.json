@@ -62,7 +62,8 @@
           "effect": {
             "enum": [
               "allow",
-              "deny"
+              "deny",
+              "ask"
             ],
             "type": "string"
           }

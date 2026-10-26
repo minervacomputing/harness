@@ -15,6 +15,9 @@ import {
 import { todoistConnector } from "../../src/connectors/todoist/connector.ts";
 import { hmacSha256Hex } from "../../src/lib/hash.ts";
 import { z } from "zod";
+import { type Connector, inTenant } from "../../src/gateway/connector.ts";
+import type { GrantRow } from "../../src/gateway/grants.ts";
+import { APPROVAL_UNAVAILABLE } from "../../src/gateway/executor.ts";
 import { FOLDER, FakeClock, FakeServer, FakeTodoist, Gate, MIXED, PROJECT, Scenario, TODOIST, mixedConnection, mixedConnector, todoistConnection, userGrants } from "./executor-fakes.ts";
 
 function start(todoist: FakeTodoist, projects: { [id: string]: string[] } = { work: ["read"] }, options: { concurrency?: number; deadline?: number | null } = {}) {
@@ -257,6 +260,94 @@ describe("tools/call", () => {
 	});
 });
 
+/** User-layer rows that ask: {id: actions} on `kind`. */
+function asking(connectionId: string, kind: string, grants: { [id: string]: string[] }): GrantRow[] {
+	return userGrants(connectionId, kind, grants).map((row) => ({ ...row, effect: "ask" as const }));
+}
+
+describe("a call the policy asks before", () => {
+	const ASKED = { code: "APPROVAL_UNAVAILABLE", message: "This needs the user's approval, which nobody can give in this run. Do not retry. Say what you would do." };
+
+	test("is refused APPROVAL_UNAVAILABLE after its lease and its prepare, with nothing claimed or sent; reads go on", async () => {
+		const todoist = new FakeTodoist();
+		const connector = todoistConnector();
+		let prepared = 0;
+		const counted: Connector = {
+			...connector,
+			operations: connector.operations.map((op) =>
+				op.name !== "create_task"
+					? op
+					: {
+							...op,
+							async prepare(binding, data) {
+								prepared += 1;
+								return op.prepare(binding, data);
+							},
+						},
+			),
+		};
+		const run = await Scenario.start({
+			connectors: [counted],
+			connections: [todoistConnection()],
+			user: [...userGrants(TODOIST, PROJECT, { work: ["read"], private: ["read", "create"] }), ...asking(TODOIST, PROJECT, { work: ["create"] })],
+			fetch: todoist.fetch,
+		});
+		expect(run.tools).toContain("todoist_create_task");
+		expect(await run.error("todoist_create_task", { project_id: "work", title: "a" })).toEqual(ASKED);
+		expect(ASKED.message).toBe(APPROVAL_UNAVAILABLE);
+		expect([run.credentials.leases, prepared]).toEqual([1, 1]);
+		expect(run.writes()).toEqual([]);
+		expect(todoist.count("POST", "/tasks")).toBe(0);
+		expect(run.events).toEqual([{ tool: "todoist_create_task", label: "Todoist: Create a task", arguments: { project_id: "work", title: "a" }, decision: "denied", ...ASKED }]);
+		// Nothing was recorded for it, so the same call asks again; a create the layer allows is sent.
+		expect(await run.error("todoist_create_task", { project_id: "work", title: "a" })).toEqual(ASKED);
+		expect((await run.ok("todoist_create_task", { project_id: "private", title: "b" })).result.count).toBe(1);
+		expect(todoist.count("POST", "/tasks")).toBe(1);
+		expect((await run.ok(...LIST_TASKS)).result.count).toBe(1);
+	});
+
+	test("is denied where any layer denies", async () => {
+		const todoist = new FakeTodoist();
+		const run = await Scenario.start({
+			connectors: [todoistConnector()],
+			connections: [todoistConnection()],
+			user: [...userGrants(TODOIST, PROJECT, { work: ["read"], private: ["read"] }), ...asking(TODOIST, PROJECT, { work: ["create"], private: ["create"] })],
+			ceiling: [{ layer: "ceiling", subject: null, connectionId: TODOIST, kind: PROJECT, resourceId: "work", resourceName: "", actions: ["create"], effect: "deny" }],
+			fetch: todoist.fetch,
+		});
+		expect(await run.error("todoist_create_task", { project_id: "work", title: "a" })).toEqual({ code: "POLICY_DENIED", message: "This resource or action is not available under the current permissions." });
+		expect(await run.error("todoist_create_task", { project_id: "private", title: "a" })).toEqual(ASKED);
+	});
+
+	test("is refused for its tenant first", async () => {
+		const server = new FakeServer();
+		// Every folder of this connector is in the tenant acme.
+		const base = mixedConnector(server);
+		const tenanted: Connector = {
+			...base,
+			tenancy: { kind: "resource", label: "drive", tenants: async () => ({}) },
+			operations: base.operations.map((op) =>
+				op.name !== "copy_file"
+					? op
+					: {
+							...op,
+							async prepare(binding, data) {
+								const prepared = await op.prepare(binding, data);
+								return { ...prepared, requirements: prepared.requirements.map((item) => ("need" in item ? { ...item, need: inTenant(item.need, "acme") } : item)) };
+							},
+						},
+			),
+		};
+		const user = [...userGrants(MIXED, FOLDER, { "*": ["read"] }), ...asking(MIXED, FOLDER, { archive: ["create"] })];
+		const under = (tenants: string[]) =>
+			Scenario.start({ connectors: [tenanted], connections: [mixedConnection()], user, fetch: server.fetch, policy: { revision: 1, connectors: [{ provider: "mixed", tenants }] } });
+		const copy = { source: "inbox", dest: "archive", name: "a" };
+		expect(await (await under(["other"])).error("mixed_copy_file", copy)).toEqual({ code: "POLICY_DENIED", message: "Your organization does not allow this drive." });
+		expect(await (await under(["acme"])).error("mixed_copy_file", copy)).toEqual(ASKED);
+		expect(server.copies).toEqual([]);
+	});
+});
+
 describe("attempts", () => {
 	test("a replaced attempt cannot call tools", async () => {
 		const todoist = new FakeTodoist();
@@ -346,7 +437,7 @@ describe("what the chat and the model read", () => {
 		expect(listed).toEqual({ tool: "todoist_list_tasks", label: "Todoist: List tasks", arguments: { project_id: "work" }, decision: "allowed", title: "List tasks", count: 2 });
 	});
 
-	test("a refused call's event, denied for the seven codes and error otherwise", async () => {
+	test("a refused call's event, denied for the eight codes and error otherwise", async () => {
 		const todoist = new FakeTodoist();
 		const run = await start(todoist);
 		await run.call("todoist_list_tasks", { project_id: "private" });

@@ -35,7 +35,7 @@ export interface ToolResult {
 /** The codes whose refusal is `denied` in the chat; every other failure is `error`. */
 export type DeniedCode = Extract<
 	CoreErrorCode,
-	"POLICY_DENIED" | "LIMIT_REACHED" | "WRITE_UNCERTAIN" | "WRITE_IN_PROGRESS" | "INVALID_CURSOR" | "CONSENT_REQUIRED" | "OPERATION_CHANGED"
+	"POLICY_DENIED" | "APPROVAL_UNAVAILABLE" | "LIMIT_REACHED" | "WRITE_UNCERTAIN" | "WRITE_IN_PROGRESS" | "INVALID_CURSOR" | "CONSENT_REQUIRED" | "OPERATION_CHANGED"
 >;
 
 function frozen<T>(value: T): T {
@@ -72,6 +72,7 @@ export function appliedWithoutResult(): ToolResult {
 /** The codes whose refusal the chat shows as "Not allowed"; every other failure is `error`. */
 export const DENIAL_CODES: ReadonlySet<string> = new Set<DeniedCode>([
 	"POLICY_DENIED",
+	"APPROVAL_UNAVAILABLE",
 	"LIMIT_REACHED",
 	"WRITE_UNCERTAIN",
 	"WRITE_IN_PROGRESS",

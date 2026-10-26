@@ -17,14 +17,17 @@ const MAX_CONNECTIONS = 20
 
 const InConversation = z.object({ scope: Scope, conversation: Id })
 
-/** A grant as Laravel stores it. `resource` is `*` for every resource of the kind; `name` is for display only. */
+/**
+ * A grant as Laravel stores it. `resource` is `*` for every resource of the kind; `name` is for display only. An `ask` row
+ * allows its actions only once the user approves each call, and asks before none of what a read needs.
+ */
 export const GrantInput = z.object({
   connection: Id,
   kind: z.string().min(1).max(64),
   resource: z.string().min(1).max(200),
   name: z.string().max(300),
   actions: z.array(z.string().min(1).max(64)).max(20),
-  effect: z.enum(['allow', 'deny']),
+  effect: z.enum(['allow', 'deny', 'ask']),
 })
 export type GrantInput = z.infer<typeof GrantInput>
 
@@ -208,12 +211,22 @@ export type ListResources = z.infer<typeof ListResources>
 export const ListResourcesResult = z.discriminatedUnion('outcome', [ResourcePage, Refused])
 export type ListResourcesResult = z.infer<typeof ListResourcesResult>
 
-/** `checkGrantEdit`: an edit of one layer's grants on one connection; an empty `actions` removes the grant. */
+const GrantChange = z.object({
+  kind: z.string().min(1).max(64),
+  id: z.string().min(1).max(200),
+  actions: z.array(z.string()).max(10),
+  ask: z.array(z.string().min(1).max(64)).max(20).optional(),
+})
+
+/**
+ * `checkGrantEdit`: an edit of one layer's grants on one connection; an empty `actions` removes the grant. `ask`, a subset
+ * of `actions`, are those asked before each call; the rest are allowed.
+ */
 export const CheckGrantEdit = SettingsCall.extend({
   /** The organization's connection policy, whose revision the answer holds for as it does for the layer's. */
   policy: ConnectionPolicy.optional(),
   layer: LayerInput.extend({ level: z.enum(['ceiling', 'user', 'agent']), subject: z.string().max(64).nullable() }),
-  changes: z.array(z.object({ kind: z.string().min(1).max(64), id: z.string().min(1).max(200), actions: z.array(z.string()).max(10) })).min(1).max(100),
+  changes: z.array(GrantChange).min(1).max(100),
 })
 export type CheckGrantEdit = z.infer<typeof CheckGrantEdit>
 export const CheckGrantEditResult = z.discriminatedUnion('outcome', [

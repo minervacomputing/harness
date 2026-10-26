@@ -1,6 +1,6 @@
 // The permission model's data and its pure evaluation. No storage, so it
 // is cheap to test exhaustively. A run's start builds its policy (grants.ts) and offers tools with
-// `permitsAny` (tools.ts); the executor checks every call with `permits`.
+// `permitsAny` (tools.ts); the executor decides every call with `effect`, and shows a record only where `permits` holds.
 
 import { compareText } from "../lib/arrays.ts";
 import type { ConnectionId } from "../shared/rpc.ts";
@@ -18,12 +18,15 @@ export interface LayerSnapshot {
 	restricted: boolean;
 	allows: GrantKey[];
 	denies: GrantKey[];
+	/** What needs the user's approval of each call. A snapshot stored before asks existed has none. */
+	asks: GrantKey[];
 }
 
 /**
- * The effective policy: ceiling ∩ user ∩ agent, deny wins, in that order (`["ceiling", "user", "agent"]`
- * is pinned by a test). Only enforceable rows are kept: denies always, allows only for a declared kind and
- * not `*` unless the kind is wildcard.
+ * The effective policy: ceiling ∩ user ∩ agent, the worst effect wins (deny over ask over allow), in that order
+ * (`["ceiling", "user", "agent"]` is pinned by a test). Only enforceable rows are kept: denies always, allows only
+ * for a declared kind and not `*` unless the kind is wildcard; an ask row asks always and allows only where an allow
+ * row would, and denies what it cannot ask before (grants.ts).
  */
 export type PolicySnapshot = LayerSnapshot[];
 
@@ -54,13 +57,26 @@ export type RequiresOf = (action: string) => string | null | undefined;
 
 export type LayerName = LayerSnapshot["name"];
 
+/** What a layer, a grant row or the policy says of an action on a resource. */
+export type Effect = "deny" | "ask" | "allow";
+
+/** The policy's answer for one call's need. An ask names every layer that asked, in layer order. */
+export type Decision = { effect: "deny" } | { effect: "ask"; layers: LayerName[] } | { effect: "allow" };
+
 /** One grant row as `Layer.build` reads it: its actions become one key each. */
 export interface GrantInput {
 	connectionId: ConnectionId;
 	kind: string;
 	resourceId: string;
 	actions: readonly string[];
-	effect: "allow" | "deny";
+	effect: Effect;
+}
+
+/** A layer's keys by effect. */
+export interface LayerKeys {
+	allows: Iterable<GrantKey>;
+	asks: Iterable<GrantKey>;
+	denies: Iterable<GrantKey>;
 }
 
 /**
@@ -97,34 +113,53 @@ function canonical(keys: Iterable<GrantKey>): readonly GrantKey[] {
 	return Object.freeze([...unique.values()].sort(compareLists));
 }
 
+/** Whether `keys` hold one for the action on any resource of the kind but `*`. */
+function holdsExact(keys: readonly GrantKey[], connectionId: string, kind: string, action: string): boolean {
+	return keys.some((key) => key[0] === connectionId && key[1] === kind && key[2] !== ANY && key[3] === action);
+}
+
 /** Immutable: the instance and its keys are frozen, the sets private. */
 export class Layer {
 	readonly name: LayerName;
 	readonly restricted: boolean;
 	/** Sorted and unique, as the snapshot writes them. */
 	readonly allows: readonly GrantKey[];
+	readonly asks: readonly GrantKey[];
 	readonly denies: readonly GrantKey[];
 	readonly #allows: ReadonlySet<string>;
+	readonly #asks: ReadonlySet<string>;
 	readonly #denies: ReadonlySet<string>;
 
-	constructor(name: LayerName, restricted: boolean, allows: Iterable<GrantKey>, denies: Iterable<GrantKey>) {
+	constructor(name: LayerName, restricted: boolean, keys: LayerKeys) {
 		this.name = name;
 		this.restricted = restricted;
-		this.allows = canonical(allows);
-		this.denies = canonical(denies);
+		this.allows = canonical(keys.allows);
+		this.asks = canonical(keys.asks);
+		this.denies = canonical(keys.denies);
 		this.#allows = new Set(this.allows.map((key) => encode(...key)));
+		this.#asks = new Set(this.asks.map((key) => encode(...key)));
 		this.#denies = new Set(this.denies.map((key) => encode(...key)));
 		Object.freeze(this);
 	}
 
 	static build(name: LayerName, restricted: boolean, grants: Iterable<GrantInput>): Layer {
-		const allows: GrantKey[] = [];
-		const denies: GrantKey[] = [];
+		const keys = { allows: [] as GrantKey[], asks: [] as GrantKey[], denies: [] as GrantKey[] };
 		for (const grant of grants) {
-			const target = grant.effect === "deny" ? denies : allows;
+			let target: GrantKey[];
+			switch (grant.effect) {
+				case "deny":
+					target = keys.denies;
+					break;
+				case "ask":
+					target = keys.asks;
+					break;
+				case "allow":
+					target = keys.allows;
+					break;
+			}
 			for (const action of grant.actions) target.push([grant.connectionId, grant.kind, grant.resourceId, action]);
 		}
-		return new Layer(name, restricted, allows, denies);
+		return new Layer(name, restricted, keys);
 	}
 
 	#matches(keys: ReadonlySet<string>, connectionId: string, kind: string, ids: readonly Id[], action: string): boolean {
@@ -132,18 +167,31 @@ export class Layer {
 		return ids.some((item) => item !== UNMENTIONED && keys.has(encode(connectionId, kind, item, action)));
 	}
 
-	blocks(connectionId: string, kind: string, ids: readonly Id[], action: string, partial = false): boolean {
-		if (partial && this.denies.some((key) => key[0] === connectionId && key[1] === kind && key[3] === action)) return true;
-		return this.#matches(this.#denies, connectionId, kind, ids, action);
-	}
-
-	passes(connectionId: string, kind: string, ids: readonly Id[], action: string): boolean {
-		return !this.restricted || this.#matches(this.#allows, connectionId, kind, ids, action);
+	/**
+	 * This layer's effect on one action. Deny when a deny matches, or with `partial` any exact deny for the action. Else,
+	 * when the layer passes (it is unrestricted, or an allow matches), the nearest of its asks and allows decides: the
+	 * resource, its ancestors nearest first, then `*`, an ask before an allow at each; unrestricted with none, allow. A
+	 * restricted layer no allow matches denies, so an ask alone never lets one pass.
+	 */
+	effect(connectionId: string, kind: string, ids: readonly Id[], action: string, partial: boolean): Effect {
+		if (partial && holdsExact(this.denies, connectionId, kind, action)) return "deny";
+		if (this.#matches(this.#denies, connectionId, kind, ids, action)) return "deny";
+		if (this.restricted && !this.#matches(this.#allows, connectionId, kind, ids, action)) return "deny";
+		for (const item of ids) {
+			if (item === UNMENTIONED) continue;
+			if (this.#asks.has(encode(connectionId, kind, item, action))) return "ask";
+			if (this.#allows.has(encode(connectionId, kind, item, action))) return "allow";
+		}
+		// What decides now is `*` or the unrestricted default, which reach the unknown ancestors too, and one of them
+		// could be where an exact ask sits.
+		if (partial && holdsExact(this.asks, connectionId, kind, action)) return "ask";
+		if (this.#asks.has(encode(connectionId, kind, ANY, action))) return "ask";
+		return "allow";
 	}
 }
 
 /** The action, then what it requires, and so on, stopping at a repeat. */
-function chain(action: string, requiresOf: RequiresOf): string[] {
+export function chain(action: string, requiresOf: RequiresOf): string[] {
 	const items: string[] = [];
 	let current: string | null | undefined = action;
 	while (current !== null && current !== undefined && !items.includes(current)) {
@@ -161,11 +209,20 @@ function isGrantKeys(value: unknown): value is GrantKey[] {
 	return Array.isArray(value) && value.every((key) => Array.isArray(key) && key.length === 4 && key.every((part) => typeof part === "string"));
 }
 
-function isLayerSnapshot(item: unknown): item is LayerSnapshot {
+function isLayerSnapshot(item: unknown): item is Omit<LayerSnapshot, "asks"> & { asks?: GrantKey[] } {
 	if (typeof item !== "object" || item === null) return false;
 	const layer = item as { [key: string]: unknown };
-	return LAYER_NAMES.has(layer.name) && typeof layer.restricted === "boolean" && isGrantKeys(layer.allows) && isGrantKeys(layer.denies);
+	return (
+		LAYER_NAMES.has(layer.name) &&
+		typeof layer.restricted === "boolean" &&
+		isGrantKeys(layer.allows) &&
+		isGrantKeys(layer.denies) &&
+		(layer.asks === undefined || isGrantKeys(layer.asks))
+	);
 }
+
+const DENY: Decision = Object.freeze({ effect: "deny" });
+const ALLOW: Decision = Object.freeze({ effect: "allow" });
 
 /** The intersection of layers. Lower layers can only narrow what higher layers allow. Frozen, as a Layer. */
 export class Policy {
@@ -176,9 +233,25 @@ export class Policy {
 		Object.freeze(this);
 	}
 
-	#permits(connectionId: string, kind: string, ids: readonly Id[], action: string, partial = false): boolean {
-		if (this.layers.some((layer) => layer.blocks(connectionId, kind, ids, action, partial))) return false;
-		return this.layers.every((layer) => layer.passes(connectionId, kind, ids, action));
+	/** The worst effect of every layer on every one of `actions`, with the layers that asked. */
+	#decide(connectionId: string, kind: string, ids: readonly Id[], actions: readonly string[], partial: boolean): Decision {
+		const asked = new Set<LayerName>();
+		for (const action of actions) {
+			for (const layer of this.layers) {
+				const effect = layer.effect(connectionId, kind, ids, action, partial);
+				switch (effect) {
+					case "deny":
+						return DENY;
+					case "ask":
+						asked.add(layer.name);
+						break;
+					case "allow":
+						break;
+				}
+			}
+		}
+		if (asked.size === 0) return ALLOW;
+		return { effect: "ask", layers: [...new Set(this.layers.map((layer) => layer.name))].filter((name) => asked.has(name)) };
 	}
 
 	/**
@@ -186,20 +259,26 @@ export class Policy {
 	 * than only when grants are saved, because layers can combine into a policy that allows an action
 	 * without its requirement.
 	 */
-	permits(resource: Resource, action: string, requiresOf: RequiresOf = noRequirements): boolean {
+	effect(resource: Resource, action: string, requiresOf: RequiresOf = noRequirements): Decision {
 		const ids = idsOf(resource);
 		if (ids.includes(ANY)) throw new Error("The wildcard selects grants; it is not a resource.");
-		return chain(action, requiresOf).every((item) => this.#permits(resource.connectionId, resource.kind, ids, item, resource.partial));
+		return this.#decide(resource.connectionId, resource.kind, ids, chain(action, requiresOf), resource.partial);
+	}
+
+	/** Whether `effect` allows the call, with the user's approval or without. */
+	permits(resource: Resource, action: string, requiresOf: RequiresOf = noRequirements): boolean {
+		return this.effect(resource, action, requiresOf).effect !== "deny";
 	}
 
 	/**
-	 * Whether some resource of this kind could pass `permits`. Exact for flat kinds.
+	 * Whether some resource of this kind could pass `permits`, so an ask counts as an allow. Exact for flat kinds.
 	 *
 	 * Resources no layer mentions all behave alike, so one symbolic candidate stands for them. For kinds
 	 * that nest, one more candidate sits inside every mentioned resource that nothing denies. Any resource
 	 * that passes has only such ancestors, and more of them can only add allows, so this candidate passes
 	 * whenever some real one does. It may also pass when no real resource does (the ancestors need not
-	 * nest), so it may only open reads whose results are then checked one by one.
+	 * nest), so it may only open reads whose results are then checked one by one. Asks never decide whether a
+	 * resource is denied, so the candidates ignore them.
 	 */
 	permitsAny(connectionId: string, kind: string, action: string, requiresOf: RequiresOf = noRequirements, hierarchical = false): boolean {
 		const mentioned = new Set<string>();
@@ -219,7 +298,7 @@ export class Policy {
 			}
 			candidates.push([UNMENTIONED, ...[...mentioned].filter((item) => !denied.has(item)).sort()]);
 		}
-		return candidates.some((ids) => actions.every((item) => this.#permits(connectionId, kind, ids, item)));
+		return candidates.some((ids) => this.#decide(connectionId, kind, ids, actions, false).effect !== "deny");
 	}
 
 	/** The run snapshot's form: each layer's keys sorted. */
@@ -229,24 +308,26 @@ export class Policy {
 			restricted: layer.restricted,
 			allows: layer.allows.map((key): GrantKey => [...key]),
 			denies: layer.denies.map((key): GrantKey => [...key]),
+			asks: layer.asks.map((key): GrantKey => [...key]),
 		}));
 	}
 
 	/**
 	 * Throws on data not of `toJson`'s shape, a missing key included, so a snapshot
-	 * read back from storage fails closed: a layer without `restricted` never passes everything.
+	 * read back from storage fails closed: a layer without `restricted` never passes everything. Only `asks` may be
+	 * missing, as in a snapshot stored before asks existed, and reads as none.
 	 */
 	static fromJson(data: PolicySnapshot): Policy {
 		if (!Array.isArray(data)) throw new TypeError("Not a policy snapshot: it is a list of layers.");
 		return new Policy(
 			data.map((item) => {
 				if (!isLayerSnapshot(item)) {
-					throw new TypeError("Not a policy snapshot: each layer has a known name, restricted, and allows and denies of four strings each.");
+					throw new TypeError("Not a policy snapshot: each layer has a known name, restricted, and allows, denies and any asks of four strings each.");
 				}
-				return new Layer(item.name, item.restricted, item.allows, item.denies);
+				return new Layer(item.name, item.restricted, { allows: item.allows, asks: item.asks ?? [], denies: item.denies });
 			}),
 		);
 	}
 }
 
-export const DENY_ALL = new Policy([new Layer("deny-all", true, [], [])]);
+export const DENY_ALL = new Policy([Layer.build("deny-all", true, [])]);

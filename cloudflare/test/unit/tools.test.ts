@@ -4,7 +4,7 @@
 
 import { beforeAll, describe, expect, test } from "vitest";
 import { type GrantRow, type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
-import { ANY, Policy } from "../../src/gateway/policy.ts";
+import { ANY, Policy, resource } from "../../src/gateway/policy.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import {
 	type ConnectionInfo,
@@ -80,6 +80,13 @@ test("tools are offered only when some resource could allow them", () => {
 	// create needs read on the same resource.
 	expect(names(tools(userLayer(FIRST, { inbox: ["read"], archive: ["create"] })))).toEqual(["mixed_list_folders"]);
 	expect(names(tools(userLayer(FIRST, { [ANY]: ["read"], archive: ["create"] })))).toEqual(["mixed_list_folders", "mixed_copy_file"]);
+});
+
+test("a write whose action asks is offered: the executor answers its calls", () => {
+	const asks: GrantRow = { layer: "user", subject: USER, connectionId: FIRST, kind: FOLDER, resourceId: "archive", resourceName: "", actions: ["create"], effect: "ask" };
+	expect(names(tools([...userLayer(FIRST, { [ANY]: ["read"] }), asks]))).toEqual(["mixed_list_folders", "mixed_copy_file"]);
+	// Without the allow it carries, as on a kind the connector does not declare, it opens nothing.
+	expect(names(tools([...userLayer(FIRST, { [ANY]: ["read"] }), { ...asks, kind: "gone" }]))).toEqual(["mixed_list_folders"]);
 });
 
 test("a tool reference names its connection, provider, operation and contract", () => {
@@ -255,7 +262,7 @@ describe("the start snapshot", () => {
 	test("holds the policy, tools, instructions, model alias and deadline", () => {
 		const snapshot = startSnapshot(registry, input());
 		expect(snapshot.permissions.map((layer) => layer.name)).toEqual(["ceiling", "user", "agent"]);
-		expect(snapshot.permissions[1]).toEqual({ name: "user", restricted: true, allows: [[FIRST, FOLDER, "inbox", "read"]], denies: [] });
+		expect(snapshot.permissions[1]).toEqual({ name: "user", restricted: true, allows: [[FIRST, FOLDER, "inbox", "read"]], denies: [], asks: [] });
 		expect(names(snapshot.tools)).toEqual(["mixed_list_folders"]);
 		expect(snapshot.instructions).toBe(runInstructions("You are a helpful, concise assistant."));
 		expect(snapshot.modelAlias).toBe("default");
@@ -273,6 +280,16 @@ describe("the start snapshot", () => {
 		const snapshot = startSnapshot(registry, input({ layers: { ceiling: null, user: null, agent: null } }));
 		expect(snapshot.tools).toEqual([]);
 		expect(snapshot.connectionIds).toEqual([]);
+	});
+
+	test("an ask names the layers that asked in the pinned order, ceiling, user, agent", () => {
+		const ask = (layer: GrantRow["layer"]): GrantRow => ({ layer, subject: null, connectionId: FIRST, kind: FOLDER, resourceId: ANY, resourceName: "", actions: ["create"], effect: "ask" });
+		const grants = userLayer(FIRST, { [ANY]: ["read", "create"] });
+		const snapshot = startSnapshot(registry, input({ layers: { ceiling: { restricted: false, grants: [ask("ceiling")] }, user: { restricted: true, grants }, agent: { restricted: false, grants: [ask("agent")] } } }));
+		expect(names(snapshot.tools)).toEqual(["mixed_list_folders", "mixed_copy_file"]);
+		const policy = Policy.fromJson(snapshot.permissions);
+		expect(policy.effect(resource(FIRST, FOLDER, "inbox"), "create")).toEqual({ effect: "ask", layers: ["ceiling", "agent"] });
+		expect(policy.effect(resource(FIRST, FOLDER, "inbox"), "read")).toEqual({ effect: "allow" });
 	});
 
 	test("the agent's layer narrows, and a ceiling deny wins", () => {

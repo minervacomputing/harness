@@ -3,8 +3,9 @@
 //
 // count the call and take a slot → current attempt → tool lookup and contract → strict validation →
 // query hash → page token → write key and known write → open the client (a credential lease fenced by
-// run and attempt) → consent → prepare → authorize (declaration, then policy) → current attempt → execute,
-// or dispatch, execute and settle the write → still active → close the client → run-bound page token.
+// run and attempt) → consent → prepare → authorize (declaration, then the policy's denies, the tenants and the asks)
+// → current attempt → execute, or dispatch, execute and settle the write → still active → close the client →
+// run-bound page token.
 //
 // It runs in the Conversation Durable Object, so every run-state check is a synchronous read
 // (RunStatePort): the revocation check before each provider request happens in the same tick as the
@@ -123,8 +124,9 @@ export type ToolCallOutcome =
  * "Invalid arguments. " plus up to 5 `loc: msg` joined by "; "), query hash, page token (INVALID_CURSOR
  * "This page token is invalid or belongs to another request."), write key and known write, open the
  * client (CONNECTION_UNAUTHORIZED "The connection expired. Reconnect it in Minerva."), consent
- * (CONSENT_REQUIRED, before prepare), prepare, authorize (declaration check, then policy), current attempt
- * again, execute or the write protocol, still active (the attempt is not compared), close the client,
+ * (CONSENT_REQUIRED, before prepare), prepare, authorize (declaration check, then the policy's denies, the tenants,
+ * and a need the policy asks before: APPROVAL_UNAVAILABLE, since no run can hold a call for the user's approval yet),
+ * current attempt again, execute or the write protocol, still active (the attempt is not compared), close the client,
  * page token issue (LIMIT_REACHED "This run has reached its pagination limit." after the provider call).
  *
  * Revocation: the executor checks the run's local `revoked` flag and its state synchronously, with no
@@ -193,6 +195,8 @@ export const BACKSTOP_MS = 5000;
 export const DEFAULT_CONCURRENCY = 4;
 export const MAX_ANCESTORS = 64;
 export const CONNECTOR_ERROR_MESSAGE = "This operation failed because of an internal error.";
+/** What the model reads for a call the policy asks before: it stops the model retrying and has it say what it meant to do. */
+export const APPROVAL_UNAVAILABLE = "This needs the user's approval, which nobody can give in this run. Do not retry. Say what you would do.";
 
 export interface ExecutorLog {
 	error(message: string, ...data: unknown[]): void;
@@ -656,7 +660,8 @@ export class ToolExecutor implements Executor {
 	/**
 	 * Checks what prepare() says the call touches against the declaration, then against the grants' policy and the
 	 * connection policy's tenants. A connector bug throws at once; denial is decided after the loop (risk 15), the grants'
-	 * first, so the tenant's refusal names the tenant only of resources the run may otherwise use.
+	 * first, so the tenant's refusal names the tenant only of resources the run may otherwise use, and an ask last, so it
+	 * is answered only for a call nothing else refuses. Reads never ask: asks compile only on actions no read needs.
 	 */
 	#authorize(connector: Connector, op: Operation<never>, terms: OperationTerms, ref: ToolRef, requirements: readonly Requirement[]): void {
 		const where = `${ref.provider}.${op.name}`;
@@ -667,10 +672,10 @@ export class ToolExecutor implements Executor {
 		const tenants = this.#tenants.get(ref.connection_id) ?? null;
 		let concrete = false;
 		let refused = false;
+		let asked = false;
 		let outside = false;
 		for (const requirement of requirements) {
 			let pair: string;
-			let allowed: boolean;
 			if (isRequirement(requirement, "need")) {
 				const { need: resource, action } = requirement as { need: Resource; action: string };
 				if (
@@ -683,24 +688,34 @@ export class ToolExecutor implements Executor {
 				}
 				pair = pairKey(resource.kind, action);
 				concrete = true;
-				allowed = this.#policy.permits(resource, action, requires);
+				const decision = this.#policy.effect(resource, action, requires);
+				switch (decision.effect) {
+					case "deny":
+						refused = true;
+						break;
+					case "ask":
+						asked = true;
+						break;
+					case "allow":
+						break;
+				}
 				outside = outside || !inTenants(tenants, resource);
 			} else if (isRequirement(requirement, "enumerate")) {
 				const { enumerate: kind, action } = requirement as { enumerate: string; action: string };
 				pair = pairKey(kind, action);
 				if (terms.mutates) throw this.#bug(where, "a write cannot enumerate");
-				allowed = this.#policy.permitsAny(ref.connection_id, kind, action, requires, nests(connector, kind));
+				refused = refused || !this.#policy.permitsAny(ref.connection_id, kind, action, requires, nests(connector, kind));
 			} else {
 				throw this.#bug(where, `unknown requirement ${describe(requirement)}`);
 			}
 			if (!declared.has(pair)) throw this.#bug(where, `undeclared need ${pair}`);
 			covered.add(pair);
-			refused = refused || !allowed;
 		}
 		if (covered.size !== declared.size) throw this.#bug(where, `needs not covered: ${[...declared].filter((pair) => !covered.has(pair)).join(", ")}`);
 		if (terms.mutates && !concrete) throw this.#bug(where, "a write needs a concrete destination");
 		if (refused) throw denied();
 		if (outside) throw tenantRefused(connector);
+		if (asked) throw new OperationError("APPROVAL_UNAVAILABLE", APPROVAL_UNAVAILABLE);
 	}
 
 	#result(connector: Connector, op: Operation<never>, _terms: OperationTerms, ref: ToolRef, output: ProviderOutput): { result: ToolResult; images: ImageContent[] } {

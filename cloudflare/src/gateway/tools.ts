@@ -63,7 +63,7 @@ export const SAFETY_INSTRUCTIONS =
  * The compiler's version, which a Laravel start's acceptance names. Raise it whenever a
  * change to grants.ts, policy.ts or this file changes what a snapshot allows or offers.
  */
-export const COMPILER_VERSION = "3";
+export const COMPILER_VERSION = "4";
 
 /** The model may be offered at most this many tools in all. */
 export const MODEL_TOOLS_MAX = 128;
@@ -89,7 +89,7 @@ function usableBy(connection: ConnectionInfo, userId: UserId): boolean {
 /**
  * The tools a run is offered. Tool names are namespaced per connection; the server, never the model,
  * picks the connection. A tool is offered only if the policy could allow each of its needs on some
- * resource and the connection granted the provider scopes it works with. The executor still checks every
+ * resource, an ask counting, and the connection granted the provider scopes it works with. The executor still checks every
  * call. Aliases number the usable connections of a known provider in `created_at` order (ties by id):
  * `todoist`, `todoist2`.
  */

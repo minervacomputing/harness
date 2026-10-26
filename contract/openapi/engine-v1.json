@@ -62,7 +62,8 @@
           "effect": {
             "enum": [
               "allow",
-              "deny"
+              "deny",
+              "ask"
             ],
             "type": "string"
           }
@@ -8771,6 +8772,15 @@
                           "maxItems": 10,
                           "items": {
                             "type": "string"
+                          }
+                        },
+                        "ask": {
+                          "type": "array",
+                          "maxItems": 20,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 64
                           }
                         }
                       },

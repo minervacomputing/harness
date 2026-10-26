@@ -18,7 +18,7 @@ import { connectorRegistry } from "../connectors/index.ts";
 import { storable } from "../conversation/events.ts";
 import { ACCOUNT_KIND, type Connector, type DiscoveryPage, OperationError, type ProviderClient, kindOf } from "../gateway/connector.ts";
 import { unauthorized } from "../gateway/executor.ts";
-import { type GrantChange, type GrantRow, InvalidGrants, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
+import { type EditableRow, type GrantChange, InvalidGrants, checkChanges, planGrantChanges, resourceKey } from "../gateway/grants.ts";
 import { ANY } from "../gateway/policy.ts";
 import { admission, inTenants } from "../gateway/tenancy.ts";
 import { compareText } from "../lib/arrays.ts";
@@ -206,38 +206,49 @@ async function outsideTenants(
 	});
 }
 
+type EditableInput = GrantInput & { effect: EditableRow["effect"] };
+
+/** A grant `checkGrantEdit` plans: an allow or an ask; a deny passes through untouched. */
+function editable(grant: GrantInput): grant is EditableInput {
+	switch (grant.effect) {
+		case "allow":
+		case "ask":
+			return true;
+		case "deny":
+			return false;
+	}
+}
+
 /**
- * Checks an edit of a layer's allow grants on one connection, without storing anything (Laravel stores the answer), and
- * answers the layer's grants after it: every other grant kept in place and order, this connection's allow grants after
- * them, sorted. Resources and accounts newly allowed are named by the provider, so only what the account can see is
- * allowed; `*`, what is already allowed, and removals never call it. Under a connection policy, an edit that allows
- * anything on a connection it does not admit is refused (`CONNECTION_NOT_ALLOWED`), as is one allowing a resource of a
- * tenant it does not allow (`TENANT_NOT_ALLOWED`); removals are always valid.
+ * Checks an edit of a layer's allow and ask grants on one connection, without storing anything (Laravel stores the
+ * answer), and answers the layer's grants after it: every other grant kept in place and order, this connection's allow
+ * and ask grants after them, sorted by resource, its allow before its ask. Resources and accounts newly allowed are named
+ * by the provider, so only what the account can see is allowed; `*`, what is already allowed, and removals never call
+ * it. Under a connection policy, an edit that allows anything on a connection it does not admit is refused
+ * (`CONNECTION_NOT_ALLOWED`), as is one allowing a resource of a tenant it does not allow (`TENANT_NOT_ALLOWED`);
+ * removals are always valid.
  */
 export async function checkGrantEdit(env: Env, command: CheckGrantEdit): Promise<CheckGrantEditResult> {
 	const connector = await connectorFor(command);
 	const connectionId = command.connection.id;
-	const changes: GrantChange[] = command.changes.map((change) => ({ kind: change.kind, id: change.id, actions: change.actions }));
+	const changes: GrantChange[] = command.changes.map((change) => ({ kind: change.kind, id: change.id, actions: change.actions, ask: change.ask ?? [] }));
 	const admitted = admission(command.policy, connector, command.connection.tenant);
-	const isEdited = (grant: GrantInput) => grant.connection === connectionId && grant.effect === "allow";
-	// The policy unions the actions of grants on one resource, so a layer holding two keeps both in one.
-	const merged = new Map<string, GrantRow>();
-	for (const grant of command.layer.grants.filter(isEdited)) {
-		const key = resourceKey(grant.kind, grant.resource);
-		const found = merged.get(key);
-		merged.set(key, {
-			layer: command.layer.level,
-			subject: command.layer.subject,
-			connectionId,
-			kind: grant.kind,
-			resourceId: grant.resource,
-			resourceName: found?.resourceName || grant.name,
-			actions: [...new Set([...(found?.actions ?? []), ...grant.actions])].sort(),
-			effect: "allow",
-		});
+	const isEdited = (grant: GrantInput): grant is EditableInput => grant.connection === connectionId && editable(grant);
+	const current: EditableRow[] = command.layer.grants.filter(isEdited).map((grant) => ({
+		layer: command.layer.level,
+		subject: command.layer.subject,
+		connectionId,
+		kind: grant.kind,
+		resourceId: grant.resource,
+		resourceName: grant.name,
+		actions: [...new Set(grant.actions)].sort(),
+		effect: grant.effect,
+	}));
+	const stored = new Map<string, string>();
+	for (const grant of current) {
+		const key = resourceKey(grant.kind, grant.resourceId);
+		if (grant.resourceName && !stored.has(key)) stored.set(key, grant.resourceName);
 	}
-	const current = [...merged.values()];
-	const stored = new Map(current.map((grant) => [resourceKey(grant.kind, grant.resourceId), grant.resourceName]));
 	try {
 		checkChanges(connector, connectionId, changes);
 		if (!admitted.admitted && changes.some((change) => change.actions.length > 0)) return NOT_ALLOWED;
@@ -251,15 +262,12 @@ export async function checkGrantEdit(env: Env, command: CheckGrantEdit): Promise
 		const plan = planGrantChanges(connector, current, changes, named.names);
 		const upserted = new Map(plan.upserts.map((row) => [resourceKey(row.kind, row.resourceId), row.resourceName]));
 		const edited: GrantInput[] = [...plan.state.entries()]
-			.map(([key, entry]) => ({
-				connection: connectionId,
-				kind: entry.kind,
-				resource: entry.id,
-				name: upserted.get(key) ?? stored.get(key) ?? "",
-				actions: [...entry.actions].sort(),
-				effect: "allow" as const,
-			}))
-			.sort((a, b) => compareText(a.kind, b.kind) || compareText(a.resource, b.resource));
+			.sort(([, a], [, b]) => compareText(a.kind, b.kind) || compareText(a.id, b.id))
+			.flatMap(([key, entry]) => {
+				const row = (actions: string[], effect: EditableRow["effect"]): GrantInput[] =>
+					actions.length === 0 ? [] : [{ connection: connectionId, kind: entry.kind, resource: entry.id, name: upserted.get(key) ?? stored.get(key) ?? "", actions, effect }];
+				return [...row([...entry.actions].filter((action) => !entry.ask.has(action)).sort(), "allow"), ...row([...entry.ask].sort(), "ask")];
+			});
 		const grants = [...command.layer.grants.filter((grant) => !isEdited(grant)), ...edited];
 		if (grants.length > LAYER_MAX) return { outcome: "invalid", message: `A layer can have at most ${LAYER_MAX.toLocaleString("en")} permissions.` };
 		return { outcome: "valid", grants };
