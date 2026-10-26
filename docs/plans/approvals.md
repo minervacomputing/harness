@@ -1,6 +1,6 @@
 # Approvals design: ask first, then run
 
-Status: proposed, 2026-10-25. Not built, and nothing deployed. Line numbers are at `73d6a18` (harness, whose code is the same as at `61a9b15`) and at `c3e4052` of `minervacomputing/app` ("the app's" below). A claim about code with no label was read at the lines cited. One marked (inferred) follows from code that was read, and one marked (guess) rests on behaviour no code or document states. It assumes [fast-starts.md](fast-starts.md) is built first, as the owner's order has it, so where both touch the start the line numbers here will move. It builds on [product-and-engine.md](product-and-engine.md): Laravel decides and stores, the engine runs and records, and a run is one turn with its grants compiled at its start. Once built, what stays true moves into ARCHITECTURE.md, cloudflare/README.md, docs/connectors.md, docs/data-processing.md, docs/plans/contract.md and the app's `docs/architecture/`, and this file is deleted.
+Status: proposed, 2026-10-25. Not built, and nothing deployed. Line numbers are at `73d6a18` (harness, whose code is the same as at `61a9b15`) and at `c3e4052` of `minervacomputing/app` ("the app's" below). A claim about code with no label was read at the lines cited. One marked (inferred) follows from code that was read, and one marked (guess) rests on behaviour no code or document states. It builds on fast starts, which are built (harness `e389b30`, the app's `bb41c89`): a start is answered before its copy, and the copy is the run's first step (ARCHITECTURE.md, Starting a run). Where both touch the start, the line numbers here have moved. It builds on [product-and-engine.md](product-and-engine.md): Laravel decides and stores, the engine runs and records, and a run is one turn with its grants compiled at its start. Once built, what stays true moves into ARCHITECTURE.md, cloudflare/README.md, docs/connectors.md, docs/data-processing.md, docs/plans/contract.md and the app's `docs/architecture/`, and this file is deleted.
 
 Review: opencode and three adversarial reviewers, one each for security, protocol and product, reviewed the draft on 2026-10-25. Each finding was checked against the code. The findings that hold and can happen in real use are folded into the sections below. The improbable ones are under Accepted, not fixed, and the wrong ones under Dropped in review. Where an improbable finding's fix was only the correct statement of a rule this plan has to state anyway, at no cost in code, the rule was corrected instead: an ask only narrows, approvals reopen only on a tombstone, and the new fact has a row for every target.
 
@@ -387,7 +387,7 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 ## Program checklist
 
-- [ ] fast-starts.md is built (chunk 4 places its work after the copy, and closes holds in the copy's commit).
+- [x] Fast starts are built (harness `e389b30`, the app's `bb41c89`). Chunk 4 places its work after the copy, the run's first step, and closes holds in the copy's commit.
 - [ ] Chunk 1 runs on an environment's app before chunk 5 does.
 - [ ] Chunks 2, 3 and 4 run in order, and chunk 2 runs on production's engine on its own before chunks 3 and 4 reach it.
 - [ ] Chunk 5 starts once staging's engine runs chunk 4.
@@ -505,7 +505,7 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 ## The continuation (chunk 4)
 
-**Depends on.** Chunk 3, and fast-starts.md built.
+**Depends on.** Chunk 3, and fast starts, which are built.
 
 **Files.**
 
