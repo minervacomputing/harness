@@ -133,7 +133,7 @@ Each question the plan had to settle, with its answer. The sections below give t
 
 ### Facts
 
-- **`run.held_call`**, a new fact: the position, tool, label, connection, operation, `requirements` with the kinds' and actions' labels and the providers' names, the fields' JSON whole as a string, and `write`, the keyed hash `run.write` already uses. It is appended in the hold's own write.
+- **`run.held_call`**, a new fact: the position, tool, label, connection, provider (for the audit event once the connection may be gone), operation, `requirements` with the kinds' and actions' labels and the providers' names, the fields' JSON whole as a string, and `write`, the keyed hash `run.write` already uses. It is appended in the hold's own write. The engine parses it with the contract's `Fact` before the hold's write and refuses the call when it does not parse, since Laravel would refuse the fact and stop the conversation's delivery. A provider's name is cut to 300 characters, as a grant's is.
 - **`run.tool_call`**: the refused branch gains an optional `write` for `APPROVAL_REQUIRED`, the same hash as the hold's, so the chat ties each row to its card. Both branches gain an optional `approved: {run, position}` on a call the continuation carried out or refused.
 - **`run.write`** gains an optional `approved: {run, position}`, from the `WriteNote`.
 - **Codes, not enum values.** A held call's `tool_call` event and fact are `denied` with the code `APPROVAL_REQUIRED`. `APPROVAL_PENDING`, `APPROVAL_TOO_LARGE`, `APPROVAL_UNAVAILABLE` and `APPROVAL_STALE` are `denied` too (`gateway/results.ts:73`). `decision` keeps its three values and `code` is a free string, so Laravel's contract copy and today's pages read them.
@@ -142,7 +142,7 @@ Each question the plan had to settle, with its answer. The sections below give t
 
 - **`call_approvals`**, one row per held call, named so it is not confused with the app's connector approvals:
   - id, conversation (cascade), held run (cascade), position, unique per run;
-  - user (null on account deletion), connection id (no foreign key that could refuse the insert), tool, label, `requirements` (jsonb), arguments (text), `write`;
+  - user (null on account deletion), connection id (no foreign key that could refuse the insert), provider, tool, label, `requirements` (json, not jsonb: a requirement's id comes from the model's fields and may hold U+0000, which jsonb refuses), arguments (text), `write`;
   - state: `waiting`, `approved`, `declined` or `closed`, with a CHECK, and the run that closed it;
   - created time (the fact's), decision time, and the continuation run;
   - outcome, from the continuation's facts: `done`, `failed`, `uncertain` or `not_done`, with its message.
@@ -223,7 +223,7 @@ Deploys of the engine's staging and production, and the app's production, ask th
 
 ### Rollback
 
-1. Chunk 5 is reverted in the app. No new card can be answered and no ask can be written. Laravel stops sending `attended`, so every ask answers `APPROVAL_UNAVAILABLE`. Ask rows stay, and chunk 1 still reads them.
+1. Chunk 5 is reverted in the app. No new card can be answered and no ask can be written. Laravel stops sending `attended`, so every ask answers `APPROVAL_UNAVAILABLE`. Ask rows stay. The app still reads them: `withinContract` accepts them from chunk 2's app commit, and `kept` refuses a save whose answer changes or moves one, so the binary editor never plans an ask.
 2. The engine is rolled back, if at all, no further than chunk 2, and below chunk 4 only after step 1.
 
 No command rewrites ask rows, and no emergency stop is needed: every engine from chunk 2 on reads an ask and fails closed.
@@ -399,18 +399,18 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 **Files.**
 
 - [ ] Edit `contract/src/internal/facts.ts` (`run.held_call`, `write` and `approved` on `run.tool_call`, `approved` on `run.write`) and `contract/scenarios/facts.json`, regenerate the OpenAPI documents, and make the fake Laravel apply the fact (`cloudflare/src/faults/laravel.ts`). One harness commit.
-- [ ] In the app: `composer contract:sync`, the `call_approvals` migration and model, `app/Runs/Facts.php`, `app/Connections/Access.php`, `app/Connections/Consent.php`, the labels of the five codes in `resources/js/components/chat/model.ts`, the purge.
+- [ ] In the app: `composer contract:sync`, the `call_approvals` migration and model, `app/Runs/Facts.php`, `app/Connections/Consent.php`, `resources/js/components/chat/thread.tsx`, the labels of the five codes in `resources/js/components/chat/model.ts`, the purge.
 
 **Build.**
 
 - [ ] `run.held_call` becomes a waiting approval, inserted if absent, for a Live target only.
 - [ ] `approved` on `run.write` and on `run.tool_call` sets the approval's outcome, the write's first.
 - [ ] The five new codes have labels. No card yet, since nothing can hold a call before chunk 5.
-- [ ] `withinContract` (both ways), `view`, `kept` and `Consent::allowed` read ask rows, so a revert of chunk 5 still reads them.
+- [ ] `Consent::allowed` counts ask rows. `withinContract` follows in chunk 2's app commit, once the contract has `ask` and the app's engine fake admits it, and `kept` and `view` in chunk 5 with the editor that writes asks: until then a save whose answer changes or moves an ask row is refused, so a binary editor never plans one, also after a revert of chunk 5.
 
 **You see.**
 
-- [ ] A conversation seeded with a held call's facts stores its approval and shows the refused row with its label. An access page with a seeded ask row loads and saves.
+- [ ] A conversation seeded with a held call's facts stores its approval and shows the refused row with its label. An access page with a seeded ask row loads.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
@@ -435,6 +435,7 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 **Files.**
 
 - [ ] Edit `contract/src/internal/engine.ts` (`effect: 'ask'`, `changes[].ask`), regenerate the OpenAPI documents, and add the enum line to docs/plans/contract.md's Versions.
+- [ ] In the app, once the contract commit lands: `composer contract:sync`, and `Access::withinContract` accepts `ask` in what it sends and what `checkGrantEdit` answers.
 - [ ] Edit `cloudflare/src/gateway/policy.ts`, `grants.ts`, `tools.ts` (`COMPILER_VERSION` 4), `executor.ts` and `results.ts`, and `cloudflare/src/internal/connections.ts`.
 - [ ] Add the floor at chunk 2 to cloudflare/README.md's rollback paragraph.
 
@@ -452,7 +453,7 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `policy.test.ts` with the seed-7 model and the unenforceable asks, `grants.test.ts`, `tools.test.ts`, `executor-calls.test.ts`, and platform `internal-connections.test.ts`.
+- [ ] `policy.test.ts` with the seed-7 model and the unenforceable asks, `grants.test.ts`, `tools.test.ts`, `executor-calls.test.ts`, and platform `internal-connections.test.ts`. In the app, `AccessTest`: a layer holding an ask row saves an edit that leaves it alone, and an answer that changes it is refused.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
