@@ -1,6 +1,6 @@
 # Where Minerva processes data
 
-This page lists every place that Minerva's data goes: the Laravel application (`minervacomputing/app` on Laravel Cloud), the engine in this repository (`cloudflare/`), and the vendors behind both. For each one it says what data reaches it, where that data is processed and stored, and whether an EU-only option exists and is used. It ends with what Minerva may promise about EU processing today ([product-and-engine.md](plans/product-and-engine.md), Decision 11), what blocks a stronger promise, and how Laravel's backups keep the restore window.
+This page lists every place that Minerva's data goes: the Laravel application (`minervacomputing/app` on Laravel Cloud), the engine in this repository (`cloudflare/`), and the vendors behind both. For each one it says what data reaches it, where that data is processed and stored, and whether an EU-only option exists and is used. It ends with what Minerva may promise about EU processing today (ARCHITECTURE.md, The engine and the product), what blocks a stronger promise, and how Laravel's backups keep the restore window.
 
 Each claim carries its basis:
 
@@ -90,7 +90,7 @@ Not Minerva's subprocessors, in my reading: the connectors' providers and the si
 
 ## What Minerva may promise today
 
-Decision 11 promises EU processing only when every component allows it. Today they do not, so Minerva may promise EU storage of its primary data, with the exceptions named. Proposed wording:
+Minerva promises EU processing only when every component allows it. Today they do not, so Minerva may promise EU storage of its primary data, with the exceptions named. Proposed wording:
 
 > Minerva stores your account, your conversations and your files in the European Union. The application and its database run in Frankfurt on Laravel Cloud (AWS), and the engine keeps each conversation's state and files in Cloudflare's EU jurisdiction. Some processing happens outside the EU. The AI model (OpenAI) processes each turn and may keep it for up to 30 days for abuse monitoring. The sandbox that runs the agent's commands may run outside the EU. Requests are decrypted at the Cloudflare data center nearest you. Operational records (logs, email delivery records and internal ids) may be stored outside the EU. Our subprocessors are listed at [link].
 
@@ -126,7 +126,7 @@ Laravel Cloud's point-in-time backups keep 7 days, the restore window, on stagin
 
 The engine's own history is separate, and none of it replaces Laravel's backups:
 
-- Durable Objects' point-in-time recovery covers the past 30 days. Its location is not documented. The engine never rolls an object back ([product-and-engine.md](plans/product-and-engine.md), Deletion, retention and recovery).
+- Durable Objects' point-in-time recovery covers the past 30 days. Its location is not documented. The engine never rolls an object back (ARCHITECTURE.md, The engine and the product).
 - D1's Time Travel covers 30 days on Workers Paid. Its location is not documented.
 - R2 keeps no backups. Blobs survive a restore because the engine deletes them only after the 7-day window (ARCHITECTURE.md, Files).
 

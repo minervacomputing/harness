@@ -20,9 +20,15 @@ The agent **never holds a credential and never decides its own permissions**. Ea
 
 ## The engine and the product
 
-Minerva is two systems ([docs/plans/product-and-engine.md](docs/plans/product-and-engine.md)): **a private Laravel application decides what may happen; this engine does it and records what it did.** Laravel holds users, organizations, connections and their credentials, grants and agents as users set them, the run registry, the product transcript, billing and administration. The engine keeps execution: pi's loop, the sandbox, code mode, the connectors and the permission pipeline, each conversation's folder, and each run's attempts, write ledger and events, with an outbox of facts for Laravel and a recovery index in D1. It holds no users, sessions or stored credentials, and no transcript of its own.
+Minerva is two systems: **a private Laravel application decides what may happen; this engine does it and records what it did.** Laravel holds users, organizations, connections and their credentials, grants and agents as users set them, the run registry, the product transcript, billing and administration. The engine keeps execution: pi's loop, the sandbox, code mode, the connectors and the permission pipeline, each conversation's folder, and each run's attempts, write ledger and events, with an outbox of facts for Laravel and a recovery index in D1. It holds no users, sessions or stored credentials, and no transcript of its own.
 
-Commands go one way, each idempotent: Laravel reads the connectors' catalog, starts and cancels runs, asks the engine to describe an account, list a connection's resources or check a grant edit, reads a conversation's folder and resolves downloads, and deletes conversations. The engine asks Laravel for a run's credentials one call at a time, reports a provider's refusal, and delivers its facts in order. There is one engine deployment per environment (production, Laravel's staging, and the test instances with fault points); a dedicated copy for an enterprise would be a second deployment, not a self-hosted one.
+The split is by responsibility. An earlier design kept identity in Laravel but memberships, policies, connections and conversations in the engine, kept in step by a replicated directory. Its reviews found over forty issues, nearly all at that seam: sessions across two systems, revocation lineage, versioned snapshots, outboxes both ways, recovery logs and reconciliation. Here nothing is replicated in both directions. Laravel stores the authority's raw inputs (grants, layers and agents' connections, each with a revision) and never interprets them, and every admin and support question is answered from Laravel.
+
+Commands go one way, each idempotent: Laravel reads the connectors' catalog, starts and cancels runs, asks the engine to describe an account, list a connection's resources or check a grant edit, reads a conversation's folder and resolves downloads, and deletes conversations. The engine asks Laravel for a run's credentials one call at a time, reports a provider's refusal, and delivers its facts in order. There is one engine deployment per environment (production, Laravel's staging, and the test instances with fault points).
+
+**Hosted only.** Minerva runs one Laravel application and one engine. Self-hosting, a hybrid with the engine in a customer's account, and cells are not offered; an enterprise that needs its own deployment would get a dedicated copy of both. Laravel runs in Frankfurt and the engine's storage in the EU jurisdiction, but that is a deployment, not a residency promise: Minerva promises EU processing only when every component allows it ([docs/data-processing.md](docs/data-processing.md)).
+
+**Recovery runs forward from the engine.** Restoring Laravel's database is a reconciliation, since the engine and the providers move on meanwhile. The engine is never rolled back with it: its write ledgers and facts record what reached providers, which no restore undoes, and a broken Conversation object is repaired forward or its conversation deleted. Laravel closes admission, cancels every active run, pages through the recovery index (`listConversations`), deletes again what the engine deleted and replays (`replayFacts`) the facts it lacks. The rest is Laravel's, including the restriction log it writes ahead of every change that takes access away (the app's `docs/architecture/turn.md`, Recovery).
 
 ## Shape
 
@@ -262,6 +268,8 @@ Laravel stores the credentials, refreshes them and runs the OAuth flows; the eng
 - A provider's rejection is reported with `reportUnauthorized` and the lease's generation (Permissions, Tokens).
 
 The settings calls Laravel makes (`describeAccount`, `listResources`, `checkGrantEdit`) carry their credential in the command, used for that call only and never stored or logged (`internal/connections.ts`).
+
+**The bound this gives.** A compromised engine can use the credentials it was handed until the provider expires or revokes them, and API keys and some tokens never expire. It can collect more while it stays compromised and runs keep starting. It never sees a refresh token, nor the credentials of a connection that no run and no settings call used. Keeping credentials out of the loop's Worker entirely would need a separate executor (Open questions, 1).
 
 ### Facts
 

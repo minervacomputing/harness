@@ -72,7 +72,7 @@ What each one lets agents do, and what it hides from them, is in [docs/connector
 
 ## How it is built
 
-The engine is TypeScript on Cloudflare (Workers, Durable Objects, Containers and Dynamic Workers) around pi's durable agent loop. [ARCHITECTURE.md](ARCHITECTURE.md) describes its design and trust model, [product-and-engine.md](docs/plans/product-and-engine.md) its split from Laravel, and `contract/` the internal API between them.
+The engine is TypeScript on Cloudflare (Workers, Durable Objects, Containers and Dynamic Workers) around pi's durable agent loop. [ARCHITECTURE.md](ARCHITECTURE.md) describes its design, its trust model and its split from Laravel, and `contract/` the internal API between them.
 
 ## Development
 
@@ -88,7 +88,7 @@ Checks, tests and deploys are in [cloudflare/README.md](cloudflare/README.md).
 
 ## Status
 
-Minerva is early, and accounts come only by invitation. Memory across conversations is next. Schedules, triggers and agents you can reach from Slack and Teams come after it, and asking you before a write runs is designed.
+Minerva is early, and accounts come only by invitation. Asking you before a write runs is designed.
 
 ## About
 

@@ -1,6 +1,6 @@
 # The contract between Laravel and the engine
 
-The internal API that Laravel and the engine use ([product-and-engine.md](product-and-engine.md), Decision 5): commands, requests, facts and errors, its OpenAPI documents, both directions' authentication, the catalog with each connector's OAuth descriptor, and the fake Laravel that the engine's platform tests use. Laravel's client, its copies of the documents and the compatibility suite are in its repository's `docs/architecture/contract.md`. This document is the seam's.
+The internal API that Laravel and the engine use (ARCHITECTURE.md, The engine and the product): commands, requests, facts and errors, its OpenAPI documents, both directions' authentication, the catalog with each connector's OAuth descriptor, and the fake Laravel that the engine's platform tests use. Laravel's client, its copies of the documents and the compatibility suite are in its repository's `docs/architecture/contract.md`. This document is the seam's.
 
 ## The shape
 

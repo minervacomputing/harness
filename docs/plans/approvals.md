@@ -1,6 +1,6 @@
 # Approvals design: ask first, then run
 
-Status: proposed, 2026-10-25. Not built, and nothing deployed. Line numbers are at `73d6a18` (harness, whose code is the same as at `61a9b15`) and at `c3e4052` of `minervacomputing/app` ("the app's" below). A claim about code with no label was read at the lines cited. One marked (inferred) follows from code that was read, and one marked (guess) rests on behaviour no code or document states. It builds on fast starts, which are built (harness `e389b30`, the app's `bb41c89`): a start is answered before its copy, and the copy is the run's first step (ARCHITECTURE.md, Starting a run). Where both touch the start, the line numbers here have moved. It builds on [product-and-engine.md](product-and-engine.md): Laravel decides and stores, the engine runs and records, and a run is one turn with its grants compiled at its start. Once built, what stays true moves into ARCHITECTURE.md, cloudflare/README.md, docs/connectors.md, docs/data-processing.md, docs/plans/contract.md and the app's `docs/architecture/`, and this file is deleted.
+Status: proposed, 2026-10-25. Not built, and nothing deployed. Line numbers are at `73d6a18` (harness, whose code is the same as at `61a9b15`) and at `c3e4052` of `minervacomputing/app` ("the app's" below). A claim about code with no label was read at the lines cited. One marked (inferred) follows from code that was read, and one marked (guess) rests on behaviour no code or document states. It builds on fast starts, which are built (harness `e389b30`, the app's `bb41c89`): a start is answered before its copy, and the copy is the run's first step (ARCHITECTURE.md, Starting a run). Where both touch the start, the line numbers here have moved. It builds on ARCHITECTURE.md, The engine and the product: Laravel decides and stores, the engine runs and records, and a run is one turn with its grants compiled at its start. Once built, what stays true moves into ARCHITECTURE.md, cloudflare/README.md, docs/connectors.md, docs/data-processing.md, docs/plans/contract.md and the app's `docs/architecture/`, and this file is deleted.
 
 Review: opencode and three adversarial reviewers, one each for security, protocol and product, reviewed the draft on 2026-10-25. Each finding was checked against the code. The findings that hold and can happen in real use are folded into the sections below. The improbable ones are under Accepted, not fixed, and the wrong ones under Dropped in review. Where an improbable finding's fix was only the correct statement of a rule this plan has to state anyway, at no cost in code, the rule was corrected instead: an ask only narrows, approvals reopen only on a tombstone, and the new fact has a row for every target.
 
@@ -299,14 +299,13 @@ No command rewrites ask rows, and no emergency stop is needed: every engine from
 - **docs/connectors.md,** Permissions: the third state, which actions are askable, and that asks do not limit what an agent can carry out through sites it may read.
 - **docs/data-processing.md:** a held call's fields in the Conversation object's `run_holds` and in Laravel's `call_approvals`.
 - **docs/plans/contract.md:** `startRun`, `checkGrantEdit`, the facts table, the catalog, and the enum line in Versions.
-- **docs/plans/after-the-plan.md,** Appendix D: what later work inherits, below.
 - **Code comments:** `gateway/policy.ts:1-3` and `:23-28`, and the pipeline at `gateway/executor.ts:1-7` and `:114-128`.
 - **The app's `docs/architecture/`:** `grants.md` (the third effect, the editor, unrestricted layers, consent), `conversations.md` (the card, the summary, props, the markers), `turn.md` (the fact in the apply table, the continuation's start, `minerva:turn`'s options), `connectors.md` (the catalog step), `retention.md` (the table and the audit actions), and a new `call-approvals.md`.
 
 ## What later work inherits
 
 - **Notifications** ("Notify when a run ends or waits"). A push and a mail that open the conversation, never one that approves, the 4-hour reminder, and the 24-hour expiry, all read from `call_approvals`.
-- **Routines and inbound email.** Their starts carry no `attended`, so an ask answers `APPROVAL_UNAVAILABLE` and holds nothing. after-the-plan.md's Appendix D has them start conversations of their own, so they never close a user's cards. A start in a user's conversation would need an input that leaves the open holds alone, and the approval checks would then have to accept open holds of a run older than the latest.
+- **Routines and inbound email.** Their starts carry no `attended`, so an ask answers `APPROVAL_UNAVAILABLE` and holds nothing. They would start conversations of their own, so they never close a user's cards. A start in a user's conversation would need an input that leaves the open holds alone, and the approval checks would then have to accept open holds of a run older than the latest.
 - **Vendors' MCP tools.** A tool is an operation and its pinned schema hash is its fingerprint. A tool can ask when Minerva's own classification says it writes, never because of `readOnlyHint` or its name. A tool Minerva has not classified counts as a write and starts on Ask first.
 - **API-key connections** reuse grants and holds unchanged.
 - **Approval by someone else** (owner question 2). Each hold records the layers that asked, so a later rule can require another approver for a ceiling's ask without changing the hold's shape.
@@ -381,7 +380,7 @@ Two readers mapped the engine and the app. Two designs followed: a minimal one, 
 
 ## How to read this
 
-As in [after-the-plan.md](after-the-plan.md): one box is one unit of work, and a box is checked only when its evidence exists. A chunk starts with a fresh agent that reads this plan and its chunk, writes a short design where the chunk leaves a choice open, has opencode review it, implements, runs the checks, has opencode review the diff, and commits to `main` (engine) or to `minervacomputing/app` (Laravel). An engine chunk runs `pnpm check --instance minerva-cf-test` and changes ARCHITECTURE.md's sections in its own commit. An app chunk runs `composer test`, `pnpm run check`, `pnpm run types:check` and `pnpm test`. The owner approves every deploy to staging's engine and to production.
+One box is one unit of work, and a box is checked only when its evidence exists. A chunk starts with a fresh agent that reads this plan and its chunk, writes a short design where the chunk leaves a choice open, has opencode review it, implements, runs the checks, has opencode review the diff, and commits to `main` (engine) or to `minervacomputing/app` (Laravel). An engine chunk runs `pnpm check --instance minerva-cf-test` and changes ARCHITECTURE.md's sections in its own commit. An app chunk runs `composer test`, `pnpm run check`, `pnpm run types:check` and `pnpm test`. The owner approves every deploy to staging's engine and to production.
 
 Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked. Each perf box measures `main` first, then the head, with the same probe on the same instance.
 
@@ -580,5 +579,5 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 ## Close the program
 
 - [ ] Every box above is checked with its evidence.
-- [ ] The docs in Docs to update once built describe what was built, and after-the-plan.md's Appendix D holds what later work inherits.
+- [ ] The docs in Docs to update once built describe what was built.
 - [ ] This file is deleted.

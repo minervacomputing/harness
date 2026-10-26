@@ -1,6 +1,6 @@
 # Agent notes
 
-Operational notes for coding agents working in this repository: Minerva's open harness, the engine that runs agent turns on Cloudflare (`cloudflare/`), and the contract of the internal API between it and Laravel's private app (`contract/`). Self-hosting is not supported. For background, read [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md); for development, testing and deploys in detail, [cloudflare/README.md](cloudflare/README.md). Work in progress is planned in [docs/plans/](docs/plans/): the current plan is [docs/plans/after-the-plan.md](docs/plans/after-the-plan.md), and the decisions it builds on are in [docs/plans/product-and-engine.md](docs/plans/product-and-engine.md).
+Operational notes for coding agents working in this repository: Minerva's open harness, the engine that runs agent turns on Cloudflare (`cloudflare/`), and the contract of the internal API between it and Laravel's private app (`contract/`). Self-hosting is not supported. For background, read [README.md](README.md) and [ARCHITECTURE.md](ARCHITECTURE.md); for development, testing and deploys in detail, [cloudflare/README.md](cloudflare/README.md). Designs not yet built are in [docs/plans/](docs/plans/).
 
 ## Where docs go
 
@@ -10,7 +10,7 @@ Each kind of doc has one home and one lifetime. The code is the source of truth,
 - [ARCHITECTURE.md](ARCHITECTURE.md): what stays true about the engine and why, its protocols with their decisions, the alternatives they beat and what was accepted unfixed. A change to a protocol updates its section in the same commit.
 - [cloudflare/README.md](cloudflare/README.md): how to develop, test and deploy the engine, and the procedures the operator follows by hand.
 - `docs/`: one doc per topic that outgrew ARCHITECTURE.md, [connectors.md](docs/connectors.md) and [data-processing.md](docs/data-processing.md).
-- `docs/plans/`: the plans, the designs of chunks not yet built, and [contract.md](docs/plans/contract.md), the internal API's design, which stays. Once a chunk is built, move what later chunks inherit into their sections of the plan and what stays true into ARCHITECTURE.md or cloudflare/README.md. Then delete the chunk's design and its section of the plan. Git history keeps it, and `git log --diff-filter=D --name-only -- docs/plans/` lists the deleted designs.
+- `docs/plans/`: the designs not yet built, and [contract.md](docs/plans/contract.md), the internal API's design, which stays. Once a design is built, move what stays true into ARCHITECTURE.md or cloudflare/README.md, then delete the design. Git history keeps it, and `git log --diff-filter=D --name-only -- docs/plans/` lists the deleted designs.
 - Laravel's designs are in the app's `docs/architecture/`, one doc per built feature.
 
 A lesson learned while building goes where the next agent meets it. One about how the code must behave becomes a test where it can. Any other goes into the doc that owns its topic, or into this file when every session needs it. There is no file of learnings.
@@ -128,7 +128,7 @@ pnpm test:docker     # the Sandbox against the real image (needs Docker and `pnp
 pnpm startup         # the Worker's startup CPU, which Cloudflare limits
 ```
 
-`pnpm check --instance minerva-cf-test` runs what the workflow runs, `pnpm typecheck` and `pnpm openapi:check` in `contract/` included, then deploys the test build and runs the account test files the unit changed. The suites on the account (`test:deployed`, `test:faults`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance nightly and on demand, and the full suites run there once per chunk, for its regression box and before a deploy (docs/plans/after-the-plan.md, How to read this).
+`pnpm check --instance minerva-cf-test` runs what the workflow runs, `pnpm typecheck` and `pnpm openapi:check` in `contract/` included, then deploys the test build and runs the account test files the unit changed. The suites on the account (`test:deployed`, `test:faults`, `test:cm`) and which ones a change needs are in cloudflare/README.md; CI runs all but `test:cm` on its own instance nightly and on demand, and the full suites run there once for each design built and before a deploy.
 
 ## TypeScript and the contract
 
