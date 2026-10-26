@@ -10,7 +10,7 @@ After connecting, choose under **Connections** what agents may do with each reso
 
 ## Permissions
 
-A grant is a connection, a resource kind, a resource and actions. A resource may be `*`, meaning every resource of that kind, including new ones. Where resources nest (folders, sub-teams, a team's channels, a site's projects), a grant covers what is inside, and a block on something inside wins. Every action besides Read also requires Read on the same resource, except Outlook's and Gmail's Send, Gmail's Draft and the Web's Search, which apply to their own kinds, and Stripe's Refund and Credit, which also apply to amounts (a refund or credit also needs Read on the customer).
+A grant is a connection, a resource kind, a resource and actions. A resource may be `*`, meaning every resource of that kind, including new ones. Where resources nest (folders, sub-teams, a team's channels, a site's projects), a grant covers what is inside, and a block on something inside wins. Every action besides Read also requires Read on the same resource, except Outlook's and Gmail's Send and Gmail's Draft, which apply to their own kinds, the Web's Open in browser, the one action sites have, and Stripe's Refund and Credit, which also apply to amounts (a refund or credit also needs Read on the customer).
 
 Each tool also needs the provider scopes behind it, and a tool whose scopes the connection lacks is not offered. Where a section below says so, Minerva asks the provider for read access first and for write scopes once the user allows a write action; the connection then says what is missing and offers to ask for it (for example **Allow in Google Calendar**).
 
@@ -28,7 +28,8 @@ An organization can limit the connectors its members connect and use, and the te
 | Jira, Confluence | The Atlassian site (cloud id) of each project or space | On every call, result, listing and grant |
 | GitHub | The current owner of each repository, by its numeric id, following renames and transfers | On every call, result, listing and grant |
 | Xero | The organisation (tenant id) | On every call, result, listing and grant |
-| Todoist, the Web | Unknown | A policy can only offer the connector or not |
+| The Web | The registrable domain of each site (`wikipedia.org` for `en.wikipedia.org` and `*.wikipedia.org`) | On every call, result, listing and grant |
+| Todoist | Unknown | A policy can only offer the connector or not |
 
 Laravel also refuses to connect an account a policy does not allow. For the connectors with one tenant per account, a policy limits which accounts are used, not what is shared into them from elsewhere (a file shared from another domain, a Slack Connect channel). A repository transferred to an owner the policy does not allow is refused from the next call; a call already under way when it moves finishes against it.
 
@@ -53,7 +54,7 @@ Laravel also refuses to connect an account a policy does not allow. For the conn
 | [Intercom](#intercom) | Inbox (team id, or `none` for conversations no team is assigned to) | Read, Note, Reply | Tools name conversations by id; a conversation is authorized in the inbox of the team it is assigned to now. |
 | [Xero](#xero) | Organisation (tenant id, lowercase GUID) | Read, Draft sales invoices, Draft bills | An organisation's grant covers everything inside it (contacts, invoices, accounts). Calls name one when a connection reaches several. |
 | [Sentry](#sentry) | Project (numeric project id) | Read | Tools name projects by id or slug and issues by id or short id; an issue is authorized in its project. |
-| [The Web](#the-web) | Site; the connection itself | Site: Read. Connection: Search | Searching sends the query to Brave Search, so it is its own permission. |
+| [The Web](#the-web) | Site (a host, or `*.domain` with its subdomains) | Open in browser | Pages open in Cloudflare's browser with their scripts running. |
 
 ## Todoist
 
@@ -280,12 +281,14 @@ Click **Connections → Connect Sentry** and pick the organisation on Sentry's c
 
 ## The Web
 
-Click **Connections → Add Web**, then choose which sites agents may read and whether they may search. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`). Patterns stop at the registrable domain (per the Public Suffix List), so `*.org`, `*.co.uk` and `*.github.io` cannot be granted; only `*` allows every site. A block on a domain wins over access to a wider one. Opening an address sends whatever is in it to that site, so the sites an agent may read are also where it could carry data.
+Click **Connections → Add Web**, then choose which sites agents may open. A site is an exact host (`docs.python.org`) or a domain with its subdomains (`*.python.org`). Patterns stop at the registrable domain (per the Public Suffix List), so `*.org`, `*.co.uk` and `*.github.io` cannot be granted; only `*` (All sites) allows every site. A host that is a public suffix itself, such as `co.uk` or `github.io`, has no domain and can be neither opened nor granted. A block on a domain wins over access to a wider one, in any layer.
 
-Searching uses Brave Search, with `MINERVA_BRAVE_SEARCH_API_KEY` set to a key from <https://brave.com/search/api/>. Without it, agents can only read pages. The engine's build does not declare that key yet (`cloudflare.config.ts`), so a deploy does not upload it and search stays off unless the key is already on the Worker.
+An organization's policy offers the Web on any domain, on a list of registrable domains, or not at all. Under a list, a call on a site of another domain is refused before anything is sent ("Your organization does not allow this domain."), a grant that allows a site outside the list is refused, and a member who allows All sites gets the list's domains. The list is a limit: members still choose which of its sites their agents open, and can narrow a domain to one host.
 
-**Agents can:** search the web through Brave Search (titles, addresses and snippets only) and read pages as text.
+**Agents can:** read pages as text.
 
-**Fetching:** Minerva fetches pages itself. It checks the site before resolving it and refuses IP addresses and special-use names (`localhost`, `.internal`, `.local`, `.onion`). Cloudflare's network refuses requests from a Worker to private, loopback and link-local addresses, also for names that resolve to them, and the connector reports that refusal as a blocked site. Redirects are followed only on the same host and never from https to http; others go back to the agent, which needs permission for the new site. Pages are capped at 3 MB (also after decompression) and 25 seconds, no cookies or credentials are sent, and HTML is reduced to text without scripts, frames or images (images keep their alt text). Page text is still untrusted: reducing HTML does not neutralize prompt injection.
+**Opening pages:** every page opens in Cloudflare's browser (Browser Run, on its Kitesurf engine), with the page's scripts running; they cannot be turned off. Only https: an http address opens as https on the same host, so a site without https cannot be read. Before anything is sent, Minerva checks the address and the permission, and refuses IP addresses and special-use names (`localhost`, `.internal`, `.local`, `.onion`). What a page loads must come from its own host: a stylesheet, a script, a frame, XHR, `fetch`, an EventSource or a WebSocket aimed at another host is blocked, and images, media and fonts are not loaded at all. Nothing is cached between visits, and the page's text comes back as Markdown, which Cloudflare converts.
 
-**Limits:** there is no cap on searches per run or workspace, and each search costs the operator money. That refusal of private addresses is Cloudflare's measured behaviour, not a documented guarantee (ARCHITECTURE.md, Spike results). Continuing a long page fetches it again.
+**What a visit can do:** a page's scripts run as in any visit, so a visit can act on the site: follow a sign-in link the address carries, repeat an action a link triggers, submit a form. Moves are not stopped: a redirect, a script or a form can take the browser to any host, and that host receives the address or the form's fields. A page that ends on another host, or on http, is withheld: the agent gets its new address, and opening it needs that site's own permission. A move made by a page's own script or form is not visible to Minerva, so that page comes back as the allowed host's. Information an agent puts in an address therefore reaches the allowed sites and wherever they redirect, so allow only sites you trust. Opening a page is a read, not a write: it runs beside other reads, may be repeated after a restart, and asks for no approval.
+
+**Limits:** bot-protected pages stay unreadable, and Browser Run always identifies itself as a bot. A page whose code or data comes from another host (a CDN, `api.example.com`) stays thin, also under a `*.domain` grant, since `www.example.com` cannot load from `static.example.com`. Continuing a long page opens it again, and the page may have changed. A run opens at most 100 pages. Minerva waits 15 seconds for a page, and reads at most 3 MB of its text; PDFs and images are not read. Past Minerva's refusal of numeric addresses and local names, what the browser may reach is Cloudflare's service to decide (ARCHITECTURE.md, Spike results). Pages go to Browser Run with no location guarantee ([data-processing.md](data-processing.md)). Page text is untrusted: converting it does not neutralize prompt injection.

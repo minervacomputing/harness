@@ -2,11 +2,11 @@
 // sent by, and the raw RFC 5322 messages Minerva sends.
 //
 // Reading takes the text of a message from Gmail's part tree: plain text where a part offers it, otherwise HTML
-// converted to text with the Web connector's converter (which drops images and keeps only absolute http(s)
-// links, so text shown to the model cannot load anything). Attachments, and messages attached to this one
-// (`message/rfc822`, read as a whole subtree), are named, never read. Gmail can keep a large body part apart
-// from the message (`attachmentId`); such a body is reported as unavailable rather than empty. Header text is
-// decoded by postal-mime (`decodeWords`, RFC 2047) and shown on one line.
+// converted to text by lib/markdown.ts (which drops images and keeps only absolute http(s) links, so text shown to
+// the model cannot load anything). Attachments, and messages attached to this one (`message/rfc822`, read as a whole
+// subtree), are named, never read. Gmail can keep a large body part apart from the message (`attachmentId`); such a
+// body is reported as unavailable rather than empty. Header text is decoded by postal-mime (`decodeWords`, RFC 2047)
+// and shown on one line.
 //
 // Reply addresses decide who mail goes to, so they are read strictly (`mailboxes`), never repaired: a header is
 // a comma-separated list of `addr`, `<addr>`, `Name <addr>` or `"Quoted Name" <addr>`, and anything else
@@ -193,8 +193,7 @@ function render(content: Content, part: Part, depth: number): string | null {
 		content.unavailable = true;
 		return null;
 	}
-	// No base address: relative links, which mean nothing outside the sender's mail client, are dropped.
-	if (mimeType === "text/html") [text] = htmlToText(text);
+	if (mimeType === "text/html") text = htmlToText(text);
 	return text.replaceAll("\r\n", "\n").trim();
 }
 

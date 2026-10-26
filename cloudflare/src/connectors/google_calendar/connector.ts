@@ -103,7 +103,7 @@ function timeOf(value: EventTime | null): string | null {
 
 function eventRecord(binding: Binding, calendarId: string, event: GoogleEvent): ScopedRecord {
 	// Google's descriptions can be HTML (invitations from Zoom, Teams or Calendly), or plain text.
-	let description = event.description && HTML_TAG.test(event.description) ? htmlToText(event.description)[0] : event.description;
+	let description = event.description && HTML_TAG.test(event.description) ? htmlToText(event.description) : event.description;
 	if (description && description.length > MAX_DESCRIPTION) description = `${sliceText(description, 0, MAX_DESCRIPTION)} [truncated]`;
 	const attendees = event.attendees.slice(0, MAX_ATTENDEES).map((a) => ({ email: a.email, name: a.displayName, response: a.responseStatus, self: a.self }));
 	return {

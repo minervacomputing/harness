@@ -38,7 +38,7 @@ import {
 	requiresOf,
 	termsOf,
 } from "./connector.ts";
-import { CallIo } from "./http.ts";
+import { CallIo, type RunBrowser } from "./http.ts";
 import { RUN_ENDED_MESSAGE, WRITE_MESSAGES, type WriteNote, knownAnswer, writeKey } from "./ledger.ts";
 import { INVALID_CURSOR_MESSAGE, LIMIT_REACHED_MESSAGE, queryHash } from "./page-tokens.ts";
 import { ANY, Policy, type PolicySnapshot, type Resource } from "./policy.ts";
@@ -142,6 +142,7 @@ export interface ExecutorContext {
 	credentials: CredentialPort;
 	/** Injected in tests. */
 	fetch: typeof fetch;
+	browser?: RunBrowser | null;
 	/** The snapshot's deadline, which bounds a call's wait for one of the run's slots; null or absent for none. */
 	deadline?: EpochMs | null;
 	/** The snapshot's `tenants`: the tenants a connection policy limits a connection to; absent for none. */
@@ -386,6 +387,7 @@ export class ToolExecutor implements Executor {
 	readonly #run: RunStatePort;
 	readonly #credentials: CredentialPort;
 	readonly #fetch: typeof fetch;
+	readonly #browser: RunBrowser | null;
 	readonly #tools: readonly ToolRef[];
 	readonly #refs: ReadonlyMap<string, ToolRef>;
 	readonly #policy: Policy;
@@ -403,6 +405,7 @@ export class ToolExecutor implements Executor {
 		this.#run = context.run;
 		this.#credentials = context.credentials;
 		this.#fetch = context.fetch;
+		this.#browser = context.browser ?? null;
 		this.#tools = [...context.tools];
 		this.#refs = new Map(context.tools.map((ref) => [ref.name, ref]));
 		// Throws on a malformed snapshot, so a run whose policy cannot be read never calls a tool.
@@ -576,6 +579,7 @@ export class ToolExecutor implements Executor {
 		const lease = await this.#lease(request, ref.connection_id);
 		const io = new CallIo({
 			fetch: this.#fetch,
+			browser: this.#browser,
 			now: () => this.#clock.monotonic(),
 			admits: () => !request.signal?.aborted && this.#run.isCurrent(request.fence),
 		});

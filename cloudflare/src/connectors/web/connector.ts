@@ -1,128 +1,55 @@
-// The Web: searching it and reading pages, with access
-// chosen per site.
+// The Web: opening pages in Minerva's browser, with access chosen per site.
 //
-// Opening an address sends whatever is in it to that site, so the sites an agent may read are also where it
-// could carry data out. Access is per exact host or per domain with its subdomains, never wider than a
-// registrable domain unless the user allows every site. Sites are a hierarchical kind whose ids are
-// canonical host names or `*.domain` patterns (lib/sites.ts). Reading a page only parses the address before
-// authorization; fetching happens after it (fetch.ts).
-//
-// Searching sends the query to the search provider, so it is a need on the account resource, its own
-// permission on the connection. Search results carry addresses and snippets only; reading a result is a
-// separate call that needs the site's permission. The instance provides the service (`builtin` auth), and
-// without a Brave Search key (MINERVA_BRAVE_SEARCH_API_KEY) the connector withholds search (`offered`).
+// Opening an address sends whatever is in it to that site, and the page's scripts run, so the sites an agent may open
+// are also where it could carry data out and what it can act on as a visit would. Access is per exact host or per
+// domain with its subdomains, never wider than a registrable domain unless the user allows every site. Sites are a
+// hierarchical kind whose ids are canonical host names or `*.domain` patterns (lib/sites.ts), each in the tenant of
+// its registrable domain, so an organization's connection policy can limit the Web to a list of domains. A host that
+// is a public suffix itself (`co.uk`) has no domain and is refused here. Opening a page only parses the address before
+// authorization; the browser opens it after (render.ts).
 
 import { z } from "zod";
 import {
-	ACCOUNT_KIND,
 	type Binding,
 	type Connector,
 	OperationError,
 	type Prepared,
-	type ProviderClient,
 	type ProviderOutput,
-	type ScopedRecord,
 	defineOperation,
+	inTenant,
 } from "../../gateway/connector.ts";
 import type { ProviderIo } from "../../gateway/http.ts";
 import type { Resource } from "../../gateway/policy.ts";
-import { htmlToText } from "../../lib/markdown.ts";
-import { MAX_URL, ancestors, canonicalHost, choices, name, parseUrl, validId } from "../../lib/sites.ts";
-import { SINGLE_LINE, isSingleLine, sliceText } from "../../lib/text.ts";
-import { Fetcher, Moved } from "./fetch.ts";
-import { BraveSearch, MAX_PAGE, plain } from "./search.ts";
+import { MAX_URL, PATTERN_PREFIX, WebURL, ancestors, canonicalHost, choices, isPattern, name, parseUrl, registrable, validId } from "../../lib/sites.ts";
+import { sliceText } from "../../lib/text.ts";
+import { Browser, Moved, type Visit } from "./render.ts";
 
 export const SITE = "site";
-export const MAX_SNIPPET = 600;
+const BROWSE = "browse";
 
-export class WebClient implements ProviderClient {
-	readonly fetcher: Fetcher;
-	readonly search: BraveSearch | null;
-
-	constructor(fetcher: Fetcher, search: BraveSearch | null) {
-		this.fetcher = fetcher;
-		this.search = search;
-	}
-
-	async close(): Promise<void> {
-		await this.search?.close();
-	}
+function clientOf(binding: Binding): Browser {
+	return binding.client as Browser;
 }
 
-function clientOf(binding: Binding): WebClient {
-	return binding.client as WebClient;
+function domainOf(id: string): string | null {
+	return registrable(isPattern(id) ? id.slice(PATTERN_PREFIX.length) : id);
 }
 
-function site(binding: Binding, host: string): Resource {
-	return binding.resource(SITE, host, ancestors(host));
+interface Target extends Visit {
+	domain: string;
 }
 
-const Search = z.strictObject({
-	query: z.string().trim().min(1).max(400).refine(isSingleLine, SINGLE_LINE),
-	limit: z.int().min(1).max(20).default(10),
-	// Where results should come from, as a two-letter country code (CH, DE, US).
-	country: z.string().trim().regex(/^[A-Z]{2}$/).nullable().default(null),
-	freshness: z.enum(["day", "week", "month", "year"]).nullable().default(null),
-	cursor: z.string().trim().max(300).nullable().default(null),
-});
-
-const FRESHNESS: { readonly [name: string]: string } = { day: "pd", week: "pw", month: "pm", year: "py" };
-
-/** The page a cursor names: its number when it is ASCII digits, else the first. */
-function cursorPage(cursor: string | null): number {
-	return cursor && /^\d+$/.test(cursor) ? Number(cursor) : 0;
+function targetOf(raw: string): Target {
+	const parsed = parseUrl(raw);
+	const domain = domainOf(parsed.host);
+	if (domain === null) throw new OperationError("INVALID_URL", "This address has no domain Minerva can match.");
+	const url = parsed.scheme === "https" ? parsed : new WebURL("https", parsed.host, `https:${parsed.href.slice("http:".length)}`);
+	return { url, withFragment: url.href + (URL.parse(raw)?.hash ?? ""), domain };
 }
 
-export const SEARCH = defineOperation<z.output<typeof Search>>({
-	name: "search",
-	title: "Search the web",
-	description:
-		"Search the web. Returns titles, addresses and short snippets, not page contents. To get more results, repeat the call with identical arguments plus the returned next_cursor.",
-	input: Search,
-	needs: [[ACCOUNT_KIND, "search"]],
-	outputAction: "search",
-	paginated: true,
-	async prepare(binding, data): Promise<Prepared> {
-		const page = cursorPage(data.cursor);
-		if (data.cursor && !(page >= 1 && page <= MAX_PAGE)) throw new OperationError("INVALID_ARGUMENTS", "Invalid arguments. cursor: unknown page");
-		const account = binding.account();
-		return {
-			requirements: [{ need: account, action: "search" }],
-			async execute(): Promise<ProviderOutput> {
-				const client = clientOf(binding);
-				if (client.search === null) throw new OperationError("SEARCH_UNAVAILABLE", "Web search is not set up on this Minerva instance.");
-				const response = await client.search.search(data.query, {
-					count: data.limit,
-					page,
-					country: data.country,
-					freshness: data.freshness ? (FRESHNESS[data.freshness] as string) : null,
-				});
-				const records: ScopedRecord[] = [];
-				for (const result of response.web.results) {
-					let url: ReturnType<typeof parseUrl>;
-					try {
-						url = parseUrl(result.url);
-					} catch (error) {
-						if (error instanceof OperationError) continue;
-						throw error;
-					}
-					records.push({
-						resource: account,
-						data: {
-							title: plain(result.title),
-							url: url.href,
-							site: url.host,
-							snippet: sliceText(plain(result.description), 0, MAX_SNIPPET),
-							age: result.age,
-						},
-					});
-				}
-				const more = response.query.more_results_available && page < MAX_PAGE;
-				return { records, nextCursor: more ? String(page + 1) : null };
-			},
-		};
-	},
-});
+function site(binding: Binding, target: Target): Resource {
+	return inTenant(binding.resource(SITE, target.url.host, ancestors(target.url.host)), target.domain);
+}
 
 const ReadPage = z.strictObject({
 	url: z.string().trim().min(1).max(MAX_URL),
@@ -137,33 +64,31 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 	name: "read_page",
 	title: "Read a web page",
 	description:
-		"Open a web page (http or https) and read it as text. Only sites you may read can be opened. A page that moves to another site returns redirect_to instead of content. Long pages are cut at max_chars; continue with offset set to the returned next_offset.",
+		"Open a web page in Minerva's browser, which runs its scripts, and read it as text. Only https pages on sites you may open. A page that moves to another site returns redirect_to instead of content. Long pages are cut at max_chars; continue with offset set to the returned next_offset, which opens the page again.",
 	input: ReadPage,
-	needs: [[SITE, "read"]],
+	needs: [[SITE, BROWSE]],
+	outputAction: BROWSE,
+	revision: 2,
 	async prepare(binding, data): Promise<Prepared> {
-		// Only parsed here; nothing is fetched before the site is authorized.
-		const target = parseUrl(data.url);
+		const target = targetOf(data.url);
 		return {
-			requirements: [{ need: site(binding, target.host), action: "read" }],
+			requirements: [{ need: site(binding, target), action: BROWSE }],
 			async execute(): Promise<ProviderOutput> {
-				const outcome = await clientOf(binding).fetcher.get(target);
-				if (outcome instanceof Moved) {
-					return { records: [{ resource: site(binding, target.host), data: { url: target.href, redirect_to: outcome.target.href, note: MOVED_NOTE } }] };
+				const page = await clientOf(binding).read(target);
+				if (page instanceof Moved) {
+					return { records: [{ resource: site(binding, target), data: { url: target.url.href, redirect_to: page.target.href, note: MOVED_NOTE } }] };
 				}
-				let title: string | null = null;
-				let text = outcome.text;
-				if (outcome.form === "html") [text, title] = htmlToText(outcome.text, outcome.url.href);
 				const end = data.offset + data.max_chars;
-				const total = text.length;
+				const total = page.text.length;
 				return {
 					records: [
 						{
-							resource: site(binding, outcome.url.host),
+							resource: site(binding, target),
 							data: {
-								url: outcome.url.href,
-								title,
-								content_type: outcome.contentType,
-								text: sliceText(text, data.offset, end),
+								url: page.url.href,
+								title: page.title,
+								content_type: page.contentType,
+								text: sliceText(page.text, data.offset, end),
 								offset: data.offset,
 								total_chars: total,
 								next_offset: end < total ? end : null,
@@ -176,52 +101,40 @@ export const READ_PAGE = defineOperation<z.output<typeof ReadPage>>({
 	},
 });
 
-/** `MINERVA_BRAVE_SEARCH_API_KEY` as the Worker is configured (nodejs_compat puts its bindings in `process.env`); null when unset. */
-function configuredBraveKey(): string | null {
-	const env = (globalThis as { process?: { env?: { [name: string]: string | undefined } } }).process?.env;
-	const value = env?.MINERVA_BRAVE_SEARCH_API_KEY;
-	return typeof value === "string" ? value : null;
-}
-
-export interface WebOptions {
-	/** The operator's Brave Search key, read each time; null when unset. */
-	braveKey?: () => string | null;
-}
-
 /** The Web connector. A fresh declaration; the registry freezes the one it is given. */
-export function webConnector(options: WebOptions = {}): Connector<WebClient> {
-	const braveKey = options.braveKey ?? configuredBraveKey;
+export function webConnector(): Connector<Browser> {
 	return {
 		slug: "web",
 		name: "Web",
 		kinds: [
-			{ id: ACCOUNT_KIND, label: "Web search", actions: ["search"], note: "Searching sends the agent's query to Brave Search." },
 			{
 				id: SITE,
 				label: "Site",
-				actions: ["read"],
+				actions: [BROWSE],
 				wildcard: true,
 				hierarchical: true,
 				listed: false,
-				note: "Search for a domain or paste an address to add it. An agent can send information to any site it may read, in the addresses it opens, so allow only sites you trust. A block on a domain wins over access to a wider one.",
+				note: "Search for a domain or paste an address to add it. Open in browser loads pages in Cloudflare's browser and runs their scripts, which can act on the site as a visit would, such as following a sign-in link. Agents can also send information in the addresses they open, to these sites and to wherever they redirect, so allow only sites you trust. A block on a domain wins over access to a wider one.",
 			},
 		],
-		actions: [
-			{ id: "search", label: "Search the web" },
-			{ id: "read", label: "Read pages" },
-		],
+		actions: [{ id: BROWSE, label: "Open in browser" }],
 		auth: { type: "builtin" },
-		tenancy: { kind: "unknown" },
-		operations: [SEARCH, READ_PAGE],
-
-		offered(op) {
-			return op.name !== "search" || braveKey() !== null;
+		tenancy: {
+			kind: "resource",
+			label: "domain",
+			async tenants(_client, _kind, ids) {
+				const found: { [id: string]: string } = {};
+				for (const id of ids) {
+					const domain = domainOf(id);
+					if (domain !== null) found[id] = domain;
+				}
+				return found;
+			},
 		},
+		operations: [READ_PAGE],
 
 		client(_secret: string, io: ProviderIo) {
-			const key = braveKey();
-			// An empty key is set but refused nowhere: search is offered and then unavailable.
-			return new WebClient(new Fetcher(io), key ? new BraveSearch(key, io) : null);
+			return new Browser(io);
 		},
 
 		async account() {
@@ -234,12 +147,14 @@ export function webConnector(options: WebOptions = {}): Connector<WebClient> {
 			// A pasted address, or a host name with or without a path.
 			const slash = text.indexOf("/");
 			const host = text.includes("://") ? parseUrl(text).host : canonicalHost(slash < 0 ? text : text.slice(0, slash));
-			return { items: choices(host).map((item) => ({ id: item, name: name(item) })) };
+			const domain = domainOf(host);
+			if (domain === null) return { items: [] };
+			return { items: choices(host).map((item) => ({ id: item, name: name(item), tenant: domain })) };
 		},
 
 		async describe(_client, _kind, ids) {
 			const names: { [id: string]: string } = {};
-			for (const id of ids) if (validId(id)) names[id] = name(id);
+			for (const id of ids) if (validId(id) && domainOf(id) !== null) names[id] = name(id);
 			return names;
 		},
 	};

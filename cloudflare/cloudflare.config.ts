@@ -169,6 +169,7 @@ export default defineConfig(({ mode }) => {
 				// Prepares the images `read` gives the model (src/conversation/images.ts); without it, only images
 				// already within the model's limits are read.
 				...(target.offline ? {} : { IMAGES: bindings.images({ dev: { remote: true } }) }),
+				...(target.faults ? {} : { BROWSER: bindings.browser({ dev: { remote: true } }) }),
 				LOADER: bindings.workerLoader(),
 				CONVERSATION: bindings.durableObject({ worker: target.names.app, exportName: "Conversation" }),
 				SCRIPTS: bindings.durableObject({ worker: target.names.app, exportName: "Scripts" }),
@@ -206,8 +207,8 @@ export default defineConfig(({ mode }) => {
 				MINERVA_GITHUB_APP_SLUG: setting("MINERVA_GITHUB_APP_SLUG"),
 
 				// Uploaded from the instance's secrets.env by `pnpm run deploy`, which uploads only the secrets declared here.
-				// A declared secret is required, so model keys (MINERVA_MODEL_API_KEY, MINERVA_BRAVE_SEARCH_API_KEY) join
-				// this list in the steps that use them; until then they are commented-out placeholders in that file.
+				// A declared secret is required, so a model key (MINERVA_MODEL_API_KEY) joins this list in the step that
+				// uses it; until then it is a commented-out placeholder in that file.
 				MINERVA_SECRET_KEY: bindings.secret(),
 				...laravelSecrets(target),
 			},

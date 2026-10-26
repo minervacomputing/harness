@@ -611,7 +611,7 @@ describe("requests and arguments", () => {
 describe("registry", () => {
 	test("accepts the Slack declaration; its fingerprints", async () => {
 		const connector = slackConnector();
-		expect([connector.manageLink, connector.offered]).toEqual([undefined, undefined]);
+		expect(connector.manageLink).toBeUndefined();
 		const registry = await Registry.create([connector]);
 		const fingerprints = Object.fromEntries(registry.get("slack").operations.map((op) => [op.name, registry.contract("slack", op.name)]));
 		console.info("slack fingerprints", fingerprints);

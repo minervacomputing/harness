@@ -11,7 +11,6 @@ import { ListingModel, PageModel } from "../../src/connectors/confluence/client.
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { connectorRegistry } from "../../src/connectors/index.ts";
 import { CommentModel, IssueModel, JiraClient, ProjectModel } from "../../src/connectors/jira/client.ts";
-import { offered } from "../../src/gateway/connector.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import type { Json } from "../../src/lib/json.ts";
@@ -342,7 +341,6 @@ describe("the declarations", () => {
 		});
 		for (const connector of [jiraConnector(), confluenceConnector()]) {
 			expect(connector.manageLink?.()).toEqual(["Atlassian connected apps", "https://id.atlassian.com/manage-profile/apps"]);
-			expect(connector.operations.every((op) => offered(connector, op))).toBe(true);
 			expect(connector.browsable).toBeUndefined();
 			// The client goes in the JSON body of a token request.
 			expect((await catalogEntry(connector)).auth).toMatchObject({ tokenUrl: "https://auth.atlassian.com/oauth/token", clientAuth: "post", tokenBody: "json", pkce: false });

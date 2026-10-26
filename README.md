@@ -66,7 +66,7 @@ Prompt injection is contained, not prevented. An email that asks the agent to se
 | **Messaging and support** | Slack, Microsoft Teams, Intercom |
 | **Engineering** | GitHub, Linear, Jira, Sentry, Todoist |
 | **Finance and sales** | Stripe, Xero, HubSpot |
-| **Web** | Reading the sites you allow |
+| **Web** | Reading the sites you allow, in Cloudflare's browser |
 
 What each one lets agents do, and what it hides from them, is in [docs/connectors.md](docs/connectors.md).
 

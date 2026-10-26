@@ -6,11 +6,8 @@ import { read as intercomText } from "../../src/connectors/intercom/html.ts";
 import { read as teamsText } from "../../src/connectors/teams/html.ts";
 import { htmlToText } from "../../src/lib/markdown.ts";
 
-test("pages, Teams and Intercom messages are read as text in workerd", () => {
-	expect(htmlToText('<title>T</title><p>a &amp; <a href="/x">b</a></p><script>c</script><img src="https://evil.example.org/">', "https://example.com/")).toEqual([
-		"a & [b](https://example.com/x)",
-		"T",
-	]);
+test("HTML mail, Teams and Intercom messages are read as text in workerd", () => {
+	expect(htmlToText('<title>T</title><p>a &amp; <a href="https://example.com/x">b</a></p><script>c</script><img src="https://evil.example.org/">')).toBe("a & [b](https://example.com/x)");
 	expect(teamsText('<p>hi <at id="9">SECRET</at> <a href="https://teams.micro&#1;soft.com/x">SECRET</a></p><blockquote>SECRET', "html", [])).toBe(
 		"hi @[channel] [Teams link]\n[quoted message]",
 	);

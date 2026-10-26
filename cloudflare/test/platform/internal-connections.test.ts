@@ -115,11 +115,11 @@ function fakeRepositories(options: { status?: number } = {}): string[] {
 
 const credential = { kind: "oauth2" as const, secret: "gho_token", generation: 3 };
 
-function listResources(fields: { kind?: string; query?: string | null; parent?: string | null; cursor?: string | null; connection?: string; builtin?: string } = {}) {
+function listResources(fields: { kind?: string; query?: string | null; parent?: string | null; cursor?: string | null } = {}) {
 	return commands.listResources({
 		scope: scope(),
-		connection: { id: fields.connection ?? uuid7(), provider: fields.builtin ?? "github" },
-		credential: fields.builtin === undefined ? credential : { kind: "builtin", secret: "", generation: 1 },
+		connection: { id: uuid7(), provider: "github" },
+		credential,
 		kind: fields.kind ?? "repository",
 		query: fields.query ?? null,
 		parent: fields.parent ?? null,
@@ -128,7 +128,7 @@ function listResources(fields: { kind?: string; query?: string | null; parent?: 
 }
 
 describe("listResources", () => {
-	test("a kind's resources, a search, and the account itself (the Web's)", async () => {
+	test("a kind's resources and a search", async () => {
 		fakeRepositories();
 		expect(await listResources()).toEqual({
 			outcome: "listed",
@@ -139,8 +139,6 @@ describe("listResources", () => {
 			next: null,
 		});
 		expect(await listResources({ query: "SITE" })).toEqual({ outcome: "listed", items: [{ id: "102", name: "example/site", expandable: false }], next: null });
-		const connection = uuid7();
-		expect(await listResources({ kind: "account", connection, builtin: "web" })).toEqual({ outcome: "listed", items: [{ id: connection, name: "Web", expandable: false }], next: null });
 	});
 
 	test("a kind not declared, and a parent where nothing is browsed, are VALIDATION_FAILED; a page token not its own INVALID_CURSOR", async () => {
@@ -235,38 +233,27 @@ describe("checkGrantEdit", () => {
 		expect(await checkGrantEdit(connection, full, [{ kind: "repository", id: "*", actions: ["read"] }])).toEqual({ outcome: "invalid", message: "A layer can have at most 10,000 permissions." });
 	});
 
-	test("the account is named by the provider's account", async () => {
-		const connection = uuid7();
-		const answer = await commands.checkGrantEdit({
-			scope: scope(),
-			connection: { id: connection, provider: "web" },
-			credential: { kind: "builtin", secret: "", generation: 1 },
-			layer: { level: "agent", subject: uuid7(), restricted: false, revision: 1, grants: [] },
-			changes: [{ kind: "account", id: connection, actions: ["search"] }],
-		});
-		expect(answer).toEqual({ outcome: "valid", grants: [{ connection, kind: "account", resource: connection, name: "Web", actions: ["search"], effect: "allow" }] });
-	});
-
-	test("a Web site is named by its pattern without a request; an action sites do not have is invalid", async () => {
+	test("a Web site is named by its pattern without a request; an action sites do not have, or a host with no domain, is invalid", async () => {
 		const sent: string[] = [];
 		PROVIDER_NETWORK.fetch = () => async (input) => {
 			sent.push(String(input));
 			throw new TypeError("The Web names sites without a request.");
 		};
 		const connection = uuid7();
-		const edit = (actions: string[]) =>
+		const edit = (actions: string[], id = "*.python.org") =>
 			commands.checkGrantEdit({
 				scope: scope(),
 				connection: { id: connection, provider: "web" },
 				credential: { kind: "builtin", secret: "", generation: 1 },
 				layer: { level: "agent", subject: uuid7(), restricted: false, revision: 1, grants: [] },
-				changes: [{ kind: "site", id: "*.python.org", actions }],
+				changes: [{ kind: "site", id, actions }],
 			});
-		expect(await edit(["read"])).toEqual({
+		expect(await edit(["browse"])).toEqual({
 			outcome: "valid",
-			grants: [{ connection, kind: "site", resource: "*.python.org", name: "python.org, including subdomains", actions: ["read"], effect: "allow" }],
+			grants: [{ connection, kind: "site", resource: "*.python.org", name: "python.org, including subdomains", actions: ["browse"], effect: "allow" }],
 		});
-		expect(await edit(["search"])).toMatchObject({ outcome: "invalid" });
+		for (const actions of [["read"], ["search"]]) expect(await edit(actions), actions[0]).toMatchObject({ outcome: "invalid" });
+		for (const id of ["co.uk", "github.io"]) expect(await edit(["browse"], id), id).toMatchObject({ outcome: "invalid" });
 		expect(sent).toEqual([]);
 	});
 
@@ -304,13 +291,13 @@ describe("under a connection policy", () => {
 	const owners = (...tenants: string[]) => ({ revision: 2, connectors: [{ provider: "github", tenants }] });
 	const offersOnly = (provider: string) => ({ revision: 2, connectors: [{ provider, tenants: null }] });
 
-	function list(policy: ConnectionPolicy, provider = "github", cursor: string | null = null) {
+	function list(policy: ConnectionPolicy, provider = "github", cursor: string | null = null, query: string | null = null) {
 		return commands.listResources({
 			scope: scope(),
 			connection: { id: uuid7(), provider, tenant: null },
 			credential: provider === "github" ? credential : { kind: "builtin", secret: "", generation: 1 },
-			kind: provider === "github" ? "repository" : "account",
-			query: null,
+			kind: provider === "github" ? "repository" : "site",
+			query,
 			parent: null,
 			cursor,
 			policy,
@@ -336,9 +323,44 @@ describe("under a connection policy", () => {
 		expect(await list(offersOnly("github"))).toMatchObject({ outcome: "listed", items: [{ id: "101" }, { id: "103" }] });
 		seen.length = 0;
 		expect(await list(offersOnly("notion"))).toEqual(NOT_ALLOWED);
-		// The Web's tenancy is unknown: a list refuses it.
-		expect(await list({ revision: 2, connectors: [{ provider: "web", tenants: ["example.com"] }] }, "web")).toEqual(NOT_ALLOWED);
 		expect(seen).toEqual([]);
+	});
+
+	test("the Web is listed and allowed by domain", async () => {
+		const sent: string[] = [];
+		PROVIDER_NETWORK.fetch = () => async (input) => {
+			sent.push(String(input));
+			throw new TypeError("The Web lists and names sites without a request.");
+		};
+		const domains = (...tenants: string[]) => ({ revision: 2, connectors: [{ provider: "web", tenants }] });
+		expect(await list(domains("wikipedia.org"), "web", null, "https://en.wikipedia.org/wiki/Owl")).toEqual({
+			outcome: "listed",
+			items: [
+				{ id: "en.wikipedia.org", name: "en.wikipedia.org", expandable: false },
+				{ id: "*.en.wikipedia.org", name: "en.wikipedia.org, including subdomains", expandable: false },
+				{ id: "*.wikipedia.org", name: "wikipedia.org, including subdomains", expandable: false },
+			],
+			next: null,
+		});
+		expect(await list(domains("wikipedia.org"), "web", null, "example.com")).toEqual({ outcome: "listed", items: [], next: null });
+		const connection = uuid7();
+		const edit = (id: string) =>
+			commands.checkGrantEdit({
+				scope: scope(),
+				connection: { id: connection, provider: "web", tenant: null },
+				credential: { kind: "builtin", secret: "", generation: 1 },
+				layer: { level: "user", subject: uuid7(), restricted: true, revision: 1, grants: [] },
+				changes: [{ kind: "site", id, actions: ["browse"] }],
+				policy: domains("wikipedia.org"),
+			});
+		for (const id of ["en.wikipedia.org", "*.wikipedia.org", "*"]) expect(await edit(id), id).toMatchObject({ outcome: "valid" });
+		expect(await edit("example.com")).toEqual({ outcome: "refused", code: "TENANT_NOT_ALLOWED", message: "Your organization does not allow the domain of example.com." });
+		expect(await edit("*.wikipedia.org.example.com")).toEqual({
+			outcome: "refused",
+			code: "TENANT_NOT_ALLOWED",
+			message: "Your organization does not allow the domain of wikipedia.org.example.com, including subdomains.",
+		});
+		expect(sent).toEqual([]);
 	});
 
 	test("listResources keeps the page token of a page whose every item it leaves out, so the next page is reached", async () => {

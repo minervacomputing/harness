@@ -133,13 +133,13 @@ export type InstanceFile = keyof typeof INSTANCE_FILES;
 
 /**
  * The secrets a secrets.env holds: `required`, which scripts/secrets.ts generates, and `optional`, which it lists
- * commented out until set. Model keys are uploaded once the steps that use them declare them in cloudflare.config.ts;
+ * commented out until set. A model key is uploaded once the step that uses it declares it in cloudflare.config.ts;
  * MINERVA_LARAVEL_TOKEN, the Sanctum token Laravel issues for this engine (`php artisan minerva:engine-token`), and
  * MINERVA_STREAM_KEYS, the stream tokens' keys Laravel holds too, are declared and uploaded once set.
  */
 export const INSTANCE_SECRETS = {
 	required: ["MINERVA_SECRET_KEY"],
-	optional: ["MINERVA_MODEL_API_KEY", "MINERVA_BRAVE_SEARCH_API_KEY", "MINERVA_LARAVEL_TOKEN", "MINERVA_STREAM_KEYS"],
+	optional: ["MINERVA_MODEL_API_KEY", "MINERVA_LARAVEL_TOKEN", "MINERVA_STREAM_KEYS"],
 } as const;
 
 /** An instance: its name, its kind, its account once recorded, and its directory. */

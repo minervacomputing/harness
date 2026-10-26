@@ -1,8 +1,7 @@
-// Readable text from HTML, in a Markdown-like form, for the Web connector's pages and Gmail's HTML parts
-// (which convert with no base address, so a link is kept only if its href is absolute). Pages are hostile
-// input. Scripts, styles, frames, forms and navigation are dropped with what is inside them. Links keep
-// absolute http(s) targets; images keep only their alt text, so the conversation never gains a remote image
-// that could carry data out when shown.
+// Readable text from HTML, in a Markdown-like form, for Gmail's HTML parts and Google Calendar's descriptions.
+// Both are hostile input. Scripts, styles, frames, forms and navigation are dropped with what is inside them.
+// Links keep absolute http(s) targets; images keep only their alt text, so the conversation never gains a
+// remote image that could carry data out when shown.
 
 import { type Attribute, type Tokens, tokenize } from "./html.ts";
 
@@ -30,6 +29,7 @@ const SKIPPED = new Set([
 	"audio",
 	"video",
 	"picture",
+	"title",
 ]);
 const BLOCKS = new Set([
 	"p",
@@ -73,10 +73,10 @@ function squash(text: string): string {
 	return text.replace(SPACES, " ").trim();
 }
 
-/** `href` resolved against the page's address, if it is an http(s) address, made safe for a Markdown link; else null. */
-function link(baseUrl: string, href: string | undefined): string | null {
+/** `href`, if it is an absolute http(s) address, made safe for a Markdown link; else null. */
+function link(href: string | undefined): string | null {
 	if (!href) return null;
-	const url = URL.parse(href.trim(), baseUrl || undefined);
+	const url = URL.parse(href.trim());
 	if (url === null || (url.protocol !== "http:" && url.protocol !== "https:") || url.href.length > MAX_LINK) return null;
 	// Parentheses would end the Markdown link; the parser has encoded spaces already.
 	return url.href.replaceAll("(", "%28").replaceAll(")", "%29");
@@ -86,19 +86,12 @@ function link(baseUrl: string, href: string | undefined): string | null {
 const SELF_CLOSING = new Set(["svg", "math"]);
 
 class Converter implements Tokens {
-	readonly baseUrl: string;
 	readonly out: string[] = [];
 	private readonly skip: string[] = [];
 	private readonly skipOpen = new Map<string, number>([...SKIPPED].map((tag) => [tag, 0]));
 	private readonly lists: [ordered: boolean, counter: number][] = [];
 	private pre = 0;
 	readonly links: [start: number, href: string | null][] = [];
-	readonly title: string[] = [];
-	private inTitle = false;
-
-	constructor(baseUrl: string) {
-		this.baseUrl = baseUrl;
-	}
 
 	/** Ends the line, with at least `count` line breaks in a row. */
 	private newline(count = 1): void {
@@ -126,10 +119,6 @@ class Converter implements Tokens {
 			return;
 		}
 		if (this.skip.length) return;
-		if (tag === "title") {
-			this.inTitle = true;
-			return;
-		}
 		// The first of repeated attributes counts, as in browsers.
 		const values = new Map<string, string>();
 		for (const [name, value] of attrs) if (!values.has(name)) values.set(name, value);
@@ -166,7 +155,7 @@ class Converter implements Tokens {
 		} else if (tag === "a") {
 			// Links do not nest: a new one closes the open one, as browsers do.
 			if (this.links.length) this.closeLink();
-			this.links.push([this.out.length, link(this.baseUrl, values.get("href"))]);
+			this.links.push([this.out.length, link(values.get("href"))]);
 		}
 	}
 
@@ -179,10 +168,6 @@ class Converter implements Tokens {
 				}
 				this.skipOpen.set(tag, (this.skipOpen.get(tag) ?? 0) - 1);
 			}
-			return;
-		}
-		if (tag === "title") {
-			this.inTitle = false;
 			return;
 		}
 		if ((tag === "ul" || tag === "ol") && this.lists.length) this.lists.pop();
@@ -201,15 +186,11 @@ class Converter implements Tokens {
 		const text = squash(this.out.slice(start).join(""));
 		this.out.splice(start);
 		// A link whose text is its own address is shown once.
-		if (href && text && link("", text) !== href) this.out.push(`[${text}](${href})`);
+		if (href && text && link(text) !== href) this.out.push(`[${text}](${href})`);
 		else this.out.push(text);
 	}
 
 	text(data: string): void {
-		if (this.inTitle) {
-			this.title.push(data);
-			return;
-		}
 		if (this.skip.length) return;
 		if (this.pre) {
 			this.out.push(data);
@@ -246,12 +227,10 @@ function tidy(text: string): string {
 	return cleaned.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-/** The page's text and its title, with links resolved against `baseUrl` (none: only absolute links are kept). */
-export function htmlToText(html: string, baseUrl = ""): [text: string, title: string | null] {
-	const converter = new Converter(baseUrl);
+export function htmlToText(html: string): string {
+	const converter = new Converter();
 	tokenize(html, converter);
 	// A link still open when the page ended, even inside an unclosed script.
 	if (converter.links.length) converter.closeLink();
-	const title = squash(converter.title.join("")) || null;
-	return [tidy(converter.out.join("")), title];
+	return tidy(converter.out.join(""));
 }

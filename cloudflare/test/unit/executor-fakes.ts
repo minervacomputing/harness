@@ -31,7 +31,7 @@ import {
 	createExecutor,
 } from "../../src/gateway/executor.ts";
 import type { GrantRow, RunLayers } from "../../src/gateway/grants.ts";
-import { ProviderHTTP } from "../../src/gateway/http.ts";
+import { ProviderHTTP, type RunBrowser } from "../../src/gateway/http.ts";
 import { WriteLedger } from "../../src/gateway/ledger.ts";
 import { PageTokens } from "../../src/gateway/page-tokens.ts";
 import type { Resource } from "../../src/gateway/policy.ts";
@@ -542,6 +542,7 @@ export interface ScenarioOptions {
 	ceiling?: GrantRow[];
 	ceilingRestricted?: boolean;
 	fetch: typeof fetch;
+	browser?: RunBrowser;
 	deadline?: number | null;
 	concurrency?: number;
 	clock?: FakeClock;
@@ -632,6 +633,7 @@ export class Scenario {
 				run: this.state,
 				credentials: this.credentials,
 				fetch: options.fetch,
+				browser: options.browser ?? null,
 				deadline,
 				...(this.snapshot.tenants ? { tenants: this.snapshot.tenants } : {}),
 			},

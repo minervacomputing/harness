@@ -1358,6 +1358,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					run: this.#runState(),
 					credentials: this.#credentials(snapshot),
 					fetch: this.#ports.fetch(this.#portsContext() as PortsContext),
+					browser: this.#ports.browser(this.#portsContext() as PortsContext),
 					deadline: snapshot.deadline,
 					tenants: snapshot.tenants,
 				},

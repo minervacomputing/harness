@@ -11,7 +11,7 @@ import { notionConnector } from "../../src/connectors/notion/connector.ts";
 import { SYNCED_HIDDEN, planEdits, redact, writtenRefusal } from "../../src/connectors/notion/markdown.ts";
 import { canonical, objectId } from "../../src/connectors/notion/pages.ts";
 import { checkFilter, mentionsHidden, readable, schema, writable } from "../../src/connectors/notion/properties.ts";
-import { OperationError, offered, termsOf } from "../../src/gateway/connector.ts";
+import { OperationError, termsOf } from "../../src/gateway/connector.ts";
 import type { GrantRow } from "../../src/gateway/grants.ts";
 import { settingsIo } from "../../src/gateway/http.ts";
 import { Registry, fingerprint } from "../../src/gateway/registry.ts";
@@ -1310,10 +1310,7 @@ describe("declaration, paging and limits", () => {
 			["append_to_page", true, false, [[PAGE, "edit"]]],
 			["add_comment", true, false, [[PAGE, "comment"]]],
 		]);
-		for (const op of connector.operations) {
-			expect(termsOf(op)).toMatchObject({ outputAction: "read", consent: null, revision: 1 });
-			expect(offered(connector, op)).toBe(true);
-		}
+		for (const op of connector.operations) expect(termsOf(op)).toMatchObject({ outputAction: "read", consent: null, revision: 1 });
 		expect(connector.kinds).toEqual([
 			{
 				id: PAGE,
@@ -1330,7 +1327,7 @@ describe("declaration, paging and limits", () => {
 			{ id: "create", label: "Create pages", requires: "read" },
 			{ id: "edit", label: "Edit pages", requires: "read" },
 		]);
-		expect([connector.browsable, connector.manageLink, connector.offered]).toEqual([undefined, undefined, undefined]);
+		expect([connector.browsable, connector.manageLink]).toEqual([undefined, undefined]);
 	});
 
 	test("the Worker's registry serves Notion", async () => {

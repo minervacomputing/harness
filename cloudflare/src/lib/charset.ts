@@ -1,6 +1,5 @@
 // Text in a named charset, as the Encoding Standard reads the name: the runtime's TextDecoder, which is what
-// browsers and mail readers use. A body part's Content-Type charset (gmail/mime.ts) and a web page's charset
-// (connectors/web/fetch.ts) are decoded here.
+// browsers and mail readers use.
 //
 // Undecodable bytes are replaced by U+FFFD and a byte order mark is dropped. The standard maps the Latin-1
 // labels, and so US-ASCII's, to windows-1252, and gives HZ, ISO-2022-KR and -CN, UTF-7 and UTF-32 no decoder

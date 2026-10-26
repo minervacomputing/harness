@@ -201,8 +201,6 @@ export interface Connector<Client extends ProviderClient = ProviderClient> {
 	children?(client: Client, kind: string, parent: string | null, options: { cursor: string | null }): Promise<DiscoveryPage>;
 	/** Names of the given resources; ones the account cannot see are left out. */
 	describe(client: Client, kind: string, ids: string[]): Promise<{ [id: string]: string }>;
-	/** Whether this instance can run the operation at all (say, an operator key is set). Default true. */
-	offered?(operation: Operation<never>): boolean;
 	/** A (label, URL) where the user manages what the provider lets Minerva reach. */
 	manageLink?(): [label: string, url: string] | null;
 }
@@ -245,11 +243,11 @@ export type ConnectorErrorCode =
 	| "UNSUPPORTED_RECIPIENT"
 	| "UNSUPPORTED_PAGE"
 	| "UNSUPPORTED_DATABASE"
-	| "SITE_UNREACHABLE"
 	| "SITE_TIMEOUT"
-	| "SITE_NOT_PUBLIC"
 	| "PAGE_TOO_LARGE"
 	| "PAGE_ERROR"
+	| "BROWSER_BUSY"
+	| "BROWSER_UNAVAILABLE"
 	| "WRITE_UNCONFIRMED"
 	| "EDIT_NOT_APPLIED"
 	| "FILE_MOVED"
@@ -272,7 +270,6 @@ export type ConnectorErrorCode =
 	| "CURRENCY_MISMATCH"
 	| "INVALID_STAGE"
 	| "INVALID_KEY"
-	| "SEARCH_UNAVAILABLE"
 	| "PROVIDER_NOT_CONFIGURED"
 	| "NOT_SUPPORTED";
 
@@ -355,11 +352,6 @@ export function nests(connector: Connector, kind: string): boolean {
 /** The action an action requires on the same resource, as the policy asks it. */
 export function requiresOf(connector: Connector): (action: string) => string | null {
 	return (action) => actionOf(connector, action)?.requires ?? null;
-}
-
-/** Whether this instance can run the operation at all (`offered`, default true). */
-export function offered(connector: Connector, op: Operation<never>): boolean {
-	return connector.offered ? connector.offered(op) : true;
 }
 
 /** What an operation means beyond its input and needs, with the defaults filled in. */

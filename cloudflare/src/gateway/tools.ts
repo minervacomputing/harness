@@ -3,7 +3,7 @@
 // (ARCHITECTURE.md: Starting a run).
 
 import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../shared/rpc.ts";
-import { consentGiven, nests, offered, operationOf, requiresOf } from "./connector.ts";
+import { consentGiven, nests, operationOf, requiresOf } from "./connector.ts";
 import { effectivePolicy, type ProviderOf, type RunLayers } from "./grants.ts";
 import type { Policy, PolicySnapshot } from "./policy.ts";
 import type { Registry } from "./registry.ts";
@@ -106,7 +106,7 @@ export function toolsFor(registry: Registry, connections: readonly ConnectionInf
 		const alias = n === 1 ? connection.provider : `${connection.provider}${n}`;
 		const requires = requiresOf(connector);
 		for (const op of connector.operations) {
-			if (!offered(connector, op) || !consentGiven(op.consent, connection.scopes)) continue;
+			if (!consentGiven(op.consent, connection.scopes)) continue;
 			if (!op.needs.every(([kind, action]) => policy.permitsAny(connection.id, kind, action, requires, nests(connector, kind)))) continue;
 			refs.push({
 				name: `${alias}_${op.name}`,

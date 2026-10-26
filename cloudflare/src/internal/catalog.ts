@@ -4,7 +4,7 @@
 
 import type { Catalog, CatalogAuth, CatalogConnector } from "@minerva/contract/internal";
 import type { Prices } from "../budget/prices.ts";
-import { type Auth, type Connector, offered } from "../gateway/connector.ts";
+import type { Auth, Connector } from "../gateway/connector.ts";
 import type { Registry } from "../gateway/registry.ts";
 import { hashInput } from "../lib/canonical.ts";
 import { sha256Hex } from "../lib/hash.ts";
@@ -57,7 +57,8 @@ function connectorOf(connector: Connector): CatalogConnector {
 			needs: op.needs.map(([kind, action]) => ({ kind, action })),
 			consent: op.consent ? op.consent.map((scopes) => [...scopes]) : null,
 			mutates: op.mutates ?? false,
-			offered: offered(connector, op),
+			// Every operation runs on every engine; v1 keeps the field.
+			offered: true,
 		})),
 		manage: manage === null ? null : { label: manage[0], url: manage[1] },
 		tenancy: connector.tenancy.kind === "unknown" ? { kind: "unknown", label: null } : { kind: connector.tenancy.kind, label: connector.tenancy.label },

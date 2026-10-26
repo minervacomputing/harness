@@ -8,10 +8,13 @@
 
 import { describe, expect, test } from "vitest";
 import { z } from "zod";
+import { SITE, webConnector } from "../../src/connectors/web/connector.ts";
 import { type Connector, type Prepared, type ProviderOutput, defineOperation } from "../../src/gateway/connector.ts";
-import { ProviderHTTP } from "../../src/gateway/http.ts";
+import { ProviderHTTP, RunBrowser } from "../../src/gateway/http.ts";
 import type { Json } from "../../src/lib/json.ts";
-import { FOLDER, MIXED, Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
+import type { ConnectionId } from "../../src/shared/rpc.ts";
+import { FakeBrowser, rendered } from "../fixtures/connectors/web/fake-browser.ts";
+import { FOLDER, Gate, MIXED, Scenario, jsonResponse, userGrants } from "./executor-fakes.ts";
 
 const Id = () => z.string().trim().min(1).max(40).regex(/^[a-z0-9-]+$/);
 const Both = z.strictObject({ first: Id(), second: Id() });
@@ -190,5 +193,52 @@ describe("a revocation during a call", () => {
 		expect((await run.ok("twostep_read_found", { name: "notes" })).result.count).toBe(1);
 		expect((await run.ok("twostep_read_looked_up", { name: "notes" })).result.count).toBe(1);
 		expect(provider.paths).toEqual(["/folders/inbox", "/folders/archive", "/lookup/notes", "/folders/inbox", "/lookup/notes"]);
+	});
+});
+
+describe("the browser", () => {
+	const WEB: ConnectionId = "0199a000-0000-7000-8000-0000000000f1";
+
+	function opening(browser: FakeBrowser): Promise<Scenario> {
+		return Scenario.start({
+			connectors: [webConnector()],
+			connections: [{ id: WEB, provider: "web", payload: { kind: "builtin" } }],
+			user: userGrants(WEB, SITE, { "example.com": ["browse"] }),
+			fetch: () => Promise.reject(new Error("The Web connector fetched.")),
+			browser: new RunBrowser(browser),
+		});
+	}
+
+	test("a run revoked before the call opens its page sends no browser call", async () => {
+		const browser = new FakeBrowser();
+		const run = await opening(browser);
+		const lease = run.credentials.lease.bind(run.credentials);
+		run.credentials.lease = async (fence, connectionId) => {
+			const answer = await lease(fence, connectionId);
+			run.runs.set(run.runId, { revoked: true });
+			return answer;
+		};
+		expect(await run.call("web_read_page", { url: "https://example.com/" })).toEqual(ENDED);
+		expect([browser.calls, run.events]).toEqual([[], []]);
+	});
+
+	test("a call cancelled while the browser renders answers at once, and the page that comes later is dropped", async () => {
+		const browser = new FakeBrowser();
+		const sent = new Gate();
+		const answered = new Gate();
+		browser.answer = async (call) => {
+			sent.resolve();
+			await answered.promise;
+			return rendered("# Secret")(call);
+		};
+		const run = await opening(browser);
+		const abort = new AbortController();
+		const outcome = run.call("web_read_page", { url: "https://example.com/" }, { signal: abort.signal });
+		await sent.promise;
+		abort.abort(new Error("stopped"));
+		await expect(outcome).rejects.toThrow("stopped");
+		answered.resolve();
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect([browser.calls.length, run.events, run.waits, run.log.errors]).toEqual([1, [], [], []]);
 	});
 });

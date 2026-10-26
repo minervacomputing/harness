@@ -97,7 +97,7 @@ test("each connector's tenancy: what a connection policy limits it by", async ()
 		stripe: account("Stripe account"),
 		teams: account("Microsoft Entra tenant"),
 		todoist: { kind: "unknown", label: null },
-		web: { kind: "unknown", label: null },
+		web: resource("domain"),
 		xero: resource("Xero organisation"),
 	});
 });

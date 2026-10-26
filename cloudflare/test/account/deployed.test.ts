@@ -74,7 +74,7 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 		}
 	});
 
-	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys", { timeout: 360_000 }, async () => {
+	test("every Durable Object class answers, in the EU jurisdiction too; D1 has every migration; JSON keys; the browser", { timeout: 360_000 }, async () => {
 		const expected = Object.fromEntries(
 			Object.entries({ conversation: CONVERSATION_MIGRATIONS, scripts: SCRIPTS_MIGRATIONS, sandbox: SANDBOX_MIGRATIONS }).map(([kind, steps]) => [kind, steps.map((step) => step.id)]),
 		);
@@ -106,6 +106,7 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 				objects: Record<string, unknown>;
 				d1Migrations: string[];
 				json: { native: number[]; parseJson: number[] };
+				browser: { page: { chars: number }; boundary: unknown } | null;
 			};
 		};
 		const deadline = Date.now() + 300_000;
@@ -125,6 +126,15 @@ describe(`inside ${NAMES.app} (/api/probe)`, () => {
 		// The runtime's escaped-key bug (lib/json.ts) is fixed on the edge (since 2026-10-14), though not in the
 		// local workerd (test/platform/worker.test.ts); parseJson reads the key right either way.
 		expect(body.json).toEqual({ native: [10], parseJson: [10] });
+		if (INSTANCE.test) {
+			expect(body.browser).toBeNull();
+		} else {
+			expect(body.browser).toMatchObject({
+				page: { answered: 200, status: 200, finalUrl: true, browserMs: true },
+				boundary: { answered: 200, ran: true, sameHost: "read" },
+			});
+			expect(body.browser?.page.chars).toBeGreaterThan(0);
+		}
 	});
 });
 

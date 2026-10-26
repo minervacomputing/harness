@@ -13,6 +13,7 @@ import type { AttachmentCopies, AttachmentPlan, CheckpointOutcome, CheckpointSca
 import type { InspectedUpload, ReservedUpload, StagedUpload } from "../files/staging.ts";
 import { systemClock } from "../gateway/clock.ts";
 import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
+import { RunBrowser } from "../gateway/http.ts";
 import { type DispatchResult, RUN_ENDED_MESSAGE, type SettledWrite, type Settlement, type WriteNote, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
 import { PageTokens } from "../gateway/page-tokens.ts";
 import type { Registry } from "../gateway/registry.ts";
@@ -132,6 +133,7 @@ export interface ConversationPorts {
 	upstream(route: ModelRoute, context: PortsContext): Upstream;
 	/** The network the executor's provider requests go out on. */
 	fetch(context: PortsContext): typeof fetch;
+	browser(context: PortsContext): RunBrowser | null;
 	/** The conversation's Sandbox Durable Object (src/sandbox/), a new stub each time; the platform tests give a fake. */
 	sandbox(context: PortsContext): SandboxPort;
 	/** The deadline a Laravel run starts with, in ms from its start; null for none. The setting, unless the test build's plan sets one. */
@@ -275,6 +277,10 @@ export const defaultPorts: ConversationPorts = {
 	folder: conversationFolder,
 	upstream: (route, { env }) => upstreamOf(route, (env as { AI?: Ai }).AI),
 	fetch: () => (input, init) => fetch(input, init),
+	browser: ({ env }) => {
+		const binding = (env as { BROWSER?: BrowserRun }).BROWSER;
+		return binding ? new RunBrowser(binding) : null;
+	},
 	sandbox: ({ env, ctx, workspace, conversationId }) => sandboxObject(env, ctx.exports, workspace, conversationId) as unknown as SandboxPort,
 	runTimeoutMs: ({ env }) => settings(env).runTimeoutMs,
 	piSettleMs: () => PI_SETTLE_MS,

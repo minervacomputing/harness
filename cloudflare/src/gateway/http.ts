@@ -14,12 +14,11 @@
 // - Timeouts are per phase: the response's headers, then each chunk of its body, must arrive within the
 //   timeout (for a write, within min(timeout, time left), fixed when it is sent). Bodies are read into
 //   memory with a cap.
-// - A fetch the platform refuses (private and non-Cloudflare IP literals) resolves to a 403 with
-//   "error code: 1003", or Cloudflare's error page for it when the request has an Accept header, rather than
-//   throwing; `platformRefusal` lets the Web connector recognise it.
 // - A client built with `retries` sends a read the provider answered busy (429, 5xx, a rate limit `classify`
 //   names) again after its Retry-After, or a short jittered backoff, but never waits longer than a few seconds
 //   and never into the time an open write needs. Each new send is checked by the call's binding like the first.
+// - The call's browser (Browser Run, for the Web connector) is checked by the binding like a fetch, and a run's
+//   executor sends at most BROWSER_CALLS through it (`RunBrowser`).
 
 import type { z } from "zod";
 import { concatAll, fromUtf8, utf8 } from "../lib/bytes.ts";
@@ -47,9 +46,14 @@ export interface WriteAttempt {
 	closed: boolean;
 }
 
-/** What the executor hands a connector's client: `fetch` (injected in tests) and the open write attempt. */
+export interface BrowserIo {
+	quickAction(action: "markdown", options: BrowserRunMarkdownOptions): Promise<Response>;
+}
+
 export interface ProviderIo {
 	fetch: typeof fetch;
+	/** Null where the build has no browser, and outside a run. */
+	browser: BrowserIo | null;
 	/** The write attempt the executor opened for this call's `execute()`, or null outside it. */
 	currentWrite(): WriteAttempt | null;
 	/** Monotonic milliseconds, for write deadlines. */
@@ -229,11 +233,12 @@ export interface CallIoOptions {
 	 * request starts once the run is revoked, stopped, expired or replaced, or the call was cancelled.
 	 */
 	admits(): boolean;
+	browser?: RunBrowser | null;
 }
 
-/** What the executor hands one call's provider client: its `fetch`, its write attempt and its clock. */
 export class CallIo implements ProviderIo {
 	readonly fetch: typeof fetch;
+	readonly browser: BrowserIo | null;
 	readonly #fetch: typeof fetch;
 	readonly #now: () => number;
 	readonly #admits: () => boolean;
@@ -246,6 +251,8 @@ export class CallIo implements ProviderIo {
 		this.#now = options.now;
 		this.#admits = options.admits;
 		this.fetch = (input, init) => this.#send(input, init);
+		const browser = options.browser ?? null;
+		this.browser = browser === null ? null : { quickAction: (action, render) => this.#admitted(() => browser.quickAction(action, render)) };
 	}
 
 	now(): number {
@@ -274,11 +281,33 @@ export class CallIo implements ProviderIo {
 	}
 
 	#send(input: RequestInfo | URL, init?: RequestInit<RequestInitCfProperties>): Promise<Response> {
-		if (this.#closed) return Promise.reject(new ProgrammingError("Cannot send a request, as the client has been closed."));
-		if (!this.#admits()) return Promise.reject(new NotSent());
 		const signal = init?.signal ? AbortSignal.any([init.signal, this.#controller.signal]) : this.#controller.signal;
 		// Called without a receiver, as the runtime's fetch expects.
-		return (0, this.#fetch)(input, { ...init, signal });
+		return this.#admitted(() => (0, this.#fetch)(input, { ...init, signal }));
+	}
+
+	#admitted(send: () => Promise<Response>): Promise<Response> {
+		if (this.#closed) return Promise.reject(new ProgrammingError("Cannot send a request, as the client has been closed."));
+		if (!this.#admits()) return Promise.reject(new NotSent());
+		return send();
+	}
+}
+
+/** Browser Run calls one run's executor may send (ARCHITECTURE.md: Budgets). */
+export const BROWSER_CALLS = 100;
+
+export class RunBrowser implements BrowserIo {
+	readonly #binding: BrowserIo;
+	#sent = 0;
+
+	constructor(binding: BrowserIo) {
+		this.#binding = binding;
+	}
+
+	quickAction(action: "markdown", options: BrowserRunMarkdownOptions): Promise<Response> {
+		if (this.#sent >= BROWSER_CALLS) return Promise.reject(new OperationError("LIMIT_REACHED", "This run has opened as many pages as it may."));
+		this.#sent++;
+		return this.#binding.quickAction(action, options);
 	}
 }
 
@@ -386,29 +415,6 @@ export function retryAfterMs(value: string | null, now: number = Date.now()): nu
 
 export function defaultForbidden(provider: string): OperationErrorShape {
 	return new OperationError("PROVIDER_FORBIDDEN", `${provider} refused this request for the connected account.`);
-}
-
-/** The platform's refusal as text, for a request without an Accept header. */
-const PLAIN_REFUSAL = /^error code: (\d{4})\s*$/;
-/** The heading of Cloudflare's error page, `Error NNNN`, which a request with an Accept header gets instead. */
-const PAGE_REFUSAL = /<span data-translate="error">Error<\/span>\s*<span>(\d{4})<\/span>/;
-
-/**
- * The platform's code when Cloudflare refused a Worker's fetch itself rather than the provider answering:
- * a 403 from `server: cloudflare` whose body is `error code: NNNN` (1003 for private, loopback,
- * link-local and non-Cloudflare IP literals; 1002 and 1102 for names that resolve to them), else null.
- * To a request with an Accept header (any value, the wildcard and text/plain included; the Web connector's has one),
- * the body is instead Cloudflare's HTML error page (text/html, about 6.5 KB) headed `Error NNNN` (measured
- * on the account 2026-10-12: 1002 for a name of a private IPv4 address, 1102 for localtest.me). Measured, not
- * documented. The Web connector's `classify` reports it.
- */
-export function platformRefusal(response: Response, body: string): number | null {
-	if (response.headers.get("server")?.toLowerCase() !== "cloudflare") return null;
-	const plain = PLAIN_REFUSAL.exec(body);
-	if (plain !== null) return Number(plain[1]);
-	if (!(response.headers.get("content-type") ?? "").toLowerCase().startsWith("text/html")) return null;
-	const page = PAGE_REFUSAL.exec(body);
-	return page === null ? null : Number(page[1]);
 }
 
 /** A provider's HTTP client, built by a connector's `client()` on the call's io. */

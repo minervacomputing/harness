@@ -48,7 +48,6 @@
     "htmlparser2": "12.0.0",
     "ipaddr.js": "2.5.0",
     "jose": "6.2.12",
-    "pako": "2.1.0",
     "postal-mime": "4.0.5",
     "saxes": "6.0.0",
     "tldts": "7.4.18",

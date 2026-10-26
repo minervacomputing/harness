@@ -140,7 +140,7 @@ describe("connecting and discovery", () => {
 			registrationUrl: null,
 		});
 		expect(entry.operations.every((op) => op.consent === null)).toBe(true);
-		expect([intercom.offered, intercom.manageLink, intercom.children, intercom.browsable]).toEqual([undefined, undefined, undefined, undefined]);
+		expect([intercom.manageLink, intercom.children, intercom.browsable]).toEqual([undefined, undefined, undefined]);
 	});
 
 	test("errors are named without Intercom's message", () => {

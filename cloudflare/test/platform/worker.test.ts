@@ -56,11 +56,11 @@ describe("the router in workerd", () => {
 		}
 	});
 
-	test("the probe reaches every class in both jurisdictions and lists D1's migrations", async () => {
+	test("the probe reaches every class in both jurisdictions, lists D1's migrations, and has no browser", async () => {
 		const headers = { [PROBE_HEADER]: await probeToken(env.MINERVA_SECRET_KEY) };
 		const response = await exports.default.fetch("http://localhost/api/probe", { headers });
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as { objects: Record<string, { kind: string; name: string; jurisdiction: string | null }>; d1Migrations: string[] };
+		const body = (await response.json()) as { objects: Record<string, { kind: string; name: string; jurisdiction: string | null }>; d1Migrations: string[]; browser: unknown };
 		const nil = "00000000-0000-0000-0000-000000000000";
 		for (const kind of ["conversation", "scripts", "sandbox"]) {
 			// Locally, with debug on, an EU object is the plain namespace's `eu:<name>` (addressing.ts).
@@ -69,6 +69,7 @@ describe("the router in workerd", () => {
 		}
 		const { TEST_MIGRATIONS } = env as Env & { TEST_MIGRATIONS: D1Migration[] };
 		expect(body.d1Migrations).toEqual(TEST_MIGRATIONS.map((migration) => migration.name));
+		expect(body.browser).toBeNull();
 	});
 });
 

@@ -3,7 +3,6 @@
 // the worker's 128-tool rule.
 
 import { beforeAll, describe, expect, test } from "vitest";
-import type { Connector } from "../../src/gateway/connector.ts";
 import { type GrantRow, type RunLayers, effectivePolicy } from "../../src/gateway/grants.ts";
 import { ANY, Policy } from "../../src/gateway/policy.ts";
 import { Registry } from "../../src/gateway/registry.ts";
@@ -19,7 +18,7 @@ import {
 	toolLabel,
 	toolsFor,
 } from "../../src/gateway/tools.ts";
-import { FOLDER, FakeServer, LABEL, keyedConnector, mixedConnector } from "./fakes.ts";
+import { FOLDER, LABEL, keyedConnector, mixedConnector } from "./fakes.ts";
 
 const USER = "0199a000-0000-7000-8000-0000000000aa";
 const OTHER_USER = "0199a000-0000-7000-8000-0000000000bb";
@@ -155,14 +154,6 @@ describe("aliases", () => {
 		const connections = [connection(FIRST), connection(KEYED, { provider: "keyed", scopes: null, createdAt: CREATED + 1 }), connection(SECOND, { createdAt: CREATED + 2 })];
 		expect(names(tools([...both, account], connections))).toEqual(["mixed_list_folders", "keyed_whoami", "mixed2_list_folders"]);
 	});
-});
-
-test("operations this instance does not offer are left out", async () => {
-	const server = new FakeServer();
-	const base = mixedConnector(server);
-	const limited: Connector = { ...base, offered: (op) => op.name !== "list_folders" };
-	const own = await Registry.create([limited]);
-	expect(names(tools(userLayer(FIRST, { inbox: ["read"], archive: ["read", "create"] }), [connection(FIRST)], own))).toEqual(["mixed_copy_file"]);
 });
 
 describe("labels", () => {

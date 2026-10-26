@@ -21,9 +21,10 @@ Not EU-only:
 - **The model.** OpenAI processes every turn under a global project with no processing constraint, and keeps abuse-monitoring logs up to 30 days.
 - **The sandbox.** The container that runs the agent's commands has no placement constraint. It starts where a free instance is, which can be outside the EU.
 - **The edge.** Cloudflare decrypts every request at the data center nearest the caller, worldwide, both for Laravel Cloud's edge and for the engine's Worker.
+- **Web pages.** Every page an agent opens goes to Cloudflare Browser Run, which renders it close to the incoming request with no location guarantee, so possibly outside the EU, also for an EU workspace's conversation. The owner accepted this.
 - **Operational data.** Workers Logs, container logs, Laravel Cloud's logs and AI Gateway's processing have no documented location. Durable Object ids are logged outside the jurisdiction. Resend stores mail metadata in the US. The recovery index in D1 has a location hint, not the EU jurisdiction.
 
-Not in use (measured): Nightwatch (no token on either environment), social sign-in (production has no provider clients; staging offers Google, GitHub and Microsoft, and no account has signed in with one), Workers AI and Anthropic (staging and production run OpenAI), and Brave Search (no key declared). Stripe runs only on staging, in a sandbox in test mode, so no real payment; production has no Stripe keys yet. Production's Laravel has no engine or R2 settings yet, so only staging sends conversations to an engine.
+Not in use (measured): Nightwatch (no token on either environment), social sign-in (production has no provider clients; staging offers Google, GitHub and Microsoft, and no account has signed in with one), and Workers AI and Anthropic (staging and production run OpenAI). Stripe runs only on staging, in a sandbox in test mode, so no real payment; production has no Stripe keys yet. Production's Laravel has no engine or R2 settings yet, so only staging sends conversations to an engine.
 
 ## Laravel on Laravel Cloud
 
@@ -66,7 +67,7 @@ Every Laravel conversation is created in the EU jurisdiction, and `src/addressin
 | Images for the model | Cloudflare Images binding | Image bytes that `read` resizes for the model | Not documented | Not stored | Regional Services only on a custom domain. No | [Product compatibility](https://developers.cloudflare.com/data-localization/compatibility/) |
 | Logs | Cloudflare Workers Logs (query strings redacted) | Invocation logs (method and URL), warnings and errors with conversation ids and error messages. An error message can quote a provider's or the model's text (inference) | Not documented | "Data is written to your Cloudflare Account", 7 days | None listed for Workers Logs. No | [Workers Logs](https://developers.cloudflare.com/workers/observability/logs/workers-logs/) |
 | Connectors | The user's own providers (GitHub, Google, Microsoft, Slack and the others in `src/connectors/`) | What the user's grants let a run read or write, with the user's leased credential | The provider's | The provider's | Not applicable | `src/connectors/` |
-| Web fetch and search | The sites the model fetches; Brave Search | The fetched URL and its answer; a search's query | The site's | The site's | Not applicable. Search is off: no build declares `MINERVA_BRAVE_SEARCH_API_KEY` | `src/connectors/web/` |
+| Web pages | Cloudflare Browser Run (Kitesurf), and the sites it opens | The address an agent opens, with whatever the agent put in it, tokens included; the page and its own host's resources; the session a sign-in link sets and the account pages it shows | "Close to the incoming request", with no location guarantee, so possibly outside the EU | Page content is discarded after the response, and Browser Run's cache is off (`cacheTTL: 0`). How long addresses and request metadata are kept is not documented. The page's text stays in the conversation as the tool result | None. Accepted by the owner | [Kitesurf](https://developers.cloudflare.com/browser-run/kitesurf/), `src/connectors/web/` |
 
 ## Subprocessors
 
@@ -77,14 +78,14 @@ These vendors process Minerva's customer data on Minerva's behalf today:
 | Laravel (Laravel Cloud) | Hosts the product: compute, database, queue, logs and edge | All product data | Compute and database in Frankfurt. Edge worldwide. Logs not documented |
 | Neon (through Laravel Cloud) | The Postgres database and its backups | All product data at rest | AWS Frankfurt |
 | Amazon Web Services (through Laravel Cloud and Neon) | EC2 compute, SQS queue, Neon's infrastructure | All product data | Frankfurt |
-| Cloudflare | The engine (Workers, Durable Objects, D1, R2, Containers, AI Gateway, Images, Access, Workers Logs) and Laravel Cloud's edge | Transcripts, files, run state, leased credentials in memory, logs | EU for Durable Objects and R2. Worldwide or not documented for the rest |
+| Cloudflare | The engine (Workers, Durable Objects, D1, R2, Containers, AI Gateway, Images, Browser Run, Access, Workers Logs) and Laravel Cloud's edge | Transcripts, files, run state, leased credentials in memory, the pages agents open, logs | EU for Durable Objects and R2. Worldwide or not documented for the rest |
 | OpenAI | The model | Each turn's prompts and outputs | Not constrained. Abuse-monitoring logs up to 30 days |
 | Resend | Account mail | Addresses, names, messages with links | Sent from Ireland. Metadata and logs stored in the US |
 | Stripe (staging's sandbox only, until production's keys are set) | Payments, invoices and subscriptions for teams' seats | Teams' names and ids, billing emails, business names, billing addresses, VAT numbers, card details on Stripe's pages, invoices and payments | The US among other places |
 
 Each vendor names its own subprocessors: Laravel in its [Trust Center](https://trust.laravel.com/?product=cloud), Cloudflare on its [subprocessor page](https://www.cloudflare.com/gdpr/subprocessors/cloudflare-services/) (which lists Google and Oracle for the Developer Platform, with US locations among others, without naming which products), [Neon](https://neon.com/subprocessors), OpenAI, Resend and Stripe ([service providers](https://stripe.com/legal/service-providers)) on theirs.
 
-Not in use, and added to the list when turned on: Laravel Nightwatch (choose the EU region), Anthropic, Workers AI, and Brave Search.
+Not in use, and added to the list when turned on: Laravel Nightwatch (choose the EU region), Anthropic and Workers AI.
 
 Not Minerva's subprocessors, in my reading: the connectors' providers and the sign-in providers, which are the user's own accounts that the user directs Minerva to use, and Have I Been Pwned, which receives no personal data. This is an inference for the owner or counsel to confirm.
 
@@ -92,7 +93,7 @@ Not Minerva's subprocessors, in my reading: the connectors' providers and the si
 
 Minerva promises EU processing only when every component allows it. Today they do not, so Minerva may promise EU storage of its primary data, with the exceptions named. Proposed wording:
 
-> Minerva stores your account, your conversations and your files in the European Union. The application and its database run in Frankfurt on Laravel Cloud (AWS), and the engine keeps each conversation's state and files in Cloudflare's EU jurisdiction. Some processing happens outside the EU. The AI model (OpenAI) processes each turn and may keep it for up to 30 days for abuse monitoring. The sandbox that runs the agent's commands may run outside the EU. Requests are decrypted at the Cloudflare data center nearest you. Operational records (logs, email delivery records and internal ids) may be stored outside the EU. Our subprocessors are listed at [link].
+> Minerva stores your account, your conversations and your files in the European Union. The application and its database run in Frankfurt on Laravel Cloud (AWS), and the engine keeps each conversation's state and files in Cloudflare's EU jurisdiction. Some processing happens outside the EU. The AI model (OpenAI) processes each turn and may keep it for up to 30 days for abuse monitoring. The sandbox that runs the agent's commands may run outside the EU, and so may Cloudflare's browser, which opens the web pages your agents read. Requests are decrypted at the Cloudflare data center nearest you. Operational records (logs, email delivery records and internal ids) may be stored outside the EU. Our subprocessors are listed at [link].
 
 Minerva must not say "EU data residency", "processed only in the EU" or "your data never leaves the EU".
 
@@ -110,6 +111,7 @@ Each row is one reason the promise above cannot say "processed in the EU". Remov
 | Container snapshots have no documented location | Cloudflare documents a location or an EU option, or the engine skips snapshots for EU conversations. The owner accepted the risk | Vendor |
 | Cloudflare decrypts requests at the nearest data center worldwide | For the engine: Regional Services, an Enterprise add-on. For Laravel: Laravel Cloud documents no such option (its Private Cloud has a dedicated edge, whose regional controls I did not find) | Vendor, and inference for Laravel |
 | AI Gateway's processing location is not documented | Cloudflare documents it, or the Worker calls the model directly | Vendor |
+| Browser Run renders pages with no location guarantee | Cloudflare documents a location or an EU option for Browser Run. The owner accepted the risk | Vendor |
 | The recovery index has a location hint, not the EU jurisdiction | Create a D1 database in the EU jurisdiction (a jurisdiction is set only at creation) and move the index; the deploy and reset scripts and `scripts/instance.ts` change with it. It holds ids, no content | Vendor |
 | Logs have no documented location | Workers Logs, container logs and Laravel Cloud's logs: no regional control is documented. Cloudflare's Customer Metadata Boundary is Enterprise-only, and Logpush "doesn't interact with jurisdiction-restricted buckets". Keep logs to ids and codes, and turn invocation logs off if they are not needed | Vendor |
 | Durable Object ids and account metadata leave the EU | Cloudflare logs object ids outside the jurisdiction; OpenAI's residency "doesn't cover system data"; dashboards and APIs are global. No self-serve option removes these (inference) | Vendor, and inference |

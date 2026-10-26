@@ -6,10 +6,13 @@
 // - `objects`: one RPC to each Durable Object class through addressing.ts, without and with the EU
 //   jurisdiction, each answering the name and jurisdiction it was addressed with;
 // - `d1Migrations`: the migrations D1 has applied, to compare with migrations/;
-// - `json`: the runtime's JSON.parse against parseJson after a lone backslash key (lib/json.ts).
+// - `json`: the runtime's JSON.parse against parseJson after a lone backslash key (lib/json.ts);
+// - `browser`: Browser Run through the `BROWSER` binding, two fixed calls that take nothing from the request
+//   (connectors/web/render.ts `probeBrowser`), null in a build without the binding.
 
 import type { Context } from "hono";
 import { conversationObject, sandboxObject, scriptsObject } from "../addressing.ts";
+import type { BrowserIo } from "../gateway/http.ts";
 import { timingSafeEqual } from "../lib/hash.ts";
 import { escapedKeyCheck } from "../lib/json.ts";
 import type { WorkspaceRef } from "../shared/rpc.ts";
@@ -39,5 +42,8 @@ export async function probe(c: Context<AppEnv>): Promise<Response> {
 		}
 	}
 	const migrations = await c.env.DB.prepare("SELECT name FROM d1_migrations ORDER BY id").all<{ name: string }>();
-	return json(200, { objects, d1Migrations: migrations.results.map((row) => row.name), json: escapedKeyCheck() });
+	// Imported here, as the connectors are on first use (cloudflare/README.md, Startup).
+	const { probeBrowser } = await import("../connectors/web/render.ts");
+	const browser = await probeBrowser((c.env as { BROWSER?: BrowserIo }).BROWSER);
+	return json(200, { objects, d1Migrations: migrations.results.map((row) => row.name), json: escapedKeyCheck(), browser });
 }
