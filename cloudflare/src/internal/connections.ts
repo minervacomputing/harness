@@ -247,7 +247,7 @@ export async function checkGrantEdit(env: Env, command: CheckGrantEdit): Promise
 	const stored = new Map<string, string>();
 	for (const grant of current) {
 		const key = resourceKey(grant.kind, grant.resourceId);
-		if (grant.resourceName && !stored.has(key)) stored.set(key, grant.resourceName);
+		if (!stored.get(key)) stored.set(key, grant.resourceName);
 	}
 	try {
 		checkChanges(connector, connectionId, changes);

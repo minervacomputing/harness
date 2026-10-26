@@ -206,6 +206,17 @@ describe("checkGrantEdit", () => {
 		expect(seen).toEqual([]);
 	});
 
+	test("a repository allowed under a blank name is not new, so narrowing it never calls the provider", async () => {
+		const seen = fakeRepositories({ status: 401 });
+		const connection = uuid7();
+		const stored: Grant = { connection, kind: "repository", resource: "101", name: "", actions: ["create", "read"], effect: "allow" };
+		expect(await checkGrantEdit(connection, [stored], [{ kind: "repository", id: "101", actions: ["read"] }], "")).toEqual({
+			outcome: "valid",
+			grants: [{ ...stored, actions: ["read"] }],
+		});
+		expect(seen).toEqual([]);
+	});
+
 	test("a repository the account cannot see, an action without what it requires, and a change GitHub cannot take are invalid", async () => {
 		fakeRepositories();
 		const connection = uuid7();
