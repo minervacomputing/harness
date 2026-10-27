@@ -16,6 +16,7 @@ import {
 	type ToolHost,
 } from "../../src/conversation/tools.ts";
 import type { ToolCallOutcome, ToolDeclaration } from "../../src/gateway/executor.ts";
+import { APPROVAL_MESSAGES } from "../../src/gateway/holds.ts";
 import type { Json } from "../../src/lib/json.ts";
 import type { AttemptFence } from "../../src/shared/rpc.ts";
 
@@ -103,6 +104,27 @@ describe("what the model sees", () => {
 		});
 		const denied: ToolCallOutcome = { ok: false, error: { code: "POLICY_DENIED", message: "This resource or action is not available under the current permissions." }, event: null };
 		expect(render(denied)).toEqual({ output: [{ type: "text", text: "This resource or action is not available under the current permissions." }], isError: true });
+	});
+
+	test("a held call is an error whose text tells the model to stop and point at the chat's buttons", () => {
+		const held: ToolCallOutcome = {
+			ok: false,
+			error: { code: "APPROVAL_REQUIRED", message: APPROVAL_MESSAGES.required },
+			event: { tool: "notes_save_note", label: "Notes: Save a note", arguments: {}, decision: "denied", code: "APPROVAL_REQUIRED", message: APPROVAL_MESSAGES.required, write: "0".repeat(32) },
+		};
+		expect(render(held)).toEqual({
+			output: [
+				{
+					type: "text",
+					text: "Minerva asked the user to approve this. It has not run. Do not call it again or try another way. Finish your turn by saying what waits for approval. The user approves or declines it with the buttons Minerva shows in the chat, so do not ask them to reply yes or no. The outcome comes in the next turn.",
+				},
+			],
+			isError: true,
+		});
+		expect(render({ ok: false, error: { code: "APPROVAL_PENDING", message: APPROVAL_MESSAGES.pending }, event: null })).toEqual({
+			output: [{ type: "text", text: "An earlier action waits for the user's approval. Make no more changes in this turn." }],
+			isError: true,
+		});
 	});
 
 	test("a call asks for its run by its session and task, then runs through the host, with phases around it", async () => {

@@ -25,6 +25,7 @@ import { isoTime } from "../lib/dates.ts";
 import type { Attachment, FolderChanges, FolderWarnings, Run, ToolCallEventData } from "@minerva/contract";
 import type { Fact, StartRunResult } from "@minerva/contract/internal";
 import { type Prices, type TokenRates, callCharge, callPrice, containerTimeCharge, scriptCharge } from "../budget/prices.ts";
+import { type HeldCall, heldCallData } from "../gateway/holds.ts";
 import type { SettledWrite } from "../gateway/ledger.ts";
 import type { CallRequest, CallSettlement } from "../model/provider.ts";
 import type { Tokens } from "../model/tap.ts";
@@ -159,6 +160,10 @@ export interface RunRow {
 	prune: RunPrune | null;
 	/** When its prune started. */
 	pruned_at: number | null;
+	/** 1 when its start was attended, so it may hold calls for the user's approval. */
+	attended: number;
+	/** 1 once a write was refused APPROVAL_PENDING (gateway/ledger.ts `ClosedWrites`). */
+	writes_closed: number;
 	[key: string]: SqlStorageValue;
 }
 
@@ -186,6 +191,7 @@ const RUN_RECORDS = [
 	["run_writes", "key"],
 	["page_tokens", "token"],
 	["run_attachments", "position"],
+	["run_holds", "position"],
 ] as const;
 
 /**
@@ -352,6 +358,8 @@ export const RUN_COLUMNS = [
 	"container_since",
 	"prune",
 	"pruned_at",
+	"attended",
+	"writes_closed",
 ].join(", ");
 
 export class RunStore {
@@ -533,10 +541,10 @@ export class RunStore {
 	 * parts with the column empty. A snapshot holds every grant of the user, so it can pass the 2 MB a
 	 * string or a row may have without any API limit being broken.
 	 */
-	insertRun(run: { id: RunId; snapshot: RunSnapshot; deadline: EpochMs | null; plan: AttachmentPlan; createdAt: EpochMs; allowance: number | null }): void {
+	insertRun(run: { id: RunId; snapshot: RunSnapshot; deadline: EpochMs | null; plan: AttachmentPlan; createdAt: EpochMs; allowance: number | null; attended: boolean }): void {
 		const parts = splitParts(JSON.stringify(run.snapshot), VALUE_PART);
 		this.#sql.exec(
-			"INSERT INTO runs (id, status, attempt, attempt_started_at, snapshot, deadline, base_version_id, created_at, metered, allowance) VALUES (?, 'queued', 1, ?, ?, ?, ?, ?, 1, ?)",
+			"INSERT INTO runs (id, status, attempt, attempt_started_at, snapshot, deadline, base_version_id, created_at, metered, allowance, attended) VALUES (?, 'queued', 1, ?, ?, ?, ?, ?, 1, ?, ?)",
 			run.id,
 			run.createdAt,
 			parts.length === 1 ? (parts[0] as string) : "",
@@ -544,6 +552,7 @@ export class RunStore {
 			run.plan.parentId,
 			run.createdAt,
 			run.allowance,
+			run.attended ? 1 : 0,
 		);
 		if (parts.length > 1) parts.forEach((text, part) => this.#sql.exec("INSERT INTO run_snapshots (run_id, part, text) VALUES (?, ?, ?)", run.id, part, text));
 		this.#sql.exec("INSERT INTO attempts (run_id, attempt, started_at) VALUES (?, 1, ?)", run.id, run.createdAt);
@@ -685,6 +694,10 @@ export class RunStore {
 
 	setWritesUncertain(runId: RunId): void {
 		this.#sql.exec("UPDATE runs SET writes_uncertain = 1 WHERE id = ?", runId);
+	}
+
+	setWritesClosed(runId: RunId): void {
+		this.#sql.exec("UPDATE runs SET writes_closed = 1 WHERE id = ?", runId);
 	}
 
 	/**
@@ -1371,6 +1384,11 @@ export class RunStore {
 		const run = this.#checked(write.runId);
 		const afterCancel = run === null || run.revoked === 1 || !ACTIVE.has(run.status);
 		this.#fact(write.runId, { type: "run.write", data: { write: write.write, tool: write.tool, connection: write.connection, outcome, afterCancel } });
+	}
+
+	/** A hold (the ledger's `LedgerRuns.callHeld`), in its transaction. */
+	callHeld(call: HeldCall): void {
+		this.#fact(call.runId, { type: "run.held_call", data: heldCallData(call, call.position) });
 	}
 
 	/** Facts after `after`, in order: at most `limit` and FACT_PAGE_BYTES of JSON, at least one. Read outside pi's transactions. */

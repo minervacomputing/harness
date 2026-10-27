@@ -502,7 +502,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					limits: { folderBytes: config.files.folderBytes, folderEntries: config.files.folderEntries, runUploadBytes: config.files.runUploadBytes },
 					turn: { history: preparation.history, prompt: internalPrompt(command.message.content, attachments, preparation.snapshot.createdAt) },
 				};
-				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, plan, createdAt: now, allowance: command.allowance ?? null });
+				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, plan, createdAt: now, allowance: command.allowance ?? null, attended: snapshot.attended === true });
 				this.#store.append(runId, statusEvent({ status: "queued" }));
 				// Laravel registered the run before it sent the start, so it is active once stored: `provisioning` in this write.
 				this.#store.activate(runId);
@@ -1362,6 +1362,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					browser: this.#ports.browser(this.#portsContext() as PortsContext),
 					deadline: snapshot.deadline,
 					tenants: snapshot.tenants,
+					attended: snapshot.attended === true,
 				},
 				this.#portsContext() as PortsContext,
 			);
@@ -1372,7 +1373,12 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 
 	/** The executor's view of the run (gateway/run-state.ts `RunStatePort`): our checks and the ledger's records (ports.ts `runStatePort`). */
 	#runState(): RunStatePort {
-		return runStatePort(this.#store, () => this.#ledger(), (runId) => this.#scheduleSweep(runId));
+		return runStatePort(
+			this.#store,
+			() => this.#ledger(),
+			(runId) => this.#scheduleSweep(runId),
+			(runId) => this.#point("approval:held", runId),
+		);
 	}
 
 	/**
@@ -1623,7 +1629,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				deadline: (runId) => this.#store.run(runId)?.deadline ?? null,
 				writesUncertain: (runId) => this.#store.run(runId)?.writes_uncertain === 1,
 				markWritesUncertain: (runId) => this.#store.setWritesUncertain(runId),
+				writesClosed: (runId) => this.#store.run(runId)?.writes_closed === 1,
+				closeWrites: (runId) => this.#store.setWritesClosed(runId),
 				writeSettled: (write, outcome) => this.#store.writeSettled(write, outcome),
+				callHeld: (call) => this.#store.callHeld(call),
 			},
 			this.#portsContext() as PortsContext,
 		);

@@ -5,7 +5,8 @@
 
 import type { AttemptFence, EpochMs, RunId, RunStatus } from "../shared/rpc.ts";
 import type { Clock } from "./clock.ts";
-import { type DispatchResult, RUN_ENDED_MESSAGE, type Settlement, type WriteLedger, type WriteNote, type WriteRecord } from "./ledger.ts";
+import type { HeldCall, Hold } from "./holds.ts";
+import { type DispatchResult, type HoldResult, RUN_ENDED_MESSAGE, type Settlement, type WriteLedger, type WriteNote, type WriteRecord } from "./ledger.ts";
 import type { PageTokens } from "./page-tokens.ts";
 
 /**
@@ -13,7 +14,7 @@ import type { PageTokens } from "./page-tokens.ts";
  * Object answers them from SQLite and memory with no await, which is what makes the revocation and
  * dispatch checks atomic (ARCHITECTURE.md: Strict revocation, Writes).
  *
- * `dispatchWrite` and `settleWrite` may answer later: the Conversation Durable Object first waits until no
+ * `dispatchWrite`, `holdCall` and `settleWrite` may answer later: the Conversation Durable Object first waits until no
  * asynchronous transaction of pi's is open on its storage, since a claim or a settlement made inside one
  * would roll back with it (conversation/store.ts `outside`). The check and the claim still run in one
  * synchronous stretch, after that wait; the executor sends nothing until the claim has answered.
@@ -33,6 +34,15 @@ export interface RunStatePort {
 	dispatchWrite(fence: AttemptFence, key: string, note?: WriteNote): DispatchResult | Promise<DispatchResult>;
 	/** Always recorded, even for an older attempt and even when the call that asked for it was cancelled (under waitUntil). */
 	settleWrite(runId: RunId, key: string, settlement: Settlement): void | Promise<void>;
+	/** The run's hold of this write, which a repeat answers from (holds.ts). */
+	heldCall(runId: RunId, key: string): HeldCall | null;
+	/** Whether a write was refused APPROVAL_PENDING in the run, which refuses every later one. */
+	writesClosed(runId: RunId): boolean;
+	/**
+	 * Holds a call the policy asks before, with its `run.held_call` fact in the same write, before the model hears of it.
+	 * Refused when not current, when the run's writes are paused, and when they are closed or it holds MAX_HOLDS calls.
+	 */
+	holdCall(fence: AttemptFence, hold: Hold): HoldResult | Promise<HoldResult>;
 	/** The upstream cursor for a token issued to this run for the same tool and query hash, else null. */
 	resolvePageToken(runId: RunId, token: string, tool: string, queryHash: string): string | null;
 	/** A new opaque token (`tokenUrlsafe(18)`), or null when the run already holds 200. */
@@ -110,6 +120,19 @@ export class LedgerRunState implements RunStatePort {
 
 	settleWrite(runId: RunId, key: string, settlement: Settlement): void {
 		this.#ledger.settle(runId, key, settlement);
+	}
+
+	heldCall(runId: RunId, key: string): HeldCall | null {
+		return this.#ledger.held(runId, key);
+	}
+
+	writesClosed(runId: RunId): boolean {
+		return this.#ledger.closed(runId);
+	}
+
+	holdCall(fence: AttemptFence, hold: Hold): HoldResult {
+		if (!this.isCurrent(fence)) return { kind: "refused", code: "RUN_ENDED", message: RUN_ENDED_MESSAGE };
+		return this.#ledger.hold(fence.runId, hold);
 	}
 
 	resolvePageToken(runId: RunId, token: string, tool: string, queryHash: string): string | null {

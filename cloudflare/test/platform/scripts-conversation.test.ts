@@ -35,7 +35,10 @@ let uninstall: () => void;
 
 class FakeLedger implements WriteLedger {
 	knownWrite = () => null;
+	heldCall = () => null;
+	writesClosed = () => false;
 	dispatchWrite = () => ({ kind: "refused" as const, code: "RUN_ENDED" as const, message: "This run is no longer active." });
+	holdCall = () => ({ kind: "refused" as const, code: "RUN_ENDED" as const, message: "This run is no longer active." });
 	settleWrite = () => {};
 	resolvePageToken = () => null;
 	issuePageToken = () => null;

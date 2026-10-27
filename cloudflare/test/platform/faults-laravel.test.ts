@@ -10,7 +10,7 @@ import { FACT_DELIVERY } from "../../src/conversation/facts.ts";
 import { defaultPorts, PORTS } from "../../src/conversation/ports.ts";
 import type { FakeConnection, LaravelView } from "../../src/faults/laravel.ts";
 import { faultConversationPorts, providerOf } from "../../src/faults/ports.ts";
-import { heldRun, notesLease } from "../../src/faults/world.ts";
+import { FOLDER, heldRun, notesConnection, notesLayers, notesLease } from "../../src/faults/world.ts";
 import { LaravelUnreachable, laravelClient } from "../../src/laravel/client.ts";
 import { uuid7 } from "../../src/lib/random.ts";
 import type { FakeScript } from "../../src/model/fake.ts";
@@ -152,4 +152,42 @@ test("a report the fake marked before its object was reset stays marked", async 
 	expect(state.calls.filter((call) => call.operation === "reportUnauthorized")).toEqual([{ operation: "reportUnauthorized", run: start.run, connection: connectionId }]);
 	expect(state.connections[connectionId]?.status).toBe("error");
 	expect(inOrder(state.facts)).toEqual(counted(state.facts));
+});
+
+test("an attended run's held call reaches the hosted fake as run.held_call, which it applies whole", async () => {
+	const { provider, start, connectionId } = await notesRun();
+	const save = { fake: { turns: [{ tools: [{ name: "notes_save_note", arguments: { folder: "inbox", title: "Draft" } }] }, { text: "It waits for your approval." }] } } satisfies { fake: FakeScript };
+	const layers = notesLayers(connectionId, [
+		{ kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" },
+		{ kind: FOLDER, resource: "*", name: "", actions: ["create"], effect: "ask" },
+	]);
+	const asked = { ...start, attended: true as const, message: { id: uuid7(), content: JSON.stringify(save), attachments: [] }, authority: { connections: [notesConnection(connectionId)], layers } };
+	expect(await commands.startRun(asked)).toMatchObject({ outcome: "accepted" });
+	const state = await settled(asked);
+	expect(inOrder(state.facts)).toEqual(counted(state.facts));
+	const held = state.facts.find((fact) => fact.type === "run.held_call");
+	const write = held?.type === "run.held_call" ? held.data.write : "";
+	expect(held).toEqual({
+		seq: expect.any(Number),
+		run: asked.run,
+		at: expect.any(String),
+		type: "run.held_call",
+		data: {
+			position: 1,
+			tool: "notes_save_note",
+			label: "Notes: Save a note",
+			connection: connectionId,
+			provider: "notes",
+			operation: "save_note",
+			requirements: [{ kind: FOLDER, kindLabel: "Folder", resource: "inbox", name: "Inbox", action: "create", actionLabel: "Create notes", effect: "ask", asked: ["user"] }],
+			arguments: '{"folder":"inbox","title":"Draft"}',
+			write: expect.stringMatching(/^[0-9a-f]{32}$/),
+		},
+	});
+	expect(state.facts.find((fact) => fact.type === "run.tool_call")?.data).toMatchObject({ tool: "notes_save_note", decision: "denied", code: "APPROVAL_REQUIRED", write });
+	expect(state.facts.at(-2)).toMatchObject({ type: "run.finished", data: { status: "completed" } });
+	// The hold read the folder's name; the note was never saved.
+	expect(await notesRequests(asked)).toEqual([{ method: "GET", path: "/folders", token: "notes-access-0", status: 200 }]);
+	expect(await acknowledged(asked)).toMatchObject({ written: state.facts.length, acknowledged: state.facts.length, stopped: null });
+	await provider.reset();
 });

@@ -18,7 +18,7 @@ import type { JsonifiedClient } from "@orpc/openapi-client";
 import { OpenAPILink } from "@orpc/openapi-client/fetch";
 import { FAULTS_SETTINGS } from "../../src/faults/settings.ts";
 import { FAULTS_HEADER, faultsToken } from "../../src/faults/token.ts";
-import { heldRun, notesConnection, notesLayers } from "../../src/faults/world.ts";
+import { FOLDER, heldRun, notesConnection, notesLayers } from "../../src/faults/world.ts";
 import { fetchDeployed, testWorker } from "./client.ts";
 
 const worker = testWorker();
@@ -80,6 +80,8 @@ export interface RunView {
 			settled_at: number | null;
 		}[];
 		writes: { key: string; status: string; attempt: number }[];
+		/** The calls the run holds for approval, in position order (src/faults/index.ts, `RunInternals`). */
+		holds: { position: number; key: string; write_id: string; tool: string; label: string; state: string; arguments: string; requirements: string }[];
 		executions: { call_id: string; executions: number }[];
 		/** The connector tools the run's snapshot offers. */
 		tools: string[];
@@ -212,13 +214,14 @@ export const NO_CONNECTIONS: StartRun["authority"] = { connections: [], layers: 
  * Sends a message as Laravel does: the fake Laravel holds the run, then `startRun` names the agent's Notes connection, which the
  * user may use in every folder, to read and create (unless `authority` says otherwise), and gives it `allowance` (µ$; none when
  * null; by default, LARGE_ALLOWANCE with every other start), and the conversation's earlier messages as Laravel sends them
- * (`history`, none by default). Answers the run's id; a refusal throws.
+ * (`history`, none by default); `attended` when a person made the start, so a call a layer asks before is held. Answers the
+ * run's id; a refusal throws.
  */
 export async function post(
 	w: World,
 	content: string,
 	attachments: Attachment[] = [],
-	options: { allowance?: number | null; history?: HistoryMessage[]; message?: string; authority?: StartRun["authority"] } = {},
+	options: { allowance?: number | null; history?: HistoryMessage[]; message?: string; authority?: StartRun["authority"]; attended?: true } = {},
 ): Promise<string> {
 	const allowance = options.allowance !== undefined ? options.allowance : starts++ % 2 === 0 ? LARGE_ALLOWANCE : null;
 	const start: StartRun = {
@@ -231,6 +234,7 @@ export async function post(
 		history: options.history ?? [],
 		authority: options.authority ?? { connections: [notesConnection(w.connectionId)], layers: notesLayers(w.connectionId) },
 		...(allowance === null ? {} : { allowance }),
+		...(options.attended ? { attended: true as const } : {}),
 	};
 	await driver("hold", { ...base(w), runId: start.run, run: heldRun(start) });
 	const answer = await sendStart(start);
@@ -519,5 +523,14 @@ export function cards(events: RunEvent[]): LocalCard[] {
 
 export const LIST_INBOX: Turn = { tools: [{ name: LIST, arguments: { folder: "inbox" } }] };
 export const save = (title: string): Turn => ({ tools: [{ name: SAVE, arguments: { folder: "inbox", title } }] });
+
+/** The Notes layers of a user who may read every folder and must approve each note saved. */
+export function askingToSave(w: World): StartRun["authority"] {
+	const layers = notesLayers(w.connectionId, [
+		{ kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" },
+		{ kind: FOLDER, resource: "*", name: "", actions: ["create"], effect: "ask" },
+	]);
+	return { connections: [notesConnection(w.connectionId)], layers };
+}
 export const local = (name: string, args: { [key: string]: unknown }): Turn => ({ tools: [{ name, arguments: args }] });
 export const sh = (command: string): Turn => local("bash", { command });

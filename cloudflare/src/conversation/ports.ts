@@ -14,7 +14,8 @@ import type { InspectedUpload, ReservedUpload, StagedUpload } from "../files/sta
 import { systemClock } from "../gateway/clock.ts";
 import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
 import { RunBrowser } from "../gateway/http.ts";
-import { type DispatchResult, RUN_ENDED_MESSAGE, type SettledWrite, type Settlement, type WriteNote, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
+import type { HeldCall, Hold } from "../gateway/holds.ts";
+import { type DispatchResult, type HoldResult, RUN_ENDED_MESSAGE, type SettledWrite, type Settlement, type WriteNote, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
 import { PageTokens } from "../gateway/page-tokens.ts";
 import type { Registry } from "../gateway/registry.ts";
 import type { RunStatePort } from "../gateway/run-state.ts";
@@ -33,9 +34,11 @@ import type { Published, RunStore } from "./store.ts";
  * The write ledger and page tokens (ARCHITECTURE.md: Writes), in this object's SQLite, built with the executor (gateway/). The object composes the executor's `RunStatePort`
  * from its own run checks and these, and calls the two maintenance methods itself.
  */
-export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "resolvePageToken" | "issuePageToken"> {
+export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "heldCall" | "writesClosed" | "resolvePageToken" | "issuePageToken"> {
 	/** Synchronous: the run check and the claim in one stretch (RunStatePort's waits before calling it). */
 	dispatchWrite(fence: AttemptFence, key: string, note?: WriteNote): DispatchResult;
+	/** Synchronous: the run check, the hold and its fact in one stretch (RunStatePort's waits before calling it). */
+	holdCall(fence: AttemptFence, hold: Hold): HoldResult;
 	settleWrite(runId: RunId, key: string, settlement: Settlement): void;
 	/**
 	 * In the attempt gate's transaction: every write of the run still `dispatched` becomes `uncertain` (the
@@ -50,14 +53,18 @@ export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "resolveP
 	sweepLostWrites(now: EpochMs): { uncertain: RunId[]; nextAt: EpochMs | null };
 }
 
-/** What the ledger reads and writes of the run itself (`writes_uncertain` is a run column). */
+/** What the ledger reads and writes of the run itself (`writes_uncertain` and `writes_closed` are run columns). */
 export interface LedgerRuns {
 	isCurrent(fence: AttemptFence): boolean;
 	deadline(runId: RunId): EpochMs | null;
 	writesUncertain(runId: RunId): boolean;
 	markWritesUncertain(runId: RunId): void;
+	writesClosed(runId: RunId): boolean;
+	closeWrites(runId: RunId): void;
 	/** In the transaction that settled it: a write's outcome, for the run's `run.write` fact. */
 	writeSettled(write: SettledWrite, outcome: WriteOutcome): void;
+	/** In the transaction that held it: the run's `run.held_call` fact. */
+	callHeld(call: HeldCall): void;
 }
 
 /** How a write settled, as a `run.write` fact says it. */
@@ -164,7 +171,8 @@ export interface ConversationPorts {
 	 * pass's start and end; `loop:created` between the
 	 * creation of the conversation's pi conversation and the run's claim; `pi:stop` at a run's end, before it marks pi's orphaned work;
 	 * `start:planned` between a start's inspection of its attachments and the transaction that stores its run; `copy:copied`
-	 * between a run's copy of its attachments and the write that commits them.
+	 * between a run's copy of its attachments and the write that commits them; `approval:held` between a hold's write and
+	 * the executor's answer to its call.
 	 */
 	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
 	/**
@@ -209,16 +217,27 @@ export function gatewayExecutor(run: ExecutorContext, context: PortsContext): Ex
 /**
  * gateway/'s write ledger and page tokens over this object's SQLite (ARCHITECTURE.md: Writes). The run checks are the
  * object's own, made in the same synchronous stretch as the claim; `writes_uncertain` mirrors the ledger's
- * uncertain rows, set in the same transaction whenever one appears.
+ * uncertain rows, set in the same transaction whenever one appears, and `writes_closed` is where the ledger keeps its
+ * closed writes. A hold and its fact are written in one transaction.
  */
 export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): WriteLedger {
 	const sql = durableSql(storage);
-	const ledger = new GatewayLedger(sql, systemClock);
+	const ledger = new GatewayLedger(sql, systemClock, { closed: (runId) => runs.writesClosed(runId), close: (runId) => runs.closeWrites(runId) });
 	const tokens = new PageTokens(sql);
 	return {
 		knownWrite: (runId, key) => ledger.known(runId, key),
+		heldCall: (runId, key) => ledger.held(runId, key),
+		writesClosed: (runId) => ledger.closed(runId),
 		dispatchWrite: (fence, key, note) =>
 			runs.isCurrent(fence) ? ledger.dispatch(fence, key, runs.deadline(fence.runId), note) : { kind: "refused", code: "RUN_ENDED", message: RUN_ENDED_MESSAGE },
+		holdCall: (fence, hold) =>
+			runs.isCurrent(fence)
+				? sql.transaction(() => {
+						const held = ledger.hold(fence.runId, hold);
+						if (held.kind === "held") runs.callHeld(held.call);
+						return held;
+					})
+				: { kind: "refused", code: "RUN_ENDED", message: RUN_ENDED_MESSAGE },
 		settleWrite: (runId, key, settlement) =>
 			sql.transaction(() => {
 				const settled = ledger.settle(runId, key, settlement);
@@ -251,9 +270,10 @@ export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): 
  * and the ledger's records. A claim and a settlement wait until no asynchronous transaction of pi's is open
  * (store.ts `outside`): made inside one, they would roll back with it, and a claim the executor was told
  * was dispatched would leave nothing for the restart gate to mark uncertain, so the same write could be sent
- * again. The run check and the claim still run in one synchronous stretch, after the wait.
+ * again. The run check and the claim still run in one synchronous stretch, after the wait. A hold waits the same way, and
+ * once it is written `held` runs (the test build's fault point `approval:held`) before the executor answers.
  */
-export function runStatePort(store: RunStore, ledger: () => WriteLedger, dispatched: (runId: RunId) => void): RunStatePort {
+export function runStatePort(store: RunStore, ledger: () => WriteLedger, dispatched: (runId: RunId) => void, held: (runId: RunId) => Promise<void>): RunStatePort {
 	return {
 		isCurrent: (fence) => store.isCurrent(fence),
 		isActive: (runId) => store.isActive(runId),
@@ -266,6 +286,13 @@ export function runStatePort(store: RunStore, ledger: () => WriteLedger, dispatc
 				return result;
 			}),
 		settleWrite: (runId, key, settlement) => store.outside(() => ledger().settleWrite(runId, key, settlement)),
+		heldCall: (runId, key) => ledger().heldCall(runId, key),
+		writesClosed: (runId) => ledger().writesClosed(runId),
+		holdCall: async (fence, hold) => {
+			const answer = await store.outside(() => ledger().holdCall(fence, hold));
+			if (answer.kind === "held") await held(fence.runId);
+			return answer;
+		},
 		resolvePageToken: (runId, token, tool, queryHash) => ledger().resolvePageToken(runId, token, tool, queryHash),
 		issuePageToken: (runId, tool, queryHash, cursor) => ledger().issuePageToken(runId, tool, queryHash, cursor),
 	};

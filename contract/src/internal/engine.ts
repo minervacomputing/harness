@@ -107,6 +107,11 @@ export const StartRun = InConversation.extend({
   }),
   /** What the run may spend, in µ$: the engine refuses its next model call once it has spent this. Without it, no budget. */
   allowance: z.int().min(0).optional(),
+  /**
+   * A person made this start and can answer a card in the chat: a call a layer asks before is held for their approval
+   * (`run.held_call`). Without it, such a call is refused `APPROVAL_UNAVAILABLE` and holds nothing.
+   */
+  attended: z.literal(true).optional(),
 })
 export type StartRun = z.infer<typeof StartRun>
 

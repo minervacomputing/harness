@@ -1,8 +1,9 @@
-// gateway/ledger.ts and gateway/run-state.ts on real SQLite: the write ledger's protocol, the lost-write
+// gateway/ledger.ts and gateway/run-state.ts on real SQLite: the write ledger's protocol, its holds, the lost-write
 // sweep, the restart gate's marking (ARCHITECTURE.md: Writes), claims fenced by attempt, and a ledger reopened over the
 // same database file, as after a crash.
 
 import { afterAll, describe, expect, test } from "vitest";
+import type { Hold } from "../../src/gateway/holds.ts";
 import { LOST_WRITE_GRACE_MS, WRITE_MESSAGES, WRITE_WINDOW_MS, WriteLedger, writeKey } from "../../src/gateway/ledger.ts";
 import { PageTokens, queryHash } from "../../src/gateway/page-tokens.ts";
 import { LedgerRunState } from "../../src/gateway/run-state.ts";
@@ -21,8 +22,8 @@ const RESULT = { items: [{ id: "copy-1" }], count: 1 };
 function setup(deadline: number | null = null) {
 	const clock = new FakeClock();
 	const sql = ledgerSql();
-	const ledger = new WriteLedger(sql, clock);
 	const runs = new FakeRuns();
+	const ledger = new WriteLedger(sql, clock, runs);
 	runs.add(RUN, { deadline });
 	runs.add(OTHER, { deadline });
 	const state = new LedgerRunState(runs, ledger, new PageTokens(sql, () => clock.now()), clock);
@@ -210,6 +211,75 @@ describe("the run-state port", () => {
 	});
 });
 
+describe("holds", () => {
+	const PENDING = { kind: "refused", code: "APPROVAL_PENDING", message: "An earlier action waits for the user's approval. Make no more changes in this turn." };
+
+	function hold(key: string): Hold {
+		return {
+			key,
+			write: key.slice(0, 32),
+			userId: "1017",
+			tool: "notes_save_note",
+			label: "Notes: Save a note",
+			connection: "0199a000-0000-7000-8000-000000000001",
+			provider: "notes",
+			operation: "save_note",
+			contract: "0123456789abcdef",
+			arguments: '{"folder":"inbox","title":"a"}',
+			requirements: [{ kind: "folder", kindLabel: "Folder", resource: "inbox", name: "Inbox", action: "create", actionLabel: "Create notes", effect: "ask", asked: ["user"] }],
+		};
+	}
+	const key = (n: number) => n.toString(16).padStart(64, "0");
+
+	test("a hold claims nothing and keeps the call whole at the next position; the run's writes that do not ask are then refused and closed", () => {
+		const { clock, ledger, state } = setup();
+		const fence = { runId: RUN, attempt: 1 };
+		expect(state.holdCall(fence, hold(K1))).toEqual({ kind: "held", call: { ...hold(K1), runId: RUN, position: 1, state: "open", createdAt: clock.now() } });
+		expect([state.heldCall(RUN, K1)?.position, state.heldCall(RUN, K2), state.knownWrite(RUN, K1), ledger.holding(RUN), state.writesClosed(RUN)]).toEqual([1, null, null, true, false]);
+		expect(state.dispatchWrite(fence, K2)).toEqual(PENDING);
+		expect([ledger.writes(RUN), state.writesClosed(RUN)]).toEqual([[], true]);
+		expect(state.holdCall(fence, hold(key(3)))).toEqual(PENDING);
+		expect(ledger.holds(RUN).map((held) => held.key)).toEqual([K1]);
+		// Another run of the conversation is not held up.
+		expect(state.dispatchWrite({ runId: OTHER, attempt: 1 }, K2).kind).toBe("dispatched");
+		expect(state.writesClosed(OTHER)).toBe(false);
+	});
+
+	test("a run holds at most ten: the eleventh is refused and closes its writes", () => {
+		const { ledger, state } = setup();
+		const fence = { runId: RUN, attempt: 1 };
+		for (let n = 1; n <= 10; n++) expect(state.holdCall(fence, hold(key(n)))).toMatchObject({ kind: "held", call: { position: n } });
+		expect(state.holdCall(fence, hold(key(11)))).toEqual(PENDING);
+		expect([ledger.holds(RUN).length, state.writesClosed(RUN)]).toEqual([10, true]);
+	});
+
+	test("a paused run holds nothing; a replaced attempt or an ended run neither", () => {
+		const { ledger, runs, state } = setup();
+		const fence = { runId: RUN, attempt: 1 };
+		expect(state.dispatchWrite(fence, K1).kind).toBe("dispatched");
+		state.settleWrite(RUN, K1, { effect: "unknown" });
+		expect(state.holdCall(fence, hold(K2))).toEqual({ kind: "refused", code: "WRITE_UNCERTAIN", message: WRITE_MESSAGES.paused });
+		const ended = { kind: "refused", code: "RUN_ENDED", message: "This run is no longer active." };
+		expect(state.holdCall({ runId: OTHER, attempt: 2 }, hold(K2))).toEqual(ended);
+		runs.set(OTHER, { status: "cancelled" });
+		expect(state.holdCall({ runId: OTHER, attempt: 1 }, hold(K2))).toEqual(ended);
+		expect([ledger.holds(RUN), ledger.holds(OTHER), state.writesClosed(RUN)]).toEqual([[], [], false]);
+	});
+
+	test("holds are kept in the database and go with the run's writes", () => {
+		const path = `${scratch.path}/holds.sqlite`;
+		const clock = new FakeClock();
+		const before = openDatabase(path);
+		new WriteLedger(ledgerSql(before), clock, new FakeRuns()).hold(RUN, hold(K1));
+		before.close();
+		const after = new WriteLedger(ledgerSql(openDatabase(path)), clock, new FakeRuns());
+		expect(after.held(RUN, K1)).toEqual({ ...hold(K1), runId: RUN, position: 1, state: "open", createdAt: clock.now() });
+		expect(after.dispatch({ runId: RUN, attempt: 2 }, K2, null)).toEqual(PENDING);
+		after.forget(RUN);
+		expect([after.holds(RUN), after.holding(RUN)]).toEqual([[], false]);
+	});
+});
+
 describe("lost writes", () => {
 	test("the sweep marks writes still dispatched 30 s past their deadline", () => {
 		const { clock, ledger } = setup();
@@ -251,9 +321,9 @@ describe("lost writes", () => {
 		const path = `${scratch.path}/conversation.sqlite`;
 		const clock = new FakeClock();
 		const before = openDatabase(path);
-		new WriteLedger(ledgerSql(before), clock).dispatch({ runId: RUN, attempt: 1 }, K1, null);
+		new WriteLedger(ledgerSql(before), clock, new FakeRuns()).dispatch({ runId: RUN, attempt: 1 }, K1, null);
 		before.close();
-		const after = new WriteLedger(ledgerSql(openDatabase(path)), clock);
+		const after = new WriteLedger(ledgerSql(openDatabase(path)), clock, new FakeRuns());
 		expect(after.known(RUN, K1)?.status).toBe("dispatched");
 		expect(after.dispatch({ runId: RUN, attempt: 2 }, K2, null)).toEqual({ kind: "refused", code: "WRITE_IN_PROGRESS", message: WRITE_MESSAGES.otherInProgress });
 		expect(after.markDispatchedUncertain(RUN)).toHaveLength(1);

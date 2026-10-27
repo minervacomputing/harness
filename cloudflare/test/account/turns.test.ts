@@ -14,11 +14,15 @@
 // Laravel's history dropped it, and a connection removed between two runs, whose second still has the first's call in
 // its history, on Workers AI and, with MINERVA_LIVE_ROUTE=1, on the instance's own route (staging's `gpt-6.1-sol`, through
 // the OpenAI key on the instance's AI Gateway).
+//
+// Last, a held call on the same two models: an attended turn asked to save a note under a layer that asks before saving
+// makes exactly one hold and no write, and its answer neither claims the note was saved nor asks the user to type yes.
 
 import { writeFileSync } from "node:fs";
 import { MAX_HISTORY } from "@minerva/contract/internal";
 import { afterAll, describe, expect, test } from "vitest";
 import {
+	askingToSave,
 	delivered,
 	file,
 	finish,
@@ -35,6 +39,7 @@ import {
 	post,
 	type RunEvent,
 	type RunView,
+	SAVE,
 	settled,
 	toolCalls,
 	uuid7,
@@ -220,5 +225,60 @@ describe.concurrent("one pi conversation per conversation", () => {
 			await revokedBetweenRuns("route");
 		},
 		4 * LIVE + 120_000,
+	);
+});
+
+/** A sentence that says a note was saved: "Saved your note.", "The note has been created.", "I added it." */
+const SAVED = [/\b(?:has|have|had|was|were|is|are|'s|'ve)\s+(?:now\s+|been\s+|successfully\s+)*(?:saved|created|added)\b/i, /^(?:I\s+|I've\s+|I have\s+)?(?:saved|created|added)\b/i, /\b(?:note|it)\s+(?:saved|created|added)\b/i, /\b(?:saved|created|added)\s+(?:it\s+)?successfully\b/i];
+/** What makes such a sentence a denial or a condition: "Nothing has been saved yet.", "It will be created once you approve." */
+const UNLESS = /\b(?:not|no|nothing|never|yet|until|once|if|whether|when|will|would|after|before|pending|wait\w*|approv\w*)\b|n't\b/i;
+
+/** What a held run's answer must not say: that the note was saved, or that the user should reply yes. */
+function heldAnswerFaults(answer: string): string[] {
+	const faults: string[] = [];
+	if (!/\S/.test(answer)) faults.push("no answer");
+	const sentences = answer.split(/(?<=[.!?])\s+|\n+/).map((sentence) => sentence.replace(/[*_`#>-]+/g, " ").trim());
+	if (sentences.some((sentence) => SAVED.some((claim) => claim.test(sentence)) && !UNLESS.test(sentence))) faults.push("claims the note was saved");
+	if (/\b(?:reply|respond|answer|type|say|tell me)\b[^.?!\n]{0,30}\byes\b/i.test(answer) || /\byes\s*(?:\/|or)\s*no\b/i.test(answer)) faults.push("asks for a typed yes");
+	return faults;
+}
+
+/**
+ * An attended turn on `model` asked to save a note under a layer that asks before saving: once the model has called the save,
+ * the run holds exactly one call and makes no write, and its answer neither claims the note was saved nor asks for a typed yes.
+ * A model that did not call the save in two tries fails with what each try called.
+ */
+async function heldTurn(model: string): Promise<void> {
+	const tries: { status: string | undefined; tools: unknown[]; answer: string }[] = [];
+	for (let attempt = 1; attempt <= 2; attempt++) {
+		const w = await world({ model });
+		const runId = await post(w, "Save a note titled 'Quarterly plan' in the folder inbox with the notes_save_note tool, then tell me what happened.", [], { authority: askingToSave(w), attended: true });
+		const view = await settled(w, runId, LIVE);
+		const answer = answerOf(view);
+		tries.push({ status: view.head?.status, tools: toolCalls(view.events).map((call) => [call.tool, call.code ?? call.decision]), answer: answer.slice(0, 300) });
+		if (!toolCalls(view.events).some((call) => call.tool === SAVE)) continue;
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(view.internals.holds.map(({ position, tool, state }) => ({ position, tool, state }))).toEqual([{ position: 1, tool: SAVE, state: "open" }]);
+		expect(view.internals.writes).toEqual([]);
+		expect(toolCalls(view.events).filter((call) => call.decision === "allowed" && call.tool === SAVE)).toEqual([]);
+		expect(toolCalls(view.events)).toContainEqual(expect.objectContaining({ tool: SAVE, code: "APPROVAL_REQUIRED", write: view.internals.holds[0]?.write_id }));
+		expect(heldAnswerFaults(answer), answer).toEqual([]);
+		record(`held turn on ${model}`, { attempt, runMs: runMs(view.head as Head), modelCalls: view.internals.run?.model_calls, tools: tries.at(-1)?.tools, mentionsApproval: /approv/i.test(answer), answer: answer.slice(0, 300) });
+		return;
+	}
+	record(`held turn on ${model}, save not called`, tries);
+	throw new Error(`The model (${model}) did not call notes_save_note in two tries, so no call was held; each try: ${JSON.stringify(tries)}`);
+}
+
+describe.concurrent("a held call", () => {
+	test("on Workers AI: one hold, no write, and an answer that neither claims the save nor asks for a typed yes", () => heldTurn("workers-ai"), 2 * LIVE + 120_000);
+
+	test(
+		"the same on the instance's route",
+		async ({ skip }) => {
+			skip(process.env.MINERVA_LIVE_ROUTE !== "1", "the route's row needs MINERVA_LIVE_ROUTE=1 and the instance's route set to staging's model");
+			await heldTurn("route");
+		},
+		2 * LIVE + 120_000,
 	);
 });

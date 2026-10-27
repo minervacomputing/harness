@@ -15,8 +15,9 @@
 // - a crash mid-stream: every counted model call settles once, and run.settled sums them, their charges and the container's time;
 // - a run's budget: the first model call after its spend reached its allowance ends it, failed with budget_reached;
 // - one smoke run with Workers AI and the fake connector's tool;
-// - a turn under a user layer that asks before creating notes: the save answers APPROVAL_UNAVAILABLE, since no run holds a
-//   call yet, the read works and the turn completes; and Laravel's grant edit refusing an ask before reading;
+// - a turn under a user layer that asks before creating notes: attended, its two saves are held, Laravel gets both
+//   `run.held_call` facts whole and the provider no note; unattended, the save answers APPROVAL_UNAVAILABLE and holds
+//   nothing, the read works and the turn completes; and Laravel's grant edit refusing an ask before reading;
 // - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
 //   turn's container; a detached writer, a FIFO and a symlink at the checkpoint; five attachments of 50 MiB
@@ -31,8 +32,9 @@
 // sandbox-faults.test.ts's. Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
 
 import { afterAll, describe, expect, test } from "vitest";
-import { FOLDER, notesConnection, notesLayers } from "../../src/faults/world.ts";
+import { FOLDER } from "../../src/faults/world.ts";
 import {
+	askingToSave,
 	cancel,
 	cards,
 	commands,
@@ -268,15 +270,46 @@ describe.concurrent("attempts on the platform", () => {
 });
 
 describe.concurrent("asks", () => {
-	test("under a user layer that asks before creating notes: the save answers APPROVAL_UNAVAILABLE, the read works, and the turn completes", async () => {
+	test("an attended turn saving two notes under ask: both are held, the answer names both as waiting, Laravel holds both whole, and no note is saved", async () => {
 		const w = await world();
-		const layers = notesLayers(w.connectionId, [
-			{ kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" },
-			{ kind: FOLDER, resource: "*", name: "", actions: ["create"], effect: "ask" },
-		]);
-		const runId = await post(w, script([save("Asked first"), LIST_INBOX, { text: "Done." }]), [], { authority: { connections: [notesConnection(w.connectionId)], layers } });
+		const answer = "First and Second wait for your approval.";
+		const runId = await post(w, script([save("First"), save("Second"), { text: answer }]), [], { authority: askingToSave(w), attended: true });
 		const view = await settled(w, runId);
 		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(view.events.findLast((event) => event.type === "message")?.data.content).toBe(answer);
+		expect(view.internals.run).toMatchObject({ attended: 1, writes_closed: 0 });
+		expect(view.internals.writes).toEqual([]);
+		const [first, second] = view.internals.holds.map((hold) => hold.write_id);
+		expect(view.internals.holds.map(({ position, tool, state, arguments: text }) => ({ position, tool, state, arguments: text }))).toEqual([
+			{ position: 1, tool: SAVE, state: "open", arguments: '{"folder":"inbox","title":"First"}' },
+			{ position: 2, tool: SAVE, state: "open", arguments: '{"folder":"inbox","title":"Second"}' },
+		]);
+		const required =
+			"Minerva asked the user to approve this. It has not run. Do not call it again or try another way. Finish your turn by saying what waits for approval. The user approves or declines it with the buttons Minerva shows in the chat, so do not ask them to reply yes or no. The outcome comes in the next turn.";
+		expect(toolCalls(view.events)).toEqual([
+			expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_REQUIRED", message: required, write: first }),
+			expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_REQUIRED", message: required, write: second }),
+		]);
+		const state = await provider(w);
+		expect(state.notes.map((note) => note.title)).toEqual(SEEDED);
+		expect(state.requests.map(({ method, path }) => `${method} ${path}`)).toEqual(["GET /folders", "GET /folders"]);
+		const requirement = { kind: FOLDER, kindLabel: "Folder", resource: "inbox", name: "Inbox", action: "create", actionLabel: "Create notes", effect: "ask", asked: ["user"] };
+		const held = { tool: SAVE, label: "Notes: Save a note", connection: w.connectionId, provider: "notes", operation: "save_note", requirements: [requirement] };
+		const facts = (await delivered(w, runId)).filter((fact) => fact.run === runId);
+		expect(facts.filter((fact) => fact.type === "run.held_call").map((fact) => fact.data)).toEqual([
+			{ position: 1, ...held, arguments: '{"folder":"inbox","title":"First"}', write: first },
+			{ position: 2, ...held, arguments: '{"folder":"inbox","title":"Second"}', write: second },
+		]);
+		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed", message: { content: answer } } });
+	});
+
+	test("the same layer unattended: the save answers APPROVAL_UNAVAILABLE and holds nothing, the read works, and the turn completes", async () => {
+		const w = await world();
+		const runId = await post(w, script([save("Asked first"), LIST_INBOX, { text: "Done." }]), [], { authority: askingToSave(w) });
+		const view = await settled(w, runId);
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(view.internals.run).toMatchObject({ attended: 0, writes_closed: 0 });
+		expect(view.internals.holds).toEqual([]);
 		expect(toolCalls(view.events)).toEqual([
 			expect.objectContaining({
 				tool: SAVE,
@@ -291,6 +324,7 @@ describe.concurrent("asks", () => {
 		expect(state.requests.filter((request) => request.method === "POST")).toEqual([]);
 		expect(reads(state)).toBe(1);
 		expect(await finished(w, runId)).toMatchObject({ run: runId, type: "run.finished", data: { status: "completed" } });
+		expect((await delivered(w, runId)).filter((fact) => fact.type === "run.held_call")).toEqual([]);
 	});
 
 	test("Laravel's grant edit: an ask before creating notes is its own row; one before reading them is refused", async () => {

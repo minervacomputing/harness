@@ -5,6 +5,8 @@ import { Fact, MAX_ARGUMENTS } from "@minerva/contract/internal";
 import type { ToolCallEventData } from "@minerva/contract";
 import { describe, expect, test } from "vitest";
 import { FACT_DELIVERY, acknowledgement, backoffMs, gap, toolCallFact } from "../../src/conversation/facts.ts";
+import { APPROVAL_MESSAGES, type Hold, heldCallData } from "../../src/gateway/holds.ts";
+import { refusedEvent } from "../../src/gateway/results.ts";
 
 const EVENT = { decision: "allowed", tool: "todoist_list_tasks", label: "Todoist: List tasks", title: "List tasks", count: null, arguments: { truncated: true } } as unknown as ToolCallEventData;
 
@@ -30,6 +32,54 @@ describe("a tool call's fact", () => {
 		const exact = toolCallFact(EVENT, { text: "a".repeat(MAX_ARGUMENTS - 11) }).data as { arguments: string; truncated: boolean };
 		expect(exact).toMatchObject({ truncated: false });
 		expect(exact.arguments).toHaveLength(MAX_ARGUMENTS);
+	});
+});
+
+describe("a held call's facts", () => {
+	const WRITE = "0123456789abcdef0123456789abcdef";
+	const HOLD: Hold = {
+		key: "a".repeat(64),
+		write: WRITE,
+		userId: "1017",
+		tool: "gmail_send_message",
+		label: "Gmail: Send mail",
+		connection: "0199a000-0000-7000-8000-000000000001",
+		provider: "gmail",
+		operation: "send_message",
+		contract: "0123456789abcdef",
+		arguments: '{"body":"Hi","to":["ada@example.com","bob@example.com"]}',
+		requirements: [
+			{ kind: "recipient", kindLabel: "Recipient", resource: "ada@example.com", name: "Ada", action: "send", actionLabel: "Send mail", effect: "ask", asked: ["ceiling", "user"] },
+			{ kind: "recipient", kindLabel: "Recipient", resource: "bob@example.com", action: "send", actionLabel: "Send mail", effect: "allow", asked: [] },
+		],
+	};
+
+	test("run.held_call is the hold at its position, its fields whole, and parses as Laravel parses it", () => {
+		const data = heldCallData(HOLD, 3);
+		expect(data).toEqual({
+			position: 3,
+			tool: "gmail_send_message",
+			label: "Gmail: Send mail",
+			connection: "0199a000-0000-7000-8000-000000000001",
+			provider: "gmail",
+			operation: "send_message",
+			requirements: HOLD.requirements,
+			arguments: '{"body":"Hi","to":["ada@example.com","bob@example.com"]}',
+			write: WRITE,
+		});
+		const fact = { seq: 7, run: "0199a000-0000-7000-8000-0000000000c1", at: "2026-10-27T12:00:00.000Z", type: "run.held_call", data };
+		expect(Fact.parse(fact)).toEqual(fact);
+	});
+
+	test("the held call's refused run.tool_call is denied and carries the hold's write", () => {
+		const shown = { tool: "gmail_send_message", label: "Gmail: Send mail", arguments: { to: ["ada@example.com"] } };
+		const event = refusedEvent(shown, "APPROVAL_REQUIRED", APPROVAL_MESSAGES.required, WRITE);
+		expect(toolCallFact(event, { to: ["ada@example.com"] })).toEqual({
+			type: "run.tool_call",
+			data: { tool: "gmail_send_message", label: "Gmail: Send mail", arguments: '{"to":["ada@example.com"]}', truncated: false, decision: "denied", code: "APPROVAL_REQUIRED", message: APPROVAL_MESSAGES.required, write: WRITE },
+		});
+		for (const code of ["APPROVAL_REQUIRED", "APPROVAL_PENDING", "APPROVAL_TOO_LARGE", "APPROVAL_UNAVAILABLE"]) expect(refusedEvent(shown, code, "m").decision).toBe("denied");
+		expect(refusedEvent(shown, "APPROVAL_PENDING", APPROVAL_MESSAGES.pending)).not.toHaveProperty("write");
 	});
 });
 

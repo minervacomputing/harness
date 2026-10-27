@@ -35,7 +35,17 @@ export interface ToolResult {
 /** The codes whose refusal is `denied` in the chat; every other failure is `error`. */
 export type DeniedCode = Extract<
 	CoreErrorCode,
-	"POLICY_DENIED" | "APPROVAL_UNAVAILABLE" | "LIMIT_REACHED" | "WRITE_UNCERTAIN" | "WRITE_IN_PROGRESS" | "INVALID_CURSOR" | "CONSENT_REQUIRED" | "OPERATION_CHANGED"
+	| "POLICY_DENIED"
+	| "APPROVAL_REQUIRED"
+	| "APPROVAL_PENDING"
+	| "APPROVAL_TOO_LARGE"
+	| "APPROVAL_UNAVAILABLE"
+	| "LIMIT_REACHED"
+	| "WRITE_UNCERTAIN"
+	| "WRITE_IN_PROGRESS"
+	| "INVALID_CURSOR"
+	| "CONSENT_REQUIRED"
+	| "OPERATION_CHANGED"
 >;
 
 function frozen<T>(value: T): T {
@@ -72,6 +82,9 @@ export function appliedWithoutResult(): ToolResult {
 /** The codes whose refusal the chat shows as "Not allowed"; every other failure is `error`. */
 export const DENIAL_CODES: ReadonlySet<string> = new Set<DeniedCode>([
 	"POLICY_DENIED",
+	"APPROVAL_REQUIRED",
+	"APPROVAL_PENDING",
+	"APPROVAL_TOO_LARGE",
 	"APPROVAL_UNAVAILABLE",
 	"LIMIT_REACHED",
 	"WRITE_UNCERTAIN",
@@ -133,8 +146,11 @@ export function allowedEvent(shown: ShownCall, title: string, count: number | nu
 	return event;
 }
 
-export function refusedEvent(shown: ShownCall, code: string, message: string): ToolCallRefused {
-	return { ...shown, decision: DENIAL_CODES.has(code) ? "denied" : "error", code, message };
+/** `write` for a held call (APPROVAL_REQUIRED): its hold's. */
+export function refusedEvent(shown: ShownCall, code: string, message: string, write: string | null = null): ToolCallRefused {
+	const event: ToolCallRefused = { ...shown, decision: DENIAL_CODES.has(code) ? "denied" : "error", code, message };
+	if (write !== null) event.write = write;
+	return event;
 }
 
 /** The result a call returns, in MCP's shape (`CallToolResult`). */

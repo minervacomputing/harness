@@ -213,6 +213,9 @@ export interface Connector<Client extends ProviderClient = ProviderClient> {
 /** Errors the core raises. Only an error's message reaches the model or the UI. */
 export type CoreErrorCode =
 	| "POLICY_DENIED"
+	| "APPROVAL_REQUIRED"
+	| "APPROVAL_PENDING"
+	| "APPROVAL_TOO_LARGE"
 	| "APPROVAL_UNAVAILABLE"
 	| "INVALID_ARGUMENTS"
 	| "UNKNOWN_OPERATION"

@@ -100,6 +100,8 @@ export type ToolCallRefused = ToolCallBase & {
   decision: 'denied' | 'error'
   code: string
   message: string
+  /** For a call held for approval (`APPROVAL_REQUIRED`): its hold's, as on an allowed write. */
+  write?: string
 }
 
 /**

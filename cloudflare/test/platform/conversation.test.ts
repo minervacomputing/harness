@@ -37,7 +37,10 @@ signedAssertions();
 class FakeLedger implements WriteLedger {
 	uncertain: RunId[] = [];
 	knownWrite = () => null;
+	heldCall = () => null;
+	writesClosed = () => false;
 	dispatchWrite = () => ({ kind: "refused" as const, code: "RUN_ENDED" as const, message: "This run is no longer active." });
+	holdCall = () => ({ kind: "refused" as const, code: "RUN_ENDED" as const, message: "This run is no longer active." });
 	settleWrite = () => {};
 	resolvePageToken = () => null;
 	issuePageToken = () => null;
@@ -286,7 +289,7 @@ async function leftQueued(stub: Stub, ended: StartRun, left: StartRun, watched: 
 		const answer = store.answer(ended.run) as StartRunResult;
 		store.write(() => {
 			const turn = { history: [], prompt: left.message.content };
-			store.insertRun({ id: left.run, snapshot: { ...snapshot, runId: left.run, deadline: null, turn }, deadline: null, plan: { parentId: snapshot.baseVersionId, attachments: [] }, createdAt: Date.now(), allowance: null });
+			store.insertRun({ id: left.run, snapshot: { ...snapshot, runId: left.run, deadline: null, turn }, deadline: null, plan: { parentId: snapshot.baseVersionId, attachments: [] }, createdAt: Date.now(), allowance: null, attended: false });
 			store.append(left.run, statusEvent({ status: "queued" }));
 			store.addAnswer(left.run, answer);
 		});
@@ -1304,9 +1307,12 @@ describe("the run's records", () => {
 				deadline: () => null,
 				writesUncertain: () => false,
 				markWritesUncertain: (id) => store.setWritesUncertain(id),
+				writesClosed: () => false,
+				closeWrites: () => {},
 				writeSettled: (write, outcome) => store.writeSettled(write, outcome),
+				callHeld: () => {},
 			});
-			const port = runStatePort(store, () => ledger, () => {});
+			const port = runStatePort(store, () => ledger, () => {}, async () => {});
 			const fence = { runId, attempt: 1 };
 			const writes = () => state.storage.sql.exec<{ key: string; status: string }>("SELECT key, status FROM run_writes WHERE run_id = ?", runId).toArray();
 			// As pi commits: an asynchronous transaction whose callback awaits between statements, here rolled back.

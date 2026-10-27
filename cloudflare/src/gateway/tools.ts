@@ -51,6 +51,11 @@ export interface StartSnapshot {
 	 * list (gateway/tenancy.ts). Absent when none is: a run started without a policy, or before connection policies.
 	 */
 	tenants?: { [connectionId: ConnectionId]: string[] };
+	/**
+	 * Laravel's start says a person made it and can answer a card (`startRun.attended`): only then may the run hold a call
+	 * for their approval. Absent otherwise, so an unattended start's snapshot is what it was before.
+	 */
+	attended?: true;
 }
 
 export const SAFETY_INSTRUCTIONS =

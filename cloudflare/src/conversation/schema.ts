@@ -3,7 +3,7 @@
 // they land (additive only, lib/sqlite.ts).
 
 import { FOLDER_REPORT_SCHEMA, FOLDER_SCHEMA, FOLDER_STORED_SIZE_SCHEMA } from "../files/schema.ts";
-import { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA, PAGE_TOKEN_SCHEMA } from "../gateway/schema.ts";
+import { HOLD_SCHEMA, LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA, PAGE_TOKEN_SCHEMA } from "../gateway/schema.ts";
 
 /** lib/sqlite.ts `Migration`, written out so the account tests (Node) can read the ids without the Worker's types. */
 interface Migration {
@@ -345,5 +345,15 @@ CREATE TABLE run_attachments (
 	PRIMARY KEY (run_id, position)
 ) STRICT;
 `,
+	},
+	// Calls held for the user's approval (gateway/holds.ts; ARCHITECTURE.md: Writes); whether a run's start was attended,
+	// so it may hold one; and whether its writes closed, after a write was refused while it held one.
+	{
+		id: 18,
+		sql: [
+			"ALTER TABLE runs ADD COLUMN attended INTEGER NOT NULL DEFAULT 0 CHECK (attended IN (0, 1))",
+			"ALTER TABLE runs ADD COLUMN writes_closed INTEGER NOT NULL DEFAULT 0 CHECK (writes_closed IN (0, 1))",
+			...HOLD_SCHEMA,
+		].join(";\n"),
 	},
 ];

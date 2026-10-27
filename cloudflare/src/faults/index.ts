@@ -73,6 +73,8 @@ export interface RunInternals {
 		settled_at: number | null;
 	}[];
 	writes: { key: string; status: string; attempt: number }[];
+	/** The calls it holds for approval, in position order. */
+	holds: { position: number; key: string; write_id: string; tool: string; label: string; state: string; arguments: string; requirements: string }[];
 	executions: { call_id: string; executions: number }[];
 	/** The tools the run's snapshot offers. */
 	tools: string[];
@@ -275,7 +277,13 @@ export class Conversation extends BaseConversation {
 			marks: marksOf(this.ctx, runId),
 			piTasks: session === null ? [] : submissionTasks(sql, Number(session), request),
 			compactions: session === null ? [] : submissionCompactions(sql, Number(session), request),
-			run: sql.exec("SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, tool_calls, model_calls, allowance, prune, created_at, session FROM runs WHERE id = ?", runId).toArray()[0] ?? null,
+			run:
+				sql
+					.exec(
+						"SELECT id, status, attempt, error_code, error_message, revoked, activated, writes_uncertain, writes_closed, attended, tool_calls, model_calls, allowance, prune, created_at, session FROM runs WHERE id = ?",
+						runId,
+					)
+					.toArray()[0] ?? null,
 			attempts: sql.exec<{ attempt: number; ended: string | null }>("SELECT attempt, ended FROM attempts WHERE run_id = ? ORDER BY attempt", runId).toArray(),
 			calls: sql
 				.exec<Omit<RunInternals["calls"][number], "summary"> & { summary: number }>(
@@ -285,6 +293,9 @@ export class Conversation extends BaseConversation {
 				.toArray()
 				.map((call) => ({ ...call, summary: call.summary === 1 })),
 			writes: sql.exec<{ key: string; status: string; attempt: number }>("SELECT key, status, attempt FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId).toArray(),
+			holds: sql
+				.exec<RunInternals["holds"][number]>("SELECT position, key, write_id, tool, label, state, arguments, requirements FROM run_holds WHERE run_id = ? ORDER BY position", runId)
+				.toArray(),
 			executions: sql.exec<{ call_id: string; executions: number }>("SELECT call_id, executions FROM tool_executions WHERE run_id = ? ORDER BY call_id", runId).toArray(),
 		};
 	}

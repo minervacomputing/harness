@@ -15,10 +15,31 @@ import {
 import { todoistConnector } from "../../src/connectors/todoist/connector.ts";
 import { hmacSha256Hex } from "../../src/lib/hash.ts";
 import { z } from "zod";
-import { type Connector, inTenant } from "../../src/gateway/connector.ts";
-import type { GrantRow } from "../../src/gateway/grants.ts";
-import { APPROVAL_UNAVAILABLE } from "../../src/gateway/executor.ts";
-import { FOLDER, FakeClock, FakeServer, FakeTodoist, Gate, MIXED, PROJECT, Scenario, TODOIST, mixedConnection, mixedConnector, todoistConnection, userGrants } from "./executor-fakes.ts";
+import { MAX_HELD_ARGUMENTS } from "@minerva/contract/internal";
+import { type Connector, type Operation, OperationError, type Prepared, type ProviderOutput, defineOperation, inTenant } from "../../src/gateway/connector.ts";
+import { visibleResult } from "../../src/gateway/executor.ts";
+import { APPROVAL_MESSAGES } from "../../src/gateway/holds.ts";
+import { WRITE_MESSAGES, writeKey } from "../../src/gateway/ledger.ts";
+import { Layer, Policy } from "../../src/gateway/policy.ts";
+import {
+	FOLDER,
+	FakeClock,
+	FakeServer,
+	FakeTodoist,
+	Gate,
+	MIXED,
+	PROJECT,
+	RUN,
+	SECRET,
+	Scenario,
+	TODOIST,
+	USER,
+	askingGrants,
+	mixedConnection,
+	mixedConnector,
+	todoistConnection,
+	userGrants,
+} from "./executor-fakes.ts";
 
 function start(todoist: FakeTodoist, projects: { [id: string]: string[] } = { work: ["read"] }, options: { concurrency?: number; deadline?: number | null } = {}) {
 	return Scenario.start({
@@ -260,10 +281,6 @@ describe("tools/call", () => {
 	});
 });
 
-/** User-layer rows that ask: {id: actions} on `kind`. */
-function asking(connectionId: string, kind: string, grants: { [id: string]: string[] }): GrantRow[] {
-	return userGrants(connectionId, kind, grants).map((row) => ({ ...row, effect: "ask" as const }));
-}
 
 describe("a call the policy asks before", () => {
 	const ASKED = { code: "APPROVAL_UNAVAILABLE", message: "This needs the user's approval, which nobody can give in this run. Do not retry. Say what you would do." };
@@ -289,12 +306,12 @@ describe("a call the policy asks before", () => {
 		const run = await Scenario.start({
 			connectors: [counted],
 			connections: [todoistConnection()],
-			user: [...userGrants(TODOIST, PROJECT, { work: ["read"], private: ["read", "create"] }), ...asking(TODOIST, PROJECT, { work: ["create"] })],
+			user: [...userGrants(TODOIST, PROJECT, { work: ["read"], private: ["read", "create"] }), ...askingGrants(TODOIST, PROJECT, { work: ["create"] })],
 			fetch: todoist.fetch,
 		});
 		expect(run.tools).toContain("todoist_create_task");
 		expect(await run.error("todoist_create_task", { project_id: "work", title: "a" })).toEqual(ASKED);
-		expect(ASKED.message).toBe(APPROVAL_UNAVAILABLE);
+		expect(ASKED.message).toBe(APPROVAL_MESSAGES.unavailable);
 		expect([run.credentials.leases, prepared]).toEqual([1, 1]);
 		expect(run.writes()).toEqual([]);
 		expect(todoist.count("POST", "/tasks")).toBe(0);
@@ -311,7 +328,7 @@ describe("a call the policy asks before", () => {
 		const run = await Scenario.start({
 			connectors: [todoistConnector()],
 			connections: [todoistConnection()],
-			user: [...userGrants(TODOIST, PROJECT, { work: ["read"], private: ["read"] }), ...asking(TODOIST, PROJECT, { work: ["create"], private: ["create"] })],
+			user: [...userGrants(TODOIST, PROJECT, { work: ["read"], private: ["read"] }), ...askingGrants(TODOIST, PROJECT, { work: ["create"], private: ["create"] })],
 			ceiling: [{ layer: "ceiling", subject: null, connectionId: TODOIST, kind: PROJECT, resourceId: "work", resourceName: "", actions: ["create"], effect: "deny" }],
 			fetch: todoist.fetch,
 		});
@@ -338,13 +355,223 @@ describe("a call the policy asks before", () => {
 						},
 			),
 		};
-		const user = [...userGrants(MIXED, FOLDER, { "*": ["read"] }), ...asking(MIXED, FOLDER, { archive: ["create"] })];
+		const user = [...userGrants(MIXED, FOLDER, { "*": ["read"] }), ...askingGrants(MIXED, FOLDER, { archive: ["create"] })];
 		const under = (tenants: string[]) =>
 			Scenario.start({ connectors: [tenanted], connections: [mixedConnection()], user, fetch: server.fetch, policy: { revision: 1, connectors: [{ provider: "mixed", tenants }] } });
 		const copy = { source: "inbox", dest: "archive", name: "a" };
 		expect(await (await under(["other"])).error("mixed_copy_file", copy)).toEqual({ code: "POLICY_DENIED", message: "Your organization does not allow this drive." });
 		expect(await (await under(["acme"])).error("mixed_copy_file", copy)).toEqual(ASKED);
 		expect(server.copies).toEqual([]);
+	});
+});
+
+const BOARD = "0199a000-0000-7000-8000-0000000000e1";
+const Post = z.strictObject({ board: z.string().min(1).max(300), text: z.string().max(2_000_000) });
+
+/** A connector whose one write takes up to 2 MB of text on a board its input names: for a card's limits. */
+function boardConnector(): Connector {
+	return {
+		slug: "board",
+		name: "Board",
+		kinds: [{ id: "board", label: "Board", actions: ["read", "create"], wildcard: true }],
+		actions: [
+			{ id: "read", label: "Read posts" },
+			{ id: "create", label: "Post", requires: "read" },
+		],
+		tenancy: { kind: "unknown" },
+		auth: { type: "api_key", label: "API key" },
+		operations: [
+			defineOperation<z.output<typeof Post>>({
+				name: "post",
+				title: "Post",
+				description: "Posts text on a board.",
+				input: Post,
+				needs: [["board", "create"]],
+				mutates: true,
+				// Its records are filtered by the write's own action, as Gmail's send is.
+				outputAction: "create",
+				async prepare(binding, data): Promise<Prepared> {
+					return {
+						requirements: [{ need: binding.resource("board", data.board), action: "create" }],
+						async execute(): Promise<ProviderOutput> {
+							return { records: [{ resource: binding.resource("board", data.board), data: { board: data.board } }] };
+						},
+					};
+				},
+			}),
+		],
+		client: () => ({ close: async () => {} }),
+		account: async () => ({ id: "account", label: "Account" }),
+		discover: async () => ({ items: [] }),
+		describe: async () => ({}),
+	};
+}
+
+function boardRun() {
+	return Scenario.start({
+		connectors: [boardConnector()],
+		connections: [{ id: BOARD, provider: "board", payload: { kind: "api_key", key: "test-key" } }],
+		user: [...userGrants(BOARD, "board", { "*": ["read"] }), ...askingGrants(BOARD, "board", { "*": ["create"] })],
+		fetch: async () => {
+			throw new Error("The board sends nothing.");
+		},
+		attended: true,
+	});
+}
+
+describe("an attended run holds a call the policy asks before", () => {
+	const REQUIRED = {
+		code: "APPROVAL_REQUIRED",
+		message:
+			"Minerva asked the user to approve this. It has not run. Do not call it again or try another way. Finish your turn by saying what waits for approval. The user approves or declines it with the buttons Minerva shows in the chat, so do not ask them to reply yes or no. The outcome comes in the next turn.",
+	};
+	const PENDING = { code: "APPROVAL_PENDING", message: "An earlier action waits for the user's approval. Make no more changes in this turn." };
+	const TOO_LARGE = { code: "APPROVAL_TOO_LARGE", message: "This action is too large to show the user for approval. Split it into smaller ones." };
+	const CREATE = "todoist_create_task";
+	/** Reads on both projects, creates on `private`; `work` asks before a create. */
+	const GRANTS = [...userGrants(TODOIST, PROJECT, { work: ["read"], private: ["read", "create"] }), ...askingGrants(TODOIST, PROJECT, { work: ["create"] })];
+
+	function attended(todoist: FakeTodoist) {
+		return Scenario.start({ connectors: [todoistConnector()], connections: [todoistConnection()], user: GRANTS, fetch: todoist.fetch, attended: true });
+	}
+
+	test("holds it at its lease and prepare, claiming nothing and sending nothing, named by the provider; a repeat holds nothing more and leases nothing", async () => {
+		const todoist = new FakeTodoist();
+		const run = await attended(todoist);
+		const fields = { project_id: "work", title: "a" };
+		expect(await run.error(CREATE, fields)).toEqual(REQUIRED);
+		const key = await writeKey(CREATE, fields);
+		const write = await writeId(SECRET, RUN, key);
+		expect(run.ledger.holds(RUN)).toEqual([
+			{
+				runId: RUN,
+				position: 1,
+				key,
+				write,
+				userId: USER,
+				tool: CREATE,
+				label: "Todoist: Create a task",
+				connection: TODOIST,
+				provider: "todoist",
+				operation: "create_task",
+				contract: run.registry.contract("todoist", "create_task"),
+				arguments: '{"project_id":"work","title":"a"}',
+				requirements: [{ kind: PROJECT, kindLabel: "Project", resource: "work", name: "Work", action: "create", actionLabel: "Create tasks", effect: "ask", asked: ["user"] }],
+				state: "open",
+				createdAt: run.clock.now(),
+			},
+		]);
+		expect([run.credentials.leases, run.writes(), todoist.count("POST", "/tasks"), todoist.count("GET", "/projects")]).toEqual([1, [], 0, 1]);
+		const row = { tool: CREATE, label: "Todoist: Create a task", arguments: fields, decision: "denied", ...REQUIRED, write };
+		expect(run.events).toEqual([row]);
+		expect(await run.error(CREATE, fields)).toEqual(REQUIRED);
+		expect([run.ledger.holds(RUN).length, run.credentials.leases, todoist.count("GET", "/projects")]).toEqual([1, 1, 1]);
+		expect(run.events).toEqual([row, row]);
+	});
+
+	test("stores every resource the call names with its effect, allowed ones too, and the provider's names cut to 300 characters", async () => {
+		const server = new FakeServer();
+		const connector = mixedConnector(server);
+		const named: Connector = { ...connector, describe: async (_client, _kind, ids) => Object.fromEntries(ids.filter((id) => id !== "inbox").map((id) => [id, "A".repeat(400)])) };
+		const failing: Connector = {
+			...connector,
+			describe: async () => {
+				throw new OperationError("PROVIDER_UNAVAILABLE", "Down.");
+			},
+		};
+		const user = [...userGrants(MIXED, FOLDER, { "*": ["read"] }), ...askingGrants(MIXED, FOLDER, { archive: ["create"] })];
+		const copy = { source: "inbox", dest: "archive", name: "a" };
+		const held = async (subject: Connector) => {
+			const run = await Scenario.start({ connectors: [subject], connections: [mixedConnection()], user, fetch: server.fetch, attended: true });
+			expect(await run.error("mixed_copy_file", copy)).toEqual(REQUIRED);
+			return run.ledger.holds(RUN).map((hold) => hold.requirements);
+		};
+		const source = { kind: FOLDER, kindLabel: "Folder", resource: "inbox", action: "read", actionLabel: "Read", effect: "allow", asked: [] };
+		const dest = { kind: FOLDER, kindLabel: "Folder", resource: "archive", action: "create", actionLabel: "Create", effect: "ask", asked: ["user"] };
+		expect(await held(named)).toEqual([[source, { ...dest, name: "A".repeat(300) }]]);
+		expect(await held(failing)).toEqual([[source, dest]]);
+		expect(server.copies).toEqual([]);
+	});
+
+	test("holds ten; the eleventh is refused APPROVAL_PENDING and closes the run's writes, so the next is refused before its lease and a repeat still asks", async () => {
+		const todoist = new FakeTodoist();
+		const run = await attended(todoist);
+		for (let n = 1; n <= 10; n++) expect(await run.error(CREATE, { project_id: "work", title: `t${n}` })).toEqual(REQUIRED);
+		expect(await run.error(CREATE, { project_id: "work", title: "t11" })).toEqual(PENDING);
+		expect(run.ledger.holds(RUN).map((hold) => [hold.position, JSON.parse(hold.arguments).title])).toEqual(Array.from({ length: 10 }, (_, i) => [i + 1, `t${i + 1}`]));
+		expect([run.state.writesClosed(RUN), run.credentials.leases]).toEqual([true, 11]);
+		expect(await run.error(CREATE, { project_id: "work", title: "t12" })).toEqual(PENDING);
+		expect(await run.error(CREATE, { project_id: "work", title: "t3" })).toEqual(REQUIRED);
+		expect([run.ledger.holds(RUN).length, run.credentials.leases, todoist.count("POST", "/tasks")]).toEqual([10, 11, 0]);
+	});
+
+	test("a write that does not ask is then refused APPROVAL_PENDING at its claim and closes writes; a later asking one is refused before its lease; reads go on", async () => {
+		const todoist = new FakeTodoist();
+		const run = await attended(todoist);
+		expect(await run.error(CREATE, { project_id: "work", title: "a" })).toEqual(REQUIRED);
+		expect(await run.error(CREATE, { project_id: "private", title: "b" })).toEqual(PENDING);
+		expect([run.writes(), todoist.count("POST", "/tasks"), run.state.writesClosed(RUN)]).toEqual([[], 0, true]);
+		const leases = run.credentials.leases;
+		expect(await run.error(CREATE, { project_id: "work", title: "c" })).toEqual(PENDING);
+		expect([run.credentials.leases, run.ledger.holds(RUN).length]).toEqual([leases, 1]);
+		expect((await run.ok(...LIST_TASKS)).result.count).toBe(1);
+		expect(run.events.map((event) => [event.decision, "code" in event ? event.code : null])).toEqual([
+			["denied", "APPROVAL_REQUIRED"],
+			["denied", "APPROVAL_PENDING"],
+			["denied", "APPROVAL_PENDING"],
+			["allowed", null],
+		]);
+	});
+
+	test("a write refused before its claim ran nothing and closes nothing: a later asking write is held", async () => {
+		const todoist = new FakeTodoist();
+		const run = await attended(todoist);
+		expect(await run.error(CREATE, { project_id: "work", title: "a" })).toEqual(REQUIRED);
+		expect(await run.code(CREATE, { project_id: "elsewhere", title: "b" })).toBe("POLICY_DENIED");
+		expect(await run.error(CREATE, { project_id: "work", title: "c" })).toEqual(REQUIRED);
+		expect([run.ledger.holds(RUN).map((hold) => hold.position), run.state.writesClosed(RUN)]).toEqual([[1, 2], false]);
+	});
+
+	test("a run whose writes are paused by an uncertain write holds nothing", async () => {
+		const todoist = new FakeTodoist();
+		const run = await attended(todoist);
+		todoist.failWrites = true;
+		expect(await run.code(CREATE, { project_id: "private", title: "a" })).toBe("WRITE_UNCERTAIN");
+		expect(await run.error(CREATE, { project_id: "work", title: "b" })).toEqual({ code: "WRITE_UNCERTAIN", message: WRITE_MESSAGES.paused });
+		expect(run.ledger.holds(RUN)).toEqual([]);
+	});
+
+	test("one too large for its card is refused APPROVAL_TOO_LARGE, by its fields' 1.5 MiB or by its fact's row once escaped, holding nothing", async () => {
+		const run = await boardRun();
+		expect(await run.error("board_post", { board: "news", text: "a".repeat(MAX_HELD_ARGUMENTS) })).toEqual(TOO_LARGE);
+		// Under the fields' limit, but each quote is escaped twice in the fact.
+		expect(await run.error("board_post", { board: "news", text: '"'.repeat(700_000) })).toEqual(TOO_LARGE);
+		expect(run.ledger.holds(RUN)).toEqual([]);
+		expect(await run.error("board_post", { board: "news", text: "a".repeat(1_500_000) })).toEqual(REQUIRED);
+		expect(run.ledger.holds(RUN).map((hold) => hold.arguments.length)).toEqual([1_500_000 + '{"board":"news","text":""}'.length]);
+	});
+
+	test("one whose fact Laravel would refuse is refused APPROVAL_UNAVAILABLE, saying it cannot be shown, holding nothing", async () => {
+		const run = await boardRun();
+		expect(await run.error("board_post", { board: "b".repeat(201), text: "hi" })).toEqual({
+			code: "APPROVAL_UNAVAILABLE",
+			message: "This needs the user's approval, but it cannot be shown to them. Do not retry. Say what you would do.",
+		});
+		expect(run.ledger.holds(RUN)).toEqual([]);
+		expect(run.log.warnings).toEqual([`A held call of board.post in run ${RUN} cannot be shown: data.requirements.0.resource: Too big: expected string to have <=200 characters`]);
+	});
+
+	test("a write's records stay visible under an ask, so a send the user approved shows them", () => {
+		const connector = boardConnector();
+		const op = connector.operations[0] as Operation<never>;
+		const ref = { connection_id: BOARD, provider: "board" };
+		const record = { resource: { connectionId: BOARD, kind: "board", id: "news", within: [], partial: false }, data: { board: "news" } };
+		const row = (actions: string[], effect: "allow" | "ask" | "deny") => ({ connectionId: BOARD, kind: "board", resourceId: "*", actions, effect });
+		// As the compile makes an ask row on an enforceable kind: an allow that lets the restricted layer pass, and the ask.
+		const policy = (effect: "ask" | "deny") =>
+			new Policy([Layer.build("user", true, effect === "ask" ? [row(["read", "create"], "allow"), row(["create"], "ask")] : [row(["read"], "allow"), row(["create"], "deny")])]);
+		expect(visibleResult(connector, op, ref, policy("ask"), { records: [record] })).toEqual({ result: { items: [{ board: "news" }], count: 1 }, images: [] });
+		expect(visibleResult(connector, op, ref, policy("deny"), { records: [record] })).toEqual({ result: { items: [], count: 0 }, images: [] });
 	});
 });
 

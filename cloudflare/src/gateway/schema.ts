@@ -1,4 +1,4 @@
-// The write ledger's and page tokens' tables (gateway/ledger.ts, gateway/page-tokens.ts), one schema step
+// The write ledger's, its holds' and page tokens' tables (gateway/ledger.ts, gateway/page-tokens.ts), schema steps
 // of the Conversation Durable Object (conversation/schema.ts). Plain strings with no imports, so the
 // account tests (Node) can read the object's step ids without the Worker's types.
 
@@ -34,6 +34,32 @@ export const LEDGER_NOTES_SCHEMA: readonly string[] = [
 	"ALTER TABLE run_writes ADD COLUMN tool TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE run_writes ADD COLUMN connection_id TEXT NOT NULL DEFAULT ''",
 	"ALTER TABLE run_writes ADD COLUMN write_id TEXT NOT NULL DEFAULT ''",
+];
+
+/**
+ * The run_holds table (holds.ts): a run's calls held for the user's approval, at most 10 (MAX_HOLDS), one per write key.
+ * `contract` is the operation's fingerprint, `requirements` the fact's requirements as JSON.
+ */
+export const HOLD_SCHEMA: readonly string[] = [
+	`CREATE TABLE IF NOT EXISTS run_holds (
+		run_id TEXT NOT NULL,
+		position INTEGER NOT NULL CHECK (position BETWEEN 1 AND 10),
+		key TEXT NOT NULL CHECK (length(key) BETWEEN 1 AND 64),
+		write_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		tool TEXT NOT NULL,
+		label TEXT NOT NULL,
+		connection_id TEXT NOT NULL,
+		provider TEXT NOT NULL,
+		operation TEXT NOT NULL,
+		contract TEXT NOT NULL,
+		arguments TEXT NOT NULL,
+		requirements TEXT NOT NULL,
+		state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'used', 'closed')),
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY (run_id, position),
+		UNIQUE (run_id, key)
+	) STRICT`,
 ];
 
 /** The page_tokens table. */

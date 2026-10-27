@@ -32,7 +32,7 @@ import {
 } from "../../src/gateway/executor.ts";
 import type { GrantRow, RunLayers } from "../../src/gateway/grants.ts";
 import { ProviderHTTP, type RunBrowser } from "../../src/gateway/http.ts";
-import { WriteLedger } from "../../src/gateway/ledger.ts";
+import { type ClosedWrites, WriteLedger } from "../../src/gateway/ledger.ts";
 import { PageTokens } from "../../src/gateway/page-tokens.ts";
 import type { Resource } from "../../src/gateway/policy.ts";
 import { Registry } from "../../src/gateway/registry.ts";
@@ -417,9 +417,10 @@ export class FakeTodoist {
 
 // The ports.
 
-/** The Conversation Durable Object's runs, as the checks read them. */
-export class FakeRuns implements RunTable {
+/** The Conversation Durable Object's runs, as the checks read them, and their closed writes (`runs.writes_closed`). */
+export class FakeRuns implements RunTable, ClosedWrites {
 	readonly runs = new Map<RunId, RunState & { toolCalls: number }>();
+	readonly #closed = new Set<RunId>();
 
 	add(runId: RunId, state: Partial<RunState> = {}): void {
 		this.runs.set(runId, { status: "running", attempt: 1, deadline: null, revoked: false, toolCalls: 0, ...state });
@@ -443,6 +444,14 @@ export class FakeRuns implements RunTable {
 	countToolCall(runId: RunId): void {
 		const run = this.runs.get(runId);
 		if (run !== undefined) run.toolCalls += 1;
+	}
+
+	closed(runId: RunId): boolean {
+		return this.#closed.has(runId);
+	}
+
+	close(runId: RunId): void {
+		this.#closed.add(runId);
 	}
 }
 
@@ -509,6 +518,11 @@ export class MemoryLog implements ExecutorLog {
 	}
 }
 
+/** User-layer rows that ask: {id: actions} on `kind`. */
+export function askingGrants(connectionId: ConnectionId, kind: string, grants: { [id: string]: string[] }): GrantRow[] {
+	return userGrants(connectionId, kind, grants).map((row) => ({ ...row, effect: "ask" as const }));
+}
+
 /** User-layer grants as rows: {id: actions} on `kind`, or [kind, id, actions]. */
 export function userGrants(connectionId: ConnectionId, kind: string, grants: { [id: string]: string[] }, others: [string, string, string[]][] = []): GrantRow[] {
 	const rows: [string, string, string[]][] = [...Object.entries(grants).map(([id, actions]): [string, string, string[]] => [kind, id, actions]), ...others];
@@ -553,6 +567,8 @@ export interface ScenarioOptions {
 	editTools?: (tools: ToolRef[]) => ToolRef[];
 	/** The organization's connection policy; none by default. */
 	policy?: ConnectionPolicy;
+	/** The start was attended, so the run holds a call the policy asks before; not by default. */
+	attended?: boolean;
 }
 
 /** A run started and claimed, its executor, and what its calls recorded. */
@@ -580,7 +596,7 @@ export class Scenario {
 		this.runId = runId;
 		this.clock = options.clock ?? new FakeClock();
 		this.sql = options.sql ?? ledgerSql();
-		this.ledger = new WriteLedger(this.sql, this.clock);
+		this.ledger = new WriteLedger(this.sql, this.clock, this.runs);
 		this.tokens = new PageTokens(this.sql, () => this.clock.now());
 		this.state = new LedgerRunState(this.runs, this.ledger, this.tokens, this.clock);
 		this.credentials = new FakeCredentials(this.state);
@@ -636,6 +652,7 @@ export class Scenario {
 				browser: options.browser ?? null,
 				deadline,
 				...(this.snapshot.tenants ? { tenants: this.snapshot.tenants } : {}),
+				attended: options.attended ?? false,
 			},
 			host,
 		);

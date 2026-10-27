@@ -899,3 +899,158 @@ describe("writes", () => {
 		expect((await w.stub.faultRun(start.run)).writes).toEqual([]);
 	});
 });
+
+describe("holds", () => {
+	const REQUIRED =
+		"Minerva asked the user to approve this. It has not run. Do not call it again or try another way. Finish your turn by saying what waits for approval. The user approves or declines it with the buttons Minerva shows in the chat, so do not ask them to reply yes or no. The outcome comes in the next turn.";
+	const FOLDERS = { method: "GET", path: "/folders" };
+
+	/** A start the user attends whose layer asks before saving a note: reads allowed, creates asked. */
+	function asking(w: World): Partial<StartRun> {
+		const layers = notesLayers(w.connectionId, [
+			{ kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" },
+			{ kind: FOLDER, resource: "*", name: "", actions: ["create"], effect: "ask" },
+		]);
+		return { attended: true, authority: { connections: [notesConnection(w.connectionId)], layers } };
+	}
+
+	const requirement = { kind: FOLDER, kindLabel: "Folder", resource: "inbox", name: "Inbox", action: "create", actionLabel: "Create notes", effect: "ask", asked: ["user"] };
+
+	/** The run's `run.held_call` facts the fake Laravel applied, once it holds the run's last fact. */
+	async function heldFacts(w: World, runId: RunId) {
+		const facts = await until(
+			async () => fake.facts(w.conversation),
+			(all) => all.some((fact) => fact.type === "run.settled" && fact.run === runId),
+		);
+		return facts.flatMap((fact) => (fact.type === "run.held_call" && fact.run === runId ? [fact.data] : []));
+	}
+
+	function requests(state: { requests: { method: string; path: string }[] }) {
+		return state.requests.map(({ method, path }) => ({ method, path }));
+	}
+
+	test("a run with holds completes: two asked saves are held in order, nothing reaches the provider, and Laravel holds both whole", async () => {
+		const w = await world();
+		const runId = await post(w, [save("First"), save("Second"), { text: "Both notes wait for your approval." }], asking(w));
+		expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+		const internals = await w.stub.faultRun(runId);
+		expect(internals.run).toMatchObject({ attended: 1, writes_closed: 0, writes_uncertain: 0 });
+		expect(internals.writes).toEqual([]);
+		const [first, second] = internals.holds.map((hold) => hold.write_id);
+		expect(internals.holds).toEqual([
+			{ position: 1, key: expect.stringMatching(/^[0-9a-f]{64}$/), write_id: first, tool: SAVE, label: "Notes: Save a note", state: "open", arguments: '{"folder":"inbox","title":"First"}', requirements: JSON.stringify([requirement]) },
+			{ position: 2, key: expect.stringMatching(/^[0-9a-f]{64}$/), write_id: second, tool: SAVE, label: "Notes: Save a note", state: "open", arguments: '{"folder":"inbox","title":"Second"}', requirements: JSON.stringify([requirement]) },
+		]);
+		expect(first).toMatch(/^[0-9a-f]{32}$/);
+		expect(second).not.toBe(first);
+		expect(toolCalls(await eventsOf(w, runId))).toEqual([
+			expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_REQUIRED", message: REQUIRED, write: first }),
+			expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_REQUIRED", message: REQUIRED, write: second }),
+		]);
+		// Each hold read the folder's name, and nothing was saved.
+		const state = await provider(w);
+		expect(requests(state)).toEqual([FOLDERS, FOLDERS]);
+		expect(state.notes.map((note) => note.title)).toEqual(SEEDED);
+		const held = { tool: SAVE, label: "Notes: Save a note", connection: w.connectionId, provider: "notes", operation: "save_note", requirements: [requirement] };
+		expect(await heldFacts(w, runId)).toEqual([
+			{ position: 1, ...held, arguments: '{"folder":"inbox","title":"First"}', write: first },
+			{ position: 2, ...held, arguments: '{"folder":"inbox","title":"Second"}', write: second },
+		]);
+	});
+
+	test("the same start without attended holds nothing: the save is refused APPROVAL_UNAVAILABLE", async () => {
+		const w = await world();
+		const runId = await post(w, [save("First"), { text: "Saving needs approval." }], { ...asking(w), attended: undefined });
+		expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+		const internals = await w.stub.faultRun(runId);
+		expect(internals.run).toMatchObject({ attended: 0, writes_closed: 0 });
+		expect(internals.holds).toEqual([]);
+		expect(toolCalls(await eventsOf(w, runId))).toEqual([
+			expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_UNAVAILABLE", message: "This needs the user's approval, which nobody can give in this run. Do not retry. Say what you would do." }),
+		]);
+		expect(requests(await provider(w))).toEqual([]);
+		expect(await heldFacts(w, runId)).toEqual([]);
+	});
+
+	test.each([
+		["a Stop", "cancelled", "Stopped."],
+		["a revocation", "permissions_changed", STOPPED_PERMISSIONS],
+	] as const)("holds outlive %s: the run ends with its hold open", async (_name, reason, message) => {
+		const w = await world({ faults: [{ point: "model:delta", mode: "hold", step: 1, delta: 0 }] });
+		const runId = await post(w, [save("First"), { text: "It waits for your approval." }], asking(w));
+		await reached(() => w.stub.faultFired(), "model:delta");
+		expect(await commands.cancelRun({ scope: w.within, conversation: w.conversation, run: runId, reason })).toEqual({ state: "cancelled" });
+		await w.stub.faultRelease("model:delta");
+		expect(await settled(w, runId)).toMatchObject({ status: "cancelled", errorMessage: message });
+		const internals = await w.stub.faultRun(runId);
+		expect(internals.holds).toEqual([expect.objectContaining({ position: 1, tool: SAVE, state: "open" })]);
+		expect(toolCalls(await eventsOf(w, runId))).toEqual([expect.objectContaining({ code: "APPROVAL_REQUIRED", write: internals.holds[0]?.write_id })]);
+		expect(await heldFacts(w, runId)).toEqual([expect.objectContaining({ position: 1, write: internals.holds[0]?.write_id })]);
+		expect((await provider(w)).notes.map((note) => note.title)).toEqual(SEEDED);
+	});
+
+	test("holds outlive an empty answer that fails the run", async () => {
+		const w = await world();
+		const runId = await post(w, [save("First"), { text: "" }], asking(w));
+		expect(await settled(w, runId)).toMatchObject({ status: "failed" });
+		const internals = await w.stub.faultRun(runId);
+		expect(internals.holds).toEqual([expect.objectContaining({ position: 1, tool: SAVE, state: "open" })]);
+		expect(await heldFacts(w, runId)).toEqual([expect.objectContaining({ position: 1, write: internals.holds[0]?.write_id })]);
+	});
+
+	test("a script's write after a hold closes the run's writes, which stay closed across a restart: no later write holds or runs", async () => {
+		const w = await world({ faults: [{ point: "model:delta", mode: "hold", step: 1, delta: 0 }] });
+		// Notes asks before saving to the inbox only, so a save to the archive needs no approval.
+		const layers = notesLayers(w.connectionId, [
+			{ kind: FOLDER, resource: "*", name: "", actions: ["read", "create"], effect: "allow" },
+			{ kind: FOLDER, resource: "inbox", name: "Inbox", actions: ["create"], effect: "ask" },
+		]);
+		const code = `const out = [];
+for (const [folder, title] of [["inbox", "A"], ["archive", "B"], ["inbox", "C"]]) {
+	try { await tools.notes_save_note({ folder, title }); out.push("saved"); } catch (error) { out.push(error.message); }
+}
+return out;`;
+		const runId = await post(w, [{ tools: [{ name: "run_script", arguments: { code } }] }, save("D"), { text: "A waits for your approval." }], {
+			attended: true,
+			authority: { connections: [notesConnection(w.connectionId)], layers },
+		});
+		await reached(() => w.stub.faultFired(), "model:delta");
+		expect((await w.stub.faultRun(runId)).run).toMatchObject({ writes_closed: 1 });
+		await abortAllDurableObjects();
+		expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+		const events = await eventsOf(w, runId);
+		expect(restarts(events)).toEqual([2]);
+		const pending = "An earlier action waits for the user's approval. Make no more changes in this turn.";
+		const internals = await w.stub.faultRun(runId);
+		// A is held; B would run out of order, so it is refused and closes writes; C, asking, and D after the restart, find them closed.
+		expect(toolCalls(events)).toEqual([
+			expect.objectContaining({ tool: SAVE, code: "APPROVAL_REQUIRED", message: REQUIRED, write: internals.holds[0]?.write_id }),
+			expect.objectContaining({ tool: SAVE, code: "APPROVAL_PENDING", message: pending }),
+			expect.objectContaining({ tool: SAVE, code: "APPROVAL_PENDING", message: pending }),
+			expect.objectContaining({ tool: SAVE, code: "APPROVAL_PENDING", message: pending }),
+		]);
+		expect(internals.holds.map(({ position, arguments: text }) => [position, text])).toEqual([[1, '{"folder":"inbox","title":"A"}']]);
+		expect(internals.writes).toEqual([]);
+		expect(internals.run).toMatchObject({ writes_closed: 1 });
+		const state = await provider(w);
+		expect(requests(state)).toEqual([FOLDERS]);
+		expect(state.notes.map((note) => note.title)).toEqual(SEEDED);
+		expect((await heldFacts(w, runId)).map((data) => data.position)).toEqual([1]);
+	});
+
+	test("a reset at approval:held leaves one hold and one fact: the model's call after the restart is answered from the hold", async () => {
+		const w = await world({ faults: [{ point: "approval:held", mode: "abort" }] });
+		const runId = await post(w, [save("First"), save("First"), { text: "It waits for your approval." }], asking(w));
+		expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+		const events = await eventsOf(w, runId);
+		expect(restarts(events)).toEqual([2]);
+		const internals = await w.stub.faultRun(runId);
+		expect(internals.holds).toEqual([expect.objectContaining({ position: 1, tool: SAVE, state: "open", arguments: '{"folder":"inbox","title":"First"}' })]);
+		const write = internals.holds[0]?.write_id;
+		// The held call never answered; the retry is the repeat of a held key: no lease, no second hold, no second read.
+		expect(toolCalls(events)).toEqual([expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_REQUIRED", message: REQUIRED, write })]);
+		expect(requests(await provider(w))).toEqual([FOLDERS]);
+		expect(await heldFacts(w, runId)).toEqual([expect.objectContaining({ position: 1, write })]);
+		expect((await w.stub.faultFired()).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([["approval:held", "abort", runId]]);
+	});
+});

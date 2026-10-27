@@ -113,7 +113,7 @@ export async function prepareStart(registry: Registry, command: StartRun, option
 		user: layerOf("user", command.user, user),
 		agent: layerOf("agent", command.agent.id, agent),
 	};
-	const snapshot = startSnapshot(registry, {
+	const compiled = startSnapshot(registry, {
 		workspaceId: command.scope.workspace,
 		conversationId: command.conversation,
 		userId: command.user,
@@ -125,6 +125,7 @@ export async function prepareStart(registry: Registry, command: StartRun, option
 		runTimeoutMs: options.runTimeoutMs,
 		policy: command.authority.policy ?? null,
 	});
+	const snapshot: StartSnapshot = command.attended ? { ...compiled, attended: true } : compiled;
 	return {
 		snapshot,
 		catalog: await catalogVersion(registry),

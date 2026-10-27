@@ -2,10 +2,10 @@
 // order:
 //
 // count the call and take a slot → current attempt → tool lookup and contract → strict validation →
-// query hash → page token → write key and known write → open the client (a credential lease fenced by
-// run and attempt) → consent → prepare → authorize (declaration, then the policy's denies, the tenants and the asks)
-// → current attempt → execute, or dispatch, execute and settle the write → still active → close the client →
-// run-bound page token.
+// query hash → page token → write key, known write, held write and closed writes → open the client (a credential lease
+// fenced by run and attempt) → consent → prepare → authorize (declaration, then the policy's denies, the tenants and the
+// asks) → on an ask, name its resources and hold it (ARCHITECTURE.md: Writes), else current attempt → execute, or
+// dispatch, execute and settle the write → still active → close the client → run-bound page token.
 //
 // It runs in the Conversation Durable Object, so every run-state check is a synchronous read
 // (RunStatePort): the revocation check before each provider request happens in the same tick as the
@@ -17,8 +17,13 @@
 // backstop.
 
 import type { ImageContent } from "@earendil-works/pi-ai";
+import { Fact, MAX_HELD_ARGUMENTS } from "@minerva/contract/internal";
 import type { z } from "zod";
+import { utf8 } from "../lib/bytes.ts";
+import { canonicalJson } from "../lib/canonical.ts";
+import { isoTime } from "../lib/dates.ts";
 import type { Json } from "../lib/json.ts";
+import { sliceText } from "../lib/text.ts";
 import type { AttemptFence, ConnectionId, EpochMs, RunId, UserId } from "../shared/rpc.ts";
 import { type Clock, systemClock } from "./clock.ts";
 import {
@@ -30,8 +35,10 @@ import {
 	OperationError,
 	type OperationTerms,
 	type Prepared,
+	type ProviderClient,
 	type ProviderOutput,
 	type Requirement,
+	actionOf,
 	binding,
 	consentGiven,
 	denied,
@@ -40,10 +47,11 @@ import {
 	requiresOf,
 	termsOf,
 } from "./connector.ts";
+import { APPROVAL_MESSAGES, type HeldRequirement, type Hold, heldCallData } from "./holds.ts";
 import { CallIo, type RunBrowser } from "./http.ts";
 import { RUN_ENDED_MESSAGE, WRITE_MESSAGES, type WriteNote, knownAnswer, writeKey } from "./ledger.ts";
 import { INVALID_CURSOR_MESSAGE, LIMIT_REACHED_MESSAGE, queryHash } from "./page-tokens.ts";
-import { ANY, Policy, type PolicySnapshot, type Resource } from "./policy.ts";
+import { ANY, type Decision, type LayerName, Policy, type PolicySnapshot, type Resource } from "./policy.ts";
 import { type Registry, inputSchema } from "./registry.ts";
 import {
 	RESULT_SCHEMA,
@@ -59,7 +67,7 @@ import {
 } from "./results.ts";
 import type { RunStatePort } from "./run-state.ts";
 import { inTenants, tenantRefused } from "./tenancy.ts";
-import type { ToolRef } from "./tools.ts";
+import { type ToolRef, toolLabel } from "./tools.ts";
 import { validateInput } from "./validation.ts";
 
 /** A tool as the model sees it: `readOnlyHint` false marks a write. */
@@ -125,9 +133,14 @@ export type ToolCallOutcome =
  * "This page token is invalid or belongs to another request."), write key and known write, open the
  * client (CONNECTION_UNAUTHORIZED "The connection expired. Reconnect it in Minerva."), consent
  * (CONSENT_REQUIRED, before prepare), prepare, authorize (declaration check, then the policy's denies, the tenants,
- * and a need the policy asks before: APPROVAL_UNAVAILABLE, since no run can hold a call for the user's approval yet),
- * current attempt again, execute or the write protocol, still active (the attempt is not compared), close the client,
- * page token issue (LIMIT_REACHED "This run has reached its pagination limit." after the provider call).
+ * and a need the policy asks before), current attempt again, execute or the write protocol, still active (the attempt is
+ * not compared), close the client, page token issue (LIMIT_REACHED "This run has reached its pagination limit." after the
+ * provider call).
+ *
+ * Approvals (holds.ts `APPROVAL_MESSAGES`): a write the policy asks before is held for the user's approval, claiming
+ * nothing, and answers APPROVAL_REQUIRED, as does a repeat of it, before its lease. Only an attended run holds; any other
+ * answers APPROVAL_UNAVAILABLE. A held call too large for its card answers APPROVAL_TOO_LARGE. A later write that does not
+ * ask, and every write once one was, answers APPROVAL_PENDING.
  *
  * Revocation: the executor checks the run's local `revoked` flag and its state synchronously, with no
  * await in between, immediately before it dispatches any provider request, and again before it returns
@@ -154,6 +167,8 @@ export interface ExecutorContext {
 	deadline?: EpochMs | null;
 	/** The snapshot's `tenants`: the tenants a connection policy limits a connection to; absent for none. */
 	tenants?: { [connectionId: ConnectionId]: readonly string[] };
+	/** The start was attended (`startRun.attended`), so the run can hold a call for the user's approval. */
+	attended?: boolean;
 }
 
 interface LeaseBase {
@@ -195,8 +210,13 @@ export const BACKSTOP_MS = 5000;
 export const DEFAULT_CONCURRENCY = 4;
 export const MAX_ANCESTORS = 64;
 export const CONNECTOR_ERROR_MESSAGE = "This operation failed because of an internal error.";
-/** What the model reads for a call the policy asks before: it stops the model retrying and has it say what it meant to do. */
-export const APPROVAL_UNAVAILABLE = "This needs the user's approval, which nobody can give in this run. Do not retry. Say what you would do.";
+/** A provider's name of a resource on a held call's card is cut to this many characters, as a grant's is. */
+export const MAX_HELD_NAME = 300;
+/**
+ * A Durable Object's SQLite holds at most 2 MB in a row: a held call's fact, which escapes its arguments' JSON once more,
+ * must fit in one beside its other columns.
+ */
+export const MAX_HELD_FACT_BYTES = 1_900_000;
 
 export interface ExecutorLog {
 	error(message: string, ...data: unknown[]): void;
@@ -221,6 +241,27 @@ export interface ExecutorHost {
 
 function ended(): OperationError {
 	return new OperationError("RUN_ENDED", RUN_ENDED_MESSAGE);
+}
+
+/** A call the run holds for the user's approval: its refusal names the hold's `write`, so the chat ties the row to its card. */
+class ApprovalRequired extends OperationError {
+	readonly write: string;
+
+	constructor(write: string) {
+		super("APPROVAL_REQUIRED", APPROVAL_MESSAGES.required);
+		this.write = write;
+	}
+}
+
+/** A concrete requirement of a call, with what the policy makes of it: a call with a denied one is refused before. */
+interface Decided {
+	resource: Resource;
+	action: string;
+	decision: Exclude<Decision, { effect: "deny" }>;
+}
+
+function asker(name: LayerName): name is HeldRequirement["asked"][number] {
+	return name !== "deny-all";
 }
 
 /** The secret a connector's client is built with: the OAuth access token, the API key, or "" for a built-in service. */
@@ -384,6 +425,13 @@ class Slots {
 	}
 }
 
+/** A write's key, its validated fields and what its settlement reports. */
+interface Writing {
+	key: string;
+	fields: { [key: string]: unknown };
+	note: WriteNote;
+}
+
 interface Done {
 	result: ToolResult;
 	images: ImageContent[];
@@ -406,6 +454,8 @@ export class ToolExecutor implements Executor {
 	readonly #policy: Policy;
 	readonly #tenants: ReadonlyMap<ConnectionId, readonly string[]>;
 	readonly #deadline: EpochMs | null;
+	readonly #userId: UserId;
+	readonly #attended: boolean;
 	readonly #registry: Registry;
 	readonly #host: ExecutorHost;
 	readonly #clock: Clock;
@@ -425,6 +475,8 @@ export class ToolExecutor implements Executor {
 		this.#policy = Policy.fromJson(context.permissions);
 		this.#deadline = context.deadline ?? null;
 		this.#tenants = tenantsOf(context.tenants);
+		this.#userId = context.userId;
+		this.#attended = context.attended ?? false;
 		this.#registry = host.registry;
 		this.#host = host;
 		this.#clock = host.clock ?? systemClock;
@@ -495,7 +547,8 @@ export class ToolExecutor implements Executor {
 		const { code, message } = publicError(error);
 		if (!(error instanceof OperationError) && !request.signal?.aborted) this.#log.error(`Tool ${request.name} failed for run ${this.#runId}`, error);
 		// A call refused because the run ended, or its attempt was replaced, is not shown.
-		const event = code === "RUN_ENDED" || !this.#run.isActive(this.#runId) ? null : refusedEvent(shown, code, message);
+		const write = error instanceof ApprovalRequired ? error.write : null;
+		const event = code === "RUN_ENDED" || !this.#run.isActive(this.#runId) ? null : refusedEvent(shown, code, message, write);
 		return { ok: false, error: { code, message }, event };
 	}
 
@@ -565,8 +618,12 @@ export class ToolExecutor implements Executor {
 				// The hash stored with the write, so a repeat matches it even if MINERVA_SECRET_KEY was rotated since.
 				return { result: answer.result, images: [], title: op.title, repeat: true, writeKey: key, write: known.write ?? write };
 			}
+			// A repeat of a held call, also one pi sends again after a restart cut its answer, makes no second hold.
+			const held = this.#run.heldCall(this.#runId, key);
+			if (held !== null) throw new ApprovalRequired(held.write);
+			if (this.#run.writesClosed(this.#runId)) throw new OperationError("APPROVAL_PENDING", APPROVAL_MESSAGES.pending);
 		}
-		const writing = key === null || write === null ? null : { key, note: { tool: request.name, connection: ref.connection_id, write } };
+		const writing = key === null || write === null ? null : { key, fields, note: { tool: request.name, connection: ref.connection_id, write } };
 		const [result, repeat, images] = await this.#perform(request, ref, op, terms, data, hash, writing);
 		return { result, images, title: op.title, repeat, writeKey: key, write };
 	}
@@ -588,7 +645,7 @@ export class ToolExecutor implements Executor {
 		terms: OperationTerms,
 		data: { [key: string]: unknown },
 		hash: string,
-		writing: { key: string; note: WriteNote } | null,
+		writing: Writing | null,
 	): Promise<[result: ToolResult, repeat: boolean, images: ImageContent[]]> {
 		const connector = this.#registry.get(ref.provider);
 		const lease = await this.#lease(request, ref.connection_id);
@@ -616,7 +673,12 @@ export class ToolExecutor implements Executor {
 			}
 			const prepared = await unlessAborted(op.prepare(binding(ref.connection_id, client), data as never), request.signal);
 			if (!Array.isArray(prepared?.requirements) || prepared.requirements.length === 0) throw this.#bug(`${ref.provider}.${op.name}`, "no requirements");
-			this.#authorize(connector, op, terms, ref, prepared.requirements);
+			const asked = this.#authorize(connector, op, terms, ref, prepared.requirements);
+			if (asked !== null) {
+				// A read never asks (asks compile only on actions no read needs); the check keeps every hold keyed.
+				if (writing === null || !this.#attended) throw new OperationError("APPROVAL_UNAVAILABLE", APPROVAL_MESSAGES.unavailable);
+				await this.#hold(request, connector, ref, writing, client, asked);
+			}
 			this.#ensureCurrent(request);
 			if (writing === null) {
 				output = await unlessAborted(prepared.execute(), request.signal);
@@ -662,14 +724,16 @@ export class ToolExecutor implements Executor {
 	 * connection policy's tenants. A connector bug throws at once; denial is decided after the loop (risk 15), the grants'
 	 * first, so the tenant's refusal names the tenant only of resources the run may otherwise use, and an ask last, so it
 	 * is answered only for a call nothing else refuses. Reads never ask: asks compile only on actions no read needs.
+	 * Returns every concrete requirement with its decision when the policy asks before any, else null.
 	 */
-	#authorize(connector: Connector, op: Operation<never>, terms: OperationTerms, ref: ToolRef, requirements: readonly Requirement[]): void {
+	#authorize(connector: Connector, op: Operation<never>, terms: OperationTerms, ref: ToolRef, requirements: readonly Requirement[]): Decided[] | null {
 		const where = `${ref.provider}.${op.name}`;
 		const pairKey = (kind: string, action: string) => JSON.stringify([kind, action]);
 		const declared = new Set(op.needs.map(([kind, action]) => pairKey(kind, action)));
 		const covered = new Set<string>();
 		const requires = requiresOf(connector);
 		const tenants = this.#tenants.get(ref.connection_id) ?? null;
+		const decided: Decided[] = [];
 		let concrete = false;
 		let refused = false;
 		let asked = false;
@@ -695,8 +759,10 @@ export class ToolExecutor implements Executor {
 						break;
 					case "ask":
 						asked = true;
+						decided.push({ resource, action, decision });
 						break;
 					case "allow":
+						decided.push({ resource, action, decision });
 						break;
 				}
 				outside = outside || !inTenants(tenants, resource);
@@ -715,7 +781,87 @@ export class ToolExecutor implements Executor {
 		if (terms.mutates && !concrete) throw this.#bug(where, "a write needs a concrete destination");
 		if (refused) throw denied();
 		if (outside) throw tenantRefused(connector);
-		if (asked) throw new OperationError("APPROVAL_UNAVAILABLE", APPROVAL_UNAVAILABLE);
+		return asked ? decided : null;
+	}
+
+	/**
+	 * Holds a write the policy asks before, and answers APPROVAL_REQUIRED once the hold and its fact are written: its
+	 * requirements named by the provider, its fields whole, and its fact parsed as Laravel will parse it, since a fact
+	 * Laravel refuses would stop the conversation's delivery. Nothing is claimed in the ledger.
+	 */
+	async #hold(request: ToolCallRequest, connector: Connector, ref: ToolRef, writing: Writing, client: ProviderClient, decided: readonly Decided[]): Promise<never> {
+		const names = await this.#names(request, connector, client, decided);
+		const requirements = decided.map(({ resource, action, decision }): HeldRequirement => {
+			const name = names.get(JSON.stringify([resource.kind, resource.id]));
+			return {
+				kind: resource.kind,
+				kindLabel: kindOf(connector, resource.kind)?.label ?? resource.kind,
+				resource: resource.id,
+				...(name === undefined ? {} : { name }),
+				action,
+				actionLabel: actionOf(connector, action)?.label ?? action,
+				effect: decision.effect,
+				asked: decision.effect === "ask" ? decision.layers.filter(asker) : [],
+			};
+		});
+		const fields = canonicalJson(writing.fields);
+		if (utf8(fields).byteLength > MAX_HELD_ARGUMENTS) throw new OperationError("APPROVAL_TOO_LARGE", APPROVAL_MESSAGES.tooLarge);
+		const hold: Hold = {
+			key: writing.key,
+			write: writing.note.write,
+			userId: this.#userId,
+			tool: ref.name,
+			label: toolLabel(this.#registry, ref, ref.name),
+			connection: ref.connection_id,
+			provider: ref.provider,
+			operation: ref.operation,
+			contract: ref.contract,
+			arguments: fields,
+			requirements,
+		};
+		// At position 1: `holdCall` gives it one of 1 to MAX_HOLDS, which parse alike.
+		const fact = { seq: 1, run: this.#runId, at: isoTime(this.#clock.now()), type: "run.held_call", data: heldCallData(hold, 1) };
+		if (utf8(JSON.stringify(fact)).byteLength > MAX_HELD_FACT_BYTES) throw new OperationError("APPROVAL_TOO_LARGE", APPROVAL_MESSAGES.tooLarge);
+		const parsed = Fact.safeParse(fact);
+		if (!parsed.success) {
+			const problems = parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ");
+			this.#log.warn(`A held call of ${ref.provider}.${ref.operation} in run ${this.#runId} cannot be shown: ${problems}`);
+			throw new OperationError("APPROVAL_UNAVAILABLE", APPROVAL_MESSAGES.unshown);
+		}
+		const answer = await this.#run.holdCall(request.fence, hold);
+		if (answer.kind === "refused") throw new OperationError(answer.code, answer.message);
+		throw new ApprovalRequired(hold.write);
+	}
+
+	/**
+	 * The provider's names of the call's resources, keyed by kind and id: one `describe` per kind on the call's own client.
+	 * A failure, or an id it leaves out, gives no name; a cancelled call still stops.
+	 */
+	async #names(request: ToolCallRequest, connector: Connector, client: ProviderClient, decided: readonly Decided[]): Promise<Map<string, string>> {
+		const ids = new Map<string, Set<string>>();
+		for (const { resource } of decided) {
+			// An account's id is its connection's, not one the provider knows.
+			if (resource.kind === ACCOUNT_KIND) continue;
+			const listed = ids.get(resource.kind) ?? new Set<string>();
+			ids.set(resource.kind, listed.add(resource.id));
+		}
+		const names = new Map<string, string>();
+		for (const [kind, listed] of ids) {
+			let described: { [id: string]: string };
+			try {
+				described = await unlessAborted(connector.describe(client, kind, [...listed]), request.signal);
+			} catch (error) {
+				this.#step(request);
+				this.#log.warn(`Could not name the ${kind} resources of a held call in run ${this.#runId}`, error);
+				continue;
+			}
+			this.#step(request);
+			for (const id of listed) {
+				const name = described[id];
+				if (typeof name === "string" && name !== "") names.set(JSON.stringify([kind, id]), sliceText(name, 0, MAX_HELD_NAME));
+			}
+		}
+		return names;
 	}
 
 	#result(connector: Connector, op: Operation<never>, _terms: OperationTerms, ref: ToolRef, output: ProviderOutput): { result: ToolResult; images: ImageContent[] } {

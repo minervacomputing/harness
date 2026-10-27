@@ -13,7 +13,7 @@ import type { ProviderHTTP } from "../../src/gateway/http.ts";
 import { WRITE_MESSAGES, writeKey } from "../../src/gateway/ledger.ts";
 import { appliedWithoutResult } from "../../src/gateway/results.ts";
 import { record } from "../../src/lib/schema.ts";
-import { FOLDER, FakeServer, Gate, MIXED, Scenario, mixedConnection, mixedConnector, userGrants } from "./executor-fakes.ts";
+import { FOLDER, FakeServer, Gate, MIXED, Scenario, askingGrants, mixedConnection, mixedConnector, userGrants } from "./executor-fakes.ts";
 import { ledgerSql, openDatabase, scratchDirectory } from "./sqlite.ts";
 
 const COPY = "mixed_copy_file";
@@ -41,14 +41,14 @@ function start(server: FakeServer, extra: Partial<Parameters<typeof Scenario.sta
 let files = 0;
 
 /** An instance that dies while `during` runs, and the one that starts after it over the same database. */
-async function crash(during: (before: Scenario, server: FakeServer) => Promise<void>, server = new FakeServer()) {
+async function crash(during: (before: Scenario, server: FakeServer) => Promise<void>, server = new FakeServer(), extra: Partial<Parameters<typeof Scenario.start>[0]> = {}) {
 	const path = `${scratch.path}/conversation-${++files}.sqlite`;
 	const db = openDatabase(path);
-	const before = await start(server, { sql: ledgerSql(db) });
+	const before = await start(server, { sql: ledgerSql(db), ...extra });
 	await during(before, server);
 	// The instance is gone: what it held in memory too, so nothing it started can settle any more.
 	db.close();
-	const after = await start(server, { sql: ledgerSql(openDatabase(path)), registry: before.registry });
+	const after = await start(server, { sql: ledgerSql(openDatabase(path)), registry: before.registry, ...extra });
 	return { before, after, server };
 }
 
@@ -208,6 +208,49 @@ describe("writes under faults", () => {
 		expect((await inFlight).ok).toBe(true);
 		expect((await run.ok(COPY, copy())).repeat).toBe(true);
 		expect(server.posts()).toBe(1);
+	});
+});
+
+describe("holds under faults", () => {
+	const REQUIRED = "APPROVAL_REQUIRED";
+	/** Copies into `archive` ask first; into `secret` they do not. */
+	const ASKING = {
+		user: [...userGrants(MIXED, FOLDER, { ...WRITER, secret: ["read", "create"] }), ...askingGrants(MIXED, FOLDER, { archive: ["create"] })],
+		attended: true,
+	};
+
+	test("a hold outlives the instance: after the restart its repeat holds nothing more and leases nothing, and a write that does not ask is refused at its claim", async () => {
+		let write: string | undefined;
+		const { after, server } = await crash(
+			async (run) => {
+				expect(await run.code(COPY, copy())).toBe(REQUIRED);
+				write = run.ledger.holds(run.runId)[0]?.write;
+			},
+			new FakeServer(),
+			ASKING,
+		);
+		restart(after);
+		expect(write).toMatch(/^[0-9a-f]{32}$/);
+		expect(await after.call(COPY, copy())).toMatchObject({ ok: false, error: { code: REQUIRED }, event: { write } });
+		expect([after.ledger.holds(after.runId).length, after.credentials.leases]).toEqual([1, 0]);
+		expect(await after.code(COPY, { source: "inbox", dest: "secret", name: "b" })).toBe("APPROVAL_PENDING");
+		expect([server.posts(), after.writes()]).toEqual([0, []]);
+	});
+
+	test("a hold whose attempt is replaced while its resources are named holds nothing and is not shown", async () => {
+		const server = new FakeServer();
+		let replace = () => {};
+		const naming: Connector = {
+			...mixedConnector(server),
+			async describe() {
+				replace();
+				return {};
+			},
+		};
+		const run = await start(server, { connectors: [naming], ...ASKING });
+		replace = () => run.replace();
+		expect(await run.call(COPY, copy())).toMatchObject({ ok: false, error: { code: "RUN_ENDED" }, event: null });
+		expect(run.ledger.holds(run.runId)).toEqual([]);
 	});
 });
 

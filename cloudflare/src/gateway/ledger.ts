@@ -7,9 +7,15 @@
 // uncertain rows are never deleted or changed (a late settle only touches `dispatched` rows). The
 // Conversation mirrors it in its run's `writes_uncertain` (conversation/ports.ts `gatewayLedger`).
 //
+// It also keeps the run's holds (holds.ts), calls the policy asks before, held for the user's approval and claimed nothing
+// here. While a run holds one, a write that does not ask is refused APPROVAL_PENDING, the pause's second reason, and the
+// refusal closes the run's writes for good (`ClosedWrites`), so a later asking write is refused too rather than held: nothing
+// runs out of the model's order. A paused run holds nothing.
+//
 // Every method is synchronous and each is atomic: run it in the same synchronous stretch as the run-state
 // check it depends on (gateway/run-state.ts), with no await between.
 
+import { MAX_HOLDS } from "@minerva/contract/internal";
 import { utf8 } from "../lib/bytes.ts";
 import { sha256Hex } from "../lib/hash.ts";
 import { hashInput } from "../lib/canonical.ts";
@@ -17,6 +23,7 @@ import { parseJson } from "../lib/json.ts";
 import type { Sql } from "../lib/sql.ts";
 import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
 import type { Clock } from "./clock.ts";
+import { APPROVAL_MESSAGES, type HeldCall, type HeldRequirement, type Hold, type HoldState } from "./holds.ts";
 import type { Effect } from "./http.ts";
 import type { ToolResult } from "./results.ts";
 
@@ -55,7 +62,18 @@ export type DispatchResult =
 	| { kind: "dispatched"; deadline: number }
 	/** An identical write already succeeded: answer from its record, nothing is sent. */
 	| { kind: "cached"; result: ToolResult }
-	| { kind: "refused"; code: "RUN_ENDED" | "WRITE_UNCERTAIN" | "WRITE_IN_PROGRESS"; message: string };
+	| { kind: "refused"; code: "RUN_ENDED" | "WRITE_UNCERTAIN" | "WRITE_IN_PROGRESS" | "APPROVAL_PENDING"; message: string };
+
+export type HoldResult =
+	| { kind: "held"; call: HeldCall }
+	/** APPROVAL_PENDING when the run's writes are closed or it holds MAX_HOLDS calls, which closes them. */
+	| { kind: "refused"; code: "RUN_ENDED" | "WRITE_UNCERTAIN" | "APPROVAL_PENDING"; message: string };
+
+/** Where the ledger keeps whether a run's writes are closed (the Conversation's `runs.writes_closed`), read and set in its transactions. */
+export interface ClosedWrites {
+	closed(runId: RunId): boolean;
+	close(runId: RunId): void;
+}
 
 export type Settlement =
 	/** Forgotten: the row is deleted, so the same write may be tried again. */
@@ -93,8 +111,8 @@ export const WRITE_MESSAGES = {
 	unknown: "The write outcome is unknown. Check the provider; further writes in this run are paused.",
 } as const;
 
-/** The run_writes table, a step of the Conversation Durable Object's migrations (conversation/schema.ts). */
-export { LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA } from "./schema.ts";
+/** The run_writes and run_holds tables, steps of the Conversation Durable Object's migrations (conversation/schema.ts). */
+export { HOLD_SCHEMA, LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA } from "./schema.ts";
 
 /**
  * A write's identity within its run: SHA-256 over `minerva:write-key:` and the canonical JSON
@@ -139,6 +157,45 @@ function settledOf(row: Pick<WriteRow, "run_id" | "tool" | "connection_id" | "wr
 
 const SETTLED = "RETURNING run_id, key, tool, connection_id, write_id";
 
+interface HoldRow {
+	[column: string]: string | number | null;
+	run_id: string;
+	position: number;
+	key: string;
+	write_id: string;
+	user_id: string;
+	tool: string;
+	label: string;
+	connection_id: string;
+	provider: string;
+	operation: string;
+	contract: string;
+	arguments: string;
+	requirements: string;
+	state: string;
+	created_at: number;
+}
+
+function heldCall(row: HoldRow): HeldCall {
+	return {
+		runId: row.run_id,
+		position: row.position,
+		key: row.key,
+		write: row.write_id,
+		userId: row.user_id,
+		tool: row.tool,
+		label: row.label,
+		connection: row.connection_id,
+		provider: row.provider,
+		operation: row.operation,
+		contract: row.contract,
+		arguments: row.arguments,
+		requirements: parseJson(row.requirements) as unknown as HeldRequirement[],
+		state: row.state as HoldState,
+		createdAt: row.created_at,
+	};
+}
+
 /** How a known write answers the same write again: its result, or one of the two refusals. */
 export function knownAnswer(known: WriteRecord): Extract<DispatchResult, { kind: "cached" | "refused" }> {
 	if (known.status === "succeeded") return { kind: "cached", result: known.result as ToolResult };
@@ -154,10 +211,12 @@ export interface LostWrite extends SettledWrite {
 export class WriteLedger {
 	readonly #sql: Sql;
 	readonly #clock: Clock;
+	readonly #closed: ClosedWrites;
 
-	constructor(sql: Sql, clock: Clock) {
+	constructor(sql: Sql, clock: Clock, closed: ClosedWrites) {
 		this.#sql = sql;
 		this.#clock = clock;
+		this.#closed = closed;
 	}
 
 	known(runId: RunId, key: string): WriteRecord | null {
@@ -175,12 +234,72 @@ export class WriteLedger {
 		return this.#sql.exec("SELECT 1 AS paused FROM run_writes WHERE run_id = ? AND status = 'uncertain' LIMIT 1", runId).length > 0;
 	}
 
+	/** The run's hold of this write, if it holds one. */
+	held(runId: RunId, key: string): HeldCall | null {
+		const [row] = this.#sql.exec<HoldRow>("SELECT * FROM run_holds WHERE run_id = ? AND key = ?", runId, key);
+		return row === undefined ? null : heldCall(row);
+	}
+
+	/** The run's holds, in the order it held them. */
+	holds(runId: RunId): HeldCall[] {
+		return this.#sql.exec<HoldRow>("SELECT * FROM run_holds WHERE run_id = ? ORDER BY position", runId).map(heldCall);
+	}
+
+	/** Whether a write was refused APPROVAL_PENDING in the run, which refuses every later one. */
+	closed(runId: RunId): boolean {
+		return this.#closed.closed(runId);
+	}
+
+	/** Whether the run holds a call, which refuses every later write that does not ask. */
+	holding(runId: RunId): boolean {
+		return this.#sql.exec("SELECT 1 AS holding FROM run_holds WHERE run_id = ? LIMIT 1", runId).length > 0;
+	}
+
+	/** Refuses the write APPROVAL_PENDING and closes the run's writes, in the caller's transaction. */
+	#pending(runId: RunId): { kind: "refused"; code: "APPROVAL_PENDING"; message: string } {
+		this.#closed.close(runId);
+		return { kind: "refused", code: "APPROVAL_PENDING", message: APPROVAL_MESSAGES.pending };
+	}
+
+	/**
+	 * Holds a call the policy asks before, at the next position, claiming nothing. The caller has checked, in the same
+	 * synchronous stretch, that the fence is current, and that the run holds nothing under this key. A paused run holds
+	 * nothing; a run whose writes are closed, or that holds MAX_HOLDS calls, is refused APPROVAL_PENDING.
+	 */
+	hold(runId: RunId, hold: Hold): HoldResult {
+		return this.#sql.transaction((): HoldResult => {
+			if (this.paused(runId)) return { kind: "refused", code: "WRITE_UNCERTAIN", message: WRITE_MESSAGES.paused };
+			const held = this.#sql.exec<{ count: number }>("SELECT count(*) AS count FROM run_holds WHERE run_id = ?", runId)[0]?.count ?? 0;
+			if (this.#closed.closed(runId) || held >= MAX_HOLDS) return this.#pending(runId);
+			const call: HeldCall = { ...hold, runId, position: held + 1, state: "open", createdAt: this.#clock.now() };
+			this.#sql.exec(
+				"INSERT INTO run_holds (run_id, position, key, write_id, user_id, tool, label, connection_id, provider, operation, contract, arguments, requirements, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				runId,
+				call.position,
+				call.key,
+				call.write,
+				call.userId,
+				call.tool,
+				call.label,
+				call.connection,
+				call.provider,
+				call.operation,
+				call.contract,
+				call.arguments,
+				JSON.stringify(call.requirements),
+				call.state,
+				call.createdAt,
+			);
+			return { kind: "held", call };
+		});
+	}
+
 	/**
 	 * Claims a write before anything is sent. The caller has checked, in the same
 	 * synchronous stretch, that the fence is the run's current attempt (else RUN_ENDED). The same key
-	 * answers from its record; a paused run, or one with another write dispatched, is refused; otherwise
-	 * the write is dispatched with `deadline_at = min(now + 60 s, run deadline)`, returned as a monotonic
-	 * instant so that every later wait counts against it. `note` is kept for the settlement's report.
+	 * answers from its record; a paused run, one whose writes are closed or that holds a call, and one with another
+	 * write dispatched are refused; otherwise the write is dispatched with `deadline_at = min(now + 60 s, run deadline)`,
+	 * returned as a monotonic instant so that every later wait counts against it. `note` is kept for the settlement's report.
 	 */
 	dispatch(fence: AttemptFence, key: string, runDeadline: EpochMs | null, note: WriteNote | null = null): DispatchResult {
 		return this.#sql.transaction((): DispatchResult => {
@@ -189,6 +308,7 @@ export class WriteLedger {
 			const known = this.known(fence.runId, key);
 			if (known !== null) return knownAnswer(known);
 			if (this.paused(fence.runId)) return { kind: "refused", code: "WRITE_UNCERTAIN", message: WRITE_MESSAGES.paused };
+			if (this.#closed.closed(fence.runId) || this.holding(fence.runId)) return this.#pending(fence.runId);
 			const inFlight = this.#sql.exec("SELECT 1 AS busy FROM run_writes WHERE run_id = ? AND status = 'dispatched' LIMIT 1", fence.runId);
 			if (inFlight.length > 0) return { kind: "refused", code: "WRITE_IN_PROGRESS", message: WRITE_MESSAGES.otherInProgress };
 			const deadlineAt = runDeadline === null ? now + WRITE_WINDOW_MS : Math.min(now + WRITE_WINDOW_MS, runDeadline);
@@ -255,8 +375,9 @@ export class WriteLedger {
 			.map((row) => ({ ...settledOf(row), key: row.key }));
 	}
 
-	/** Drops a run's writes, for retention once the run has ended. */
+	/** Drops a run's writes and holds, for retention once the run has ended. */
 	forget(runId: RunId): void {
 		this.#sql.exec("DELETE FROM run_writes WHERE run_id = ?", runId);
+		this.#sql.exec("DELETE FROM run_holds WHERE run_id = ?", runId);
 	}
 }
