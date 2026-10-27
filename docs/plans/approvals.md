@@ -330,6 +330,11 @@ No command rewrites ask rows, and no emergency stop is needed: every engine from
 - **Laravel alone enforces expiry.** A Laravel bug that skips the check lets a call held up to 30 days ago run, until retention prunes the held run.
 - **The approve controls have no anti-framing header.** Session cookies are `SameSite=lax` (the app's `config/session.php:202`), so a cross-site frame is signed out. It needs a same-site attacker or that setting changed, and then one click in a frame approves a call.
 - **Laravel does not check that `checkGrantEdit`'s answer kept each ask it sent.** It needs Laravel's chunk 5 against an engine below chunk 2, which the deploy order and the rollback floor rule out. An older engine would strip `ask` and plan allow rows, widening that edit.
+- **A held call's delivery and its user's account deletion can deadlock** on the user's row and the conversation's. It needs the deletion to land in that delivery's milliseconds. Postgres aborts one: the engine delivers the batch again, or whoever asked for the deletion tries again (the app's `docs/architecture/turn.md`).
+- **Retention can prune a held run's holds before the continuation's note reads them.** The continuation's own write row keeps ran and unknown, so only a refused write stored on the pruned hold reads as stopped before it ran. It needs a Stop during the write, a provider refusal and no message for the rest of the 30 days (ARCHITECTURE.md, Writes).
+- **An older release of the app during a deploy's switch** applies a continuation's refusal without reopening its approvals, or starts a plain message that closes none. It needs that start inside the deploy's seconds. The card then reads answered, or an approval is refused `APPROVAL_DECIDED`, which closes it and logs an error.
+- **A decision's audit event stays when its continuation is refused.** It records what the user decided, and a refused start changes nothing to undo.
+- **The sidebar's "Waiting for you" and the menu's dot change on a visit,** not on the chat page's partial reloads. The card and the tab's title change at once.
 
 ## Dropped in review
 
@@ -387,10 +392,10 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 ## Program checklist
 
 - [x] Fast starts are built (harness `e389b30`, the app's `bb41c89`). Chunk 4 places its work after the copy, the run's first step, and closes holds in the copy's commit.
-- [ ] Chunk 1 runs on an environment's app before chunk 5 does.
-- [ ] Chunks 2, 3 and 4 run in order, and chunk 2 runs on production's engine on its own before chunks 3 and 4 reach it.
-- [ ] Chunk 5 starts once staging's engine runs chunk 4.
-- [ ] On each environment, the operator approves the changed catalog entries only once its engine runs chunk 4.
+- [ ] Chunk 1 runs on an environment's app before chunk 5 does. Staging: chunk 1 from `3ba35ce`, chunk 5 from `8d78a70`. Production's app has neither.
+- [ ] Chunks 2, 3 and 4 run in order, and chunk 2 runs on production's engine on its own before chunks 3 and 4 reach it. Staging ran chunk 2 alone (`522980d`), then chunks 3 and 4 (`709607e`). Production's engine has none of them.
+- [x] Chunk 5 starts once staging's engine runs chunk 4. It was built beside chunk 4 against the engine fake, and reached staging (`8d78a70`) after staging's engine ran chunk 4.
+- [ ] On each environment, the operator approves the changed catalog entries only once its engine runs chunk 4. Staging: approved after the deploy, the eight entries whose only change is `askable`; Web's change waits for its own rollout. Production: waits for its engine.
 
 ## Laravel reads held calls and asks (chunk 1)
 
@@ -398,35 +403,35 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 **Files.**
 
-- [ ] Edit `contract/src/internal/facts.ts` (`run.held_call`, `write` and `approved` on `run.tool_call`, `approved` on `run.write`) and `contract/scenarios/facts.json`, regenerate the OpenAPI documents, and make the fake Laravel apply the fact (`cloudflare/src/faults/laravel.ts`). One harness commit.
-- [ ] In the app: `composer contract:sync`, the `call_approvals` migration and model, `app/Runs/Facts.php`, `app/Connections/Consent.php`, `resources/js/components/chat/thread.tsx`, the labels of the five codes in `resources/js/components/chat/model.ts`, the purge.
+- [x] Edit `contract/src/internal/facts.ts` (`run.held_call`, `write` and `approved` on `run.tool_call`, `approved` on `run.write`) and `contract/scenarios/facts.json`, regenerate the OpenAPI documents, and make the fake Laravel apply the fact (`cloudflare/src/faults/laravel.ts`). One harness commit. Harness `1883622`.
+- [x] In the app: `composer contract:sync`, the `call_approvals` migration and model, `app/Runs/Facts.php`, `app/Connections/Consent.php`, `resources/js/components/chat/thread.tsx`, the labels of the five codes in `resources/js/components/chat/model.ts`, the purge. The app's `3ba35ce`.
 
 **Build.**
 
-- [ ] `run.held_call` becomes a waiting approval, inserted if absent, for a Live target only.
-- [ ] `approved` on `run.write` and on `run.tool_call` sets the approval's outcome, the write's first.
-- [ ] The five new codes have labels. No card yet, since nothing can hold a call before chunk 5.
-- [ ] `Consent::allowed` counts ask rows. `withinContract` follows in chunk 2's app commit, once the contract has `ask` and the app's engine fake admits it, and `kept` and `view` in chunk 5 with the editor that writes asks: until then a save whose answer changes or moves an ask row is refused, so a binary editor never plans one, also after a revert of chunk 5.
+- [x] `run.held_call` becomes a waiting approval, inserted if absent, for a Live target only. `FactsTest`.
+- [x] `approved` on `run.write` and on `run.tool_call` sets the approval's outcome, the write's first. `FactsTest`, both orders.
+- [x] The five new codes have labels. No card yet, since nothing can hold a call before chunk 5. `model.test.ts`.
+- [x] `Consent::allowed` counts ask rows. `withinContract` follows in chunk 2's app commit, once the contract has `ask` and the app's engine fake admits it, and `kept` and `view` in chunk 5 with the editor that writes asks: until then a save whose answer changes or moves an ask row is refused, so a binary editor never plans one, also after a revert of chunk 5. The app's `3ba35ce`, `4eed6b3`.
 
 **You see.**
 
-- [ ] A conversation seeded with a held call's facts stores its approval and shows the refused row with its label. An access page with a seeded ask row loads.
+- [x] A conversation seeded with a held call's facts stores its approval and shows the refused row with its label. An access page with a seeded ask row loads. `FactsTest`, `AccessTest`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Pest: `FactsTest` with the scenario and each target, `ConsentTest` and `AccessTest` with ask rows, `ForeignKeysTest`, the purge. Vitest: `model.test.ts`.
+- [x] Pest: `FactsTest` with the scenario and each target, `ConsentTest` and `AccessTest` with ask rows, `ForeignKeysTest`, the purge. Vitest: `model.test.ts`. Pest 1531 passed.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] On staging after the deploy, `minerva:turn` completes a turn as before.
+- [x] On staging after the deploy, `minerva:turn` completes a turn as before. A staging turn completed after the app's CI deployed `31c348b`.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] None: the chunk adds one branch to the facts' apply and no query to a page. The diff shows it.
+- [x] None: the chunk adds one branch to the facts' apply and no query to a page. The diff shows it.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] opencode reviewed the design. The diff, a contract addition and a read path, was reviewed by the coordinator only, since opencode reviews only big or risky diffs.
 
 ## The third effect (chunk 2)
 
@@ -434,38 +439,39 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 **Files.**
 
-- [ ] Edit `contract/src/internal/engine.ts` (`effect: 'ask'`, `changes[].ask`), regenerate the OpenAPI documents, and add the enum line to docs/plans/contract.md's Versions.
-- [ ] In the app, once the contract commit lands: `composer contract:sync`, and `Access::withinContract` accepts `ask` in what it sends and what `checkGrantEdit` answers.
-- [ ] Edit `cloudflare/src/gateway/policy.ts`, `grants.ts`, `tools.ts` (`COMPILER_VERSION` 4), `executor.ts` and `results.ts`, and `cloudflare/src/internal/connections.ts`.
-- [ ] Add the floor at chunk 2 to cloudflare/README.md's rollback paragraph.
+- [x] Edit `contract/src/internal/engine.ts` (`effect: 'ask'`, `changes[].ask`), regenerate the OpenAPI documents, and add the enum line to docs/plans/contract.md's Versions. Harness `0bd597c`.
+- [x] In the app, once the contract commit lands: `composer contract:sync`, and `Access::withinContract` accepts `ask` in what it sends and what `checkGrantEdit` answers. The app's `4eed6b3`, which also needed `GrantsValid`'s type.
+- [x] Edit `cloudflare/src/gateway/policy.ts`, `grants.ts`, `tools.ts` (`COMPILER_VERSION` 4), `executor.ts` and `results.ts`, and `cloudflare/src/internal/connections.ts`. Harness `0bd597c`, `522980d`.
+- [x] Add the floor at chunk 2 to cloudflare/README.md's rollback paragraph. Harness `5ec0804`.
 
 **Build.**
 
-- [ ] The layer's effect and the call's effect as in Data shapes, with `asks` in the snapshot and a missing `asks` read as empty.
-- [ ] `effect()` for `#authorize`, and `permits` boolean, true for ask or allow.
-- [ ] An ask row always asks and passes where an allow would be enforceable. A non-askable ask compiles as a deny.
-- [ ] The askable rule in `checkChanges`, and `checkGrantEdit` planning ask subsets.
-- [ ] Every ask answers `APPROVAL_UNAVAILABLE` in this chunk, the answer unattended runs keep.
+- [x] The layer's effect and the call's effect as in Data shapes, with `asks` in the snapshot and a missing `asks` read as empty. `policy.test.ts`.
+- [x] `effect()` for `#authorize`, and `permits` boolean, true for ask or allow. `policy.test.ts`.
+- [x] An ask row always asks and passes where an allow would be enforceable. A non-askable ask compiles as a deny. `grants.test.ts`.
+- [x] The askable rule in `checkChanges`, and `checkGrantEdit` planning ask subsets. `grants.test.ts`, platform `internal-connections.test.ts`.
+- [x] Every ask answers `APPROVAL_UNAVAILABLE` in this chunk, the answer unattended runs keep. `executor-calls.test.ts`.
 
 **You see.**
 
-- [ ] On the test instance, under a user layer that asks on the Notes connector's create, `save_note` answers `APPROVAL_UNAVAILABLE`, `list_notes` works, and the turn completes.
+- [x] On the test instance, under a user layer that asks on the Notes connector's create, `save_note` answers `APPROVAL_UNAVAILABLE`, `list_notes` works, and the turn completes. The account test "asks" in `faults.test.ts`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `policy.test.ts` with the seed-7 model and the unenforceable asks, `grants.test.ts`, `tools.test.ts`, `executor-calls.test.ts`, and platform `internal-connections.test.ts`. In the app, `AccessTest`: a layer holding an ask row saves an edit that leaves it alone, and an answer that changes it is refused.
+- [x] `policy.test.ts` with the seed-7 model and the unenforceable asks, `grants.test.ts`, `tools.test.ts`, `executor-calls.test.ts`, and platform `internal-connections.test.ts`. In the app, `AccessTest`: a layer holding an ask row saves an edit that leaves it alone, and an answer that changes it is refused. Unit 2907, platform 420 passed; the app's Pest passed.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `pnpm check --instance minerva-cf-test` passes with an account turn under an ask layer, and a `checkGrantEdit` with `ask` on `read` is refused. Then, with the owner's go, staging's and production's engines run this chunk on its own.
+- [x] `pnpm check --instance minerva-cf-test` passes with an account turn under an ask layer, and a `checkGrantEdit` with `ask` on `read` is refused. With the owner's go, staging's engine ran this chunk on its own (`522980d`).
+- [ ] With the owner's go, production's engine runs this chunk on its own.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. `startSnapshot`'s time for 20 connections of 500 grants each, half of them asks. Rule. Within 10% of `main`'s, and `pnpm startup` unchanged. Over fails.
+- [x] Metric. `startSnapshot`'s time for 20 connections of 500 grants each, half of them asks. Rule. Within 10% of `main`'s, and `pnpm startup` unchanged. Over fails. Measured +2.2%.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] opencode reviewed the design and the diff; its one finding, a blank-named grant counted as new, is fixed in `522980d`.
 
 ## Holds (chunk 3)
 
@@ -473,35 +479,35 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 **Files.**
 
-- [ ] Edit `contract/src/internal/engine.ts` (`startRun.attended`) and regenerate the OpenAPI documents.
-- [ ] Edit `cloudflare/src/internal/start.ts` (`attended` into the snapshot), `cloudflare/src/conversation/schema.ts` (`run_holds`, `runs.writes_closed`, `runs.attended`), `store.ts` (`RUN_RECORDS`), `cloudflare/src/gateway/run-state.ts`, `cloudflare/src/conversation/ports.ts`, `gateway/ledger.ts`, `gateway/executor.ts`, `gateway/results.ts`, and `cloudflare/src/faults/ports.ts` (`approval:held`).
+- [x] Edit `contract/src/internal/engine.ts` (`startRun.attended`) and regenerate the OpenAPI documents. Harness `9fd387c`.
+- [x] Edit `cloudflare/src/internal/start.ts` (`attended` into the snapshot), `cloudflare/src/conversation/schema.ts` (`run_holds`, `runs.writes_closed`, `runs.attended`), `store.ts` (`RUN_RECORDS`), `cloudflare/src/gateway/run-state.ts`, `cloudflare/src/conversation/ports.ts`, `gateway/ledger.ts`, `gateway/executor.ts`, `gateway/results.ts`, and `cloudflare/src/faults/ports.ts` (`approval:held`). Harness `9fd387c`.
 
 **Build.**
 
-- [ ] `holdCall` and `heldCall` as in Data shapes, the hold and its fact in one write before the model hears, refused while the run's writes are paused.
-- [ ] The requirements with their effects, the layers that asked, and the names from `describe`.
-- [ ] The repeat and the closed writes answered before the lease. `dispatchWrite` refuses while the run holds a call. Scripted calls take the same path.
-- [ ] The answers' texts, the refused row's `write`, `APPROVAL_TOO_LARGE` over 1.5 MiB, and `APPROVAL_UNAVAILABLE` without `attended`.
+- [x] `holdCall` and `heldCall` as in Data shapes, the hold and its fact in one write before the model hears, refused while the run's writes are paused. Platform `protocols.test.ts`, Holds.
+- [x] The requirements with their effects, the layers that asked, and the names from `describe`. `executor-calls.test.ts`.
+- [x] The repeat and the closed writes answered before the lease. `dispatchWrite` refuses while the run holds a call. Scripted calls take the same path. `executor-calls.test.ts`, `scripts-conversation.test.ts`.
+- [x] The answers' texts, the refused row's `write`, `APPROVAL_TOO_LARGE` over 1.5 MiB, and `APPROVAL_UNAVAILABLE` without `attended`. `executor-calls.test.ts`.
 
 **You see.**
 
-- [ ] On the test instance, an attended turn asked to save two notes under ask completes with an answer that names both as waiting. The fake Laravel holds two `run.held_call` facts with the full fields, and the fake provider holds no note. The same turn without `attended` holds nothing.
+- [x] On the test instance, an attended turn asked to save two notes under ask completes with an answer that names both as waiting. The fake Laravel holds two `run.held_call` facts with the full fields, and the fake provider holds no note. The same turn without `attended` holds nothing. The account tests in `faults.test.ts`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `executor-calls.test.ts`, `executor-faults.test.ts`, `ledger-writes.test.ts`, `facts.test.ts`, `conversation-tools.test.ts`; platform `protocols.test.ts` (a run with holds completes; holds outlive a Stop, a failed run and a revocation; a reset at `approval:held` leaves one hold and one fact), `faults-laravel.test.ts`, `retention.test.ts`.
+- [x] `executor-calls.test.ts`, `executor-faults.test.ts`, `ledger-writes.test.ts`, `facts.test.ts`, `conversation-tools.test.ts`; platform `protocols.test.ts` (a run with holds completes; holds outlive a Stop, a failed run and a revocation; a reset at `approval:held` leaves one hold and one fact), `faults-laravel.test.ts`, `retention.test.ts`. CI `main.yml` 40426942025.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] The account suites `faults.test.ts` and `turns.test.ts` pass on the test instance with the hold cases. The Workers AI row runs five times, and its pass rate is recorded in the commit.
+- [x] The account suites `faults.test.ts` and `turns.test.ts` pass on the test instance with the hold cases. The Workers AI row runs five times, and its pass rate is recorded in the commit. 5 of 5, recorded in `9fd387c`.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] None: a hold is one write and one `describe` read inside a turn that takes seconds. Chunk 5 measures what the user waits for.
+- [x] None: a hold is one write and one `describe` read inside a turn that takes seconds. Chunk 5 measures what the user waits for.
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] opencode reviewed the design and the diff.
 
 ## The continuation (chunk 4)
 
@@ -509,36 +515,37 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 **Files.**
 
-- [ ] Edit `contract/src/internal/engine.ts` (`startRun.approval`, `APPROVAL_UNKNOWN`, `APPROVAL_DECIDED`) and `contract/src/internal/catalog.ts` (`askable`), and regenerate the OpenAPI documents.
-- [ ] Edit `cloudflare/src/internal/start.ts`, `gateway/tools.ts` (`approval` and `closed` on the snapshot), `gateway/ledger.ts` (`approved` on the note), `conversation/store.ts` (the outcome in the settlement), `conversation/conversation.ts` (the acceptance's checks, the holds closed at the copy's commit, the carry-out, the gate), `conversation/history.ts` (the note), `conversation/facts.ts` (`approved`), the catalog's procedure, and `faults/ports.ts` (`approval:carried`).
+- [x] Edit `contract/src/internal/engine.ts` (`startRun.approval`, `APPROVAL_UNKNOWN`, `APPROVAL_DECIDED`) and `contract/src/internal/catalog.ts` (`askable`), and regenerate the OpenAPI documents. Harness `26dcef3`.
+- [x] Edit `cloudflare/src/internal/start.ts`, `gateway/tools.ts` (`approval` and `closed` on the snapshot), `gateway/ledger.ts` (`approved` on the note), `conversation/store.ts` (the outcome in the settlement), `conversation/conversation.ts` (the acceptance's checks, the holds closed at the copy's commit, the carry-out, the gate), `conversation/history.ts` (the note), `conversation/facts.ts` (`approved`), the catalog's procedure, and `faults/ports.ts` (`approval:carried`). Harness `a16d389`.
 
 **Build.**
 
-- [ ] The approval checked before the preparation and in the final write, which uses the holds. A start without an approval closes them in the copy's commit.
-- [ ] The carry-out through `#invoke` under the fence, in order, under the continuation's alias, with the stored requirements as its pass, skipping holds that have an outcome, before the note and the submit.
-- [ ] Each outcome stored on its hold, in the settlement when the call reached the ledger.
-- [ ] The note, also for an earlier run that never submitted.
-- [ ] The gate marks the acting run's dispatched writes uncertain whatever it decides.
+- [x] The approval checked before the preparation and in the final write, which uses the holds. A start without an approval closes them in the copy's commit. `internal-start.test.ts`, platform `protocols.test.ts`, The continuation.
+- [x] The carry-out through `#invoke` under the fence, in order, under the continuation's alias, with the stored requirements as its pass, skipping holds that have an outcome, before the note and the submit. Platform `protocols.test.ts`.
+- [x] Each outcome stored on its hold, in the settlement when the call reached the ledger. `ledger-writes.test.ts`.
+- [x] The note, also for an earlier run that never submitted. `conversation-history.test.ts`.
+- [x] The gate marks the acting run's dispatched writes uncertain whatever it decides. Platform `protocols.test.ts`.
 
 **You see.**
 
-- [ ] On the test instance, approving one of two held notes saves exactly that note, and the answer says so. Declining both saves none. A plain message after a hold saves none, and the answer says neither was approved. A Stop during the approved save leaves the note saved, and the next turn's answer knows it.
+- [x] On the test instance, approving one of two held notes saves exactly that note, and the answer says so. Declining both saves none. A plain message after a hold saves none, and the answer says neither was approved. A Stop during the approved save leaves the note saved, and the next turn's answer knows it. The account tests "approvals" in `faults.test.ts`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `internal-start.test.ts`, `ledger-writes.test.ts`, `conversation-gate.test.ts`, `conversation-history.test.ts`, and platform `protocols.test.ts` with every case in Tests, with `approval:carried` and `provider:write:applied` (`abort`, `lose`).
+- [x] `internal-start.test.ts`, `ledger-writes.test.ts`, `conversation-gate.test.ts`, `conversation-history.test.ts`, and platform `protocols.test.ts` with every case in Tests, with `approval:carried` and `provider:write:applied` (`abort`, `lose`). Unit 2949, platform 445 passed.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] The account suites pass with approve, decline, a repeated continuation and a revocation between hold and approval. Then, with the owner's go, staging's engine runs the chunk, and then production's.
+- [x] The account suites pass with approve, decline, a repeated continuation and a revocation between hold and approval (`pnpm check --instance minerva-cf-test`, faults 62 passed; CI `account.yml` 40434267116). With the owner's go, staging's engine runs the chunk (`709607e`, `test:deployed` 6 of 6).
+- [ ] With the owner's go, production's engine runs the chunk.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. The time from the continuation's acceptance to the approved `save_note` settling, median of 10, on the test instance. Rule. Under 2 s. Over fails.
+- [x] Metric. The time from the continuation's acceptance to the approved `save_note` settling, median of 10, on the test instance. Rule. Under 2 s. Over fails. Median 172 ms (166 to 237).
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] opencode reviewed the design and the diff; the prune case it found is in ARCHITECTURE.md's Writes, Accepted, not fixed.
 
 ## Answering and editing (chunk 5)
 
@@ -546,36 +553,36 @@ Tests alone are not sufficient verification. A chunk is verified only when its u
 
 **Files.**
 
-- [ ] In the app: `routes/web.php`, a controller for the approvals' POST and GET, `app/Runs/Runs.php` (the approval, `attended`, closing and reopening), `app/Runs/Facts.php` (reopening on a copy failure), `app/Enums/AuditAction.php`, `app/Console/Commands/RunTurn.php`, `app/Http/Controllers/AccessController.php`, `app/Connections/Access.php` (`edit` on unrestricted layers, `view`'s effects), `app/Engine/Catalog/Connector.php` and its mapping test, the `resources/js` types, `resources/js/components/chat/` (the card, the summary above the composer, the decision line, the tab's title), the conversation list and the top bar's dot, `resources/js/components/connections/access-editor.tsx` and `access.ts`, search and the title skipping continuation messages, and the app's `docs/architecture/` docs named above.
+- [x] In the app: `routes/web.php`, a controller for the approvals' POST and GET, `app/Runs/Runs.php` (the approval, `attended`, closing and reopening), `app/Runs/Facts.php` (reopening on a copy failure), `app/Enums/AuditAction.php`, `app/Console/Commands/RunTurn.php`, `app/Http/Controllers/AccessController.php`, `app/Connections/Access.php` (`edit` on unrestricted layers, `view`'s effects), `app/Engine/Catalog/Connector.php` and its mapping test, the `resources/js` types, `resources/js/components/chat/` (the card, the summary above the composer, the decision line, the tab's title), the conversation list and the top bar's dot, `resources/js/components/connections/access-editor.tsx` and `access.ts`, search and the title skipping continuation messages, and the app's `docs/architecture/` docs named above. The app's `b8cf305` to `f68d124` (answering), `ffce7c5` and `d43cb7f` (the editor), merged in `6df892f`, and `8d78a70`.
 
 **Build.**
 
-- [ ] The POST, inside `Runs::start`'s transaction, with every start's checks, `attended`, the decisions and their audit events.
-- [ ] Waiting approvals closed by a plain message, and reopened when a start is refused, tombstoned, or ends before its copy commits. A continuation that is not sent goes back to waiting with Approve again.
-- [ ] The card's states and choices, the summary, and the markers.
-- [ ] The editor's third state in every layer, unrestricted ones included, only for actions the approved entry marks askable, with the narrower allows listed and the copy on who confirms.
-- [ ] `minerva:turn --approve` and `--decline`, audited as the console.
+- [x] The POST, inside `Runs::start`'s transaction, with every start's checks, `attended`, the decisions and their audit events. `CallApprovalsTest`, `AuditLogTest`.
+- [x] Waiting approvals closed by a plain message, and reopened when a start is refused, tombstoned, or ends before its copy commits. A continuation that is not sent goes back to waiting with Approve again. `CallApprovalsTest`.
+- [x] The card's states and choices, the summary, and the markers. `model.test.ts`, `ChatTest`, the verify skill's `approvals` journey.
+- [x] The editor's third state in every layer, unrestricted ones included, only for actions the approved entry marks askable, with the narrower allows listed and the copy on who confirms. `AccessTest`, `access.test.ts`, the verify skill's `ask` journey.
+- [x] `minerva:turn --approve` and `--decline`, audited as the console. `CallApprovalsTest`, `AuditLogTest`.
 
 **You see.**
 
-- [ ] On staging, after the operator approves the changed catalog entries, with Gmail's Send on Ask first and a mailbox the operator owns (kept outside the repository): the card shows the message and its recipients with their names. Approve sends it once. Decline, or a new message, leaves it unsent. An admin's Ask first on an unrestricted ceiling of a shared connection asks a member whose own layer allows, and the card says the organization asks.
+- [ ] On staging, after the operator approves the changed catalog entries, with Gmail's Send on Ask first and a mailbox the operator owns (kept outside the repository): the card shows the message and its recipients with their names. Approve sends it once. Decline, or a new message, leaves it unsent. An admin's Ask first on an unrestricted ceiling of a shared connection asks a member whose own layer allows, and the card says the organization asks. Staging's only active connection is the operator's Gmail, so the live checks used drafts, and the card with recipients and names was shown on a local seeded conversation (the `approvals` journey). The ceiling's Ask first on a shared connection is proved by `AccessTest` and the `ask` journey, not live: staging has no active shared connection.
 
 **Verify, unit.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Pest: `CallApprovalsTest`, `LayersTest`, `AccessTest`, `AuditLogTest`, `IsolationTest`, `ChatTest`, the catalog mapping test, and the concurrency test. Vitest: the card and `access.test.ts`.
+- [x] Pest: `CallApprovalsTest`, `LayersTest`, `AccessTest`, `AuditLogTest`, `IsolationTest`, `ChatTest`, the catalog mapping test, and the concurrency test. Vitest: the card and `access.test.ts`. Pest 1599 passed, Vitest 117 passed, on the merge.
 
 **Verify, live.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] On staging through `minerva:turn`: approve, decline, approve after the grant was changed to Off (the note says it was not allowed), and two approve POSTs at once start one run. The held run's answer says the mail waits, rather than claiming it was sent or asking for a typed yes.
+- [x] On staging through `minerva:turn`: approve, decline, approve after the grant was changed to Off (the note says it was not allowed), and two approve POSTs at once start one run. The held run's answer says the mail waits, rather than claiming it was sent or asking for a typed yes. Done with a Gmail draft to an `example.com` address instead of a sent mail, so nothing left the operator's mailbox: approve made the draft once, decline and a plain message made none, and every held run's answer said the draft waited for approval. After Off, the note read "This is not available any more, so it did not run.", since a turned-off action's tool is not offered (The flow, step 7). The second of two approves found nothing waiting; the commands did not overlap within milliseconds, so the race itself rests on the Pest concurrency test.
 
 **Verify, perf.** Tests alone are not sufficient verification. A chunk is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] Metric. The time from Approve to the approved call's Done row on the page, on staging, median of 10. Rule. Under 5 s. Over fails.
-- [ ] Metric. The transcript props' bytes for a conversation with 20 answered cards whose fields are 1 MiB each. Rule. Within 100 KiB of the same conversation without them. Over fails.
+- [x] Metric. The time from Approve to the approved call's Done row on the page, on staging, median of 10. Rule. Under 5 s. Over fails. The approved write's record reached Laravel within 2.7 s of Approve in all 10 samples, median between 0.9 and 1.9 s (Laravel stores that record's time to the second). The page shows it on its next stream event.
+- [x] Metric. The transcript props' bytes for a conversation with 20 answered cards whose fields are 1 MiB each. Rule. Within 100 KiB of the same conversation without them. Over fails. 55,275 bytes (`ChatTest`).
 
 **Review.**
 
-- [ ] opencode reviewed the design and the diff.
+- [x] opencode reviewed the design and the diff. For both halves; every finding that can happen is fixed, the rest are in Accepted, not fixed.
 
 ## Close the program
 
