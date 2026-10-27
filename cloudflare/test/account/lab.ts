@@ -38,25 +38,37 @@ export async function lab(op: string, body: Record<string, unknown> = {}, timeou
 
 export const sh = (name: string, command: string, extra: Record<string, unknown> = {}) => lab("exec", { name, request: { command, timeoutSeconds: 120, ...extra } });
 
+/** The platform's answer while it resets an object whose storage operation passed 30 s. */
+const STORAGE_RESET = /Durable Object storage operation exceeded timeout/;
+
 /**
  * Cleanup, each file's afterAll: destroys every sandbox this file named that still has a container, with the
  * fence of its status, and waits until each is gone. Every one is tried; the failures are reported together.
+ * A sandbox whose object the platform resets for a stalled storage operation answers nothing until its storage
+ * recovers, so it is left to the platform with a warning.
  */
 export async function destroyAll(): Promise<void> {
 	const outcomes = await Promise.allSettled(
-		[...named].map(async (name) => {
-			const started = Date.now();
-			for (;;) {
-				const { status, running } = await lab("status", { name });
-				if (status.state === "none" && !running && !status.cleanupPending) return;
-				if (status.incarnation && status.state !== "destroying") {
-					await lab("destroy", { name, fence: { runId: status.runId, attempt: status.attempt, incarnation: status.incarnation }, reason: "tests over" });
-				}
-				if (Date.now() - started > 120_000) throw new Error(`${name} was not destroyed: ${JSON.stringify({ status, running })}`);
-				await new Promise((resolve) => setTimeout(resolve, 2000));
-			}
-		}),
+		[...named].map((name) =>
+			destroyed(name).catch((error: unknown) => {
+				if (!STORAGE_RESET.test(String(error))) throw error;
+				console.warn(`${name} is left to the platform: ${String(error)}`);
+			}),
+		),
 	);
 	const failures = outcomes.filter((outcome) => outcome.status === "rejected").map((outcome) => String(outcome.reason));
 	if (failures.length) throw new Error(`Cleanup left sandboxes behind:\n${failures.join("\n")}`);
+}
+
+async function destroyed(name: string): Promise<void> {
+	const started = Date.now();
+	for (;;) {
+		const { status, running } = await lab("status", { name });
+		if (status.state === "none" && !running && !status.cleanupPending) return;
+		if (status.incarnation && status.state !== "destroying") {
+			await lab("destroy", { name, fence: { runId: status.runId, attempt: status.attempt, incarnation: status.incarnation }, reason: "tests over" });
+		}
+		if (Date.now() - started > 120_000) throw new Error(`${name} was not destroyed: ${JSON.stringify({ status, running })}`);
+		await new Promise((resolve) => setTimeout(resolve, 2000));
+	}
 }

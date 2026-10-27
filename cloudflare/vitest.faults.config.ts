@@ -14,6 +14,9 @@ export default defineConfig({
 		environment: "node",
 		testTimeout: 420_000,
 		hookTimeout: 240_000,
+		// Once more when the platform stalled an object (cloudflare/README.md, The test Worker): the reset of an object whose
+		// storage operation passed 30 s, or a world's setup, under a second on a new FaultProvider, unanswered for a minute.
+		retry: { count: 1, condition: /Durable Object storage operation exceeded timeout|No answer from \S+\/api\/faults\/setup$/ },
 		// Per file: every concurrent test of a file starts at once (vitest's default is 5).
 		maxConcurrency: 16,
 		fileParallelism: process.env.MINERVA_PERF !== "1",
