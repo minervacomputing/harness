@@ -321,6 +321,9 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "askable": {
+                        "type": "boolean"
                       }
                     },
                     "required": [

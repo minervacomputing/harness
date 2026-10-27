@@ -47,7 +47,7 @@ export const MAX_HELD_ARGUMENTS = 1_572_864
 const Write = z.string()
 
 /** A held call's place in its run, from 1. */
-const HeldPosition = z.int().min(1).max(MAX_HOLDS)
+export const HeldPosition = z.int().min(1).max(MAX_HOLDS)
 
 /** The held call a continuation carried out or refused. */
 const Approved = z.object({ run: Id, position: HeldPosition })

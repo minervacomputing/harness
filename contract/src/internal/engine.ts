@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { Folder } from '../shapes.ts'
 import { Catalog, CatalogVersion } from './catalog.ts'
 import { Environment, INTERNAL_ERRORS, INTERNAL_PREFIX, Id, Provider, Refused, Scope, Time, UserId } from './common.ts'
-import { AttachedFile, Fact, FolderChangesSchema, MAX_FACTS } from './facts.ts'
+import { AttachedFile, Fact, FolderChangesSchema, HeldPosition, MAX_FACTS, MAX_HOLDS } from './facts.ts'
 
 /** Earlier messages `startRun` carries, newest last; the engine selects and clips them (history.ts). */
 export const MAX_HISTORY = 20
@@ -112,6 +112,22 @@ export const StartRun = InConversation.extend({
    * (`run.held_call`). Without it, such a call is refused `APPROVAL_UNAVAILABLE` and holds nothing.
    */
   attended: z.literal(true).optional(),
+  /**
+   * A continuation: the user's decision on each open hold of `run`, a run of this conversation (`run.held_call`), each named
+   * once. The engine carries out the approved calls before the message, which Laravel writes ("Approved."). Refused
+   * `APPROVAL_UNKNOWN` unless the decisions name exactly the run's open holds, of this user and of an attended run, and
+   * `APPROVAL_DECIDED` when a hold was already used or closed.
+   */
+  approval: z
+    .object({
+      run: Id,
+      decisions: z
+        .array(z.object({ position: HeldPosition, approve: z.boolean() }))
+        .min(1)
+        .max(MAX_HOLDS)
+        .refine((decisions) => new Set(decisions.map((decision) => decision.position)).size === decisions.length, 'Each hold may be decided once.'),
+    })
+    .optional(),
 })
 export type StartRun = z.infer<typeof StartRun>
 
@@ -289,7 +305,8 @@ export const engine = {
    * Compiles the run's snapshot once, checks its attachments and admits it, or refuses [6]; the run copies the attachments.
    * Refusals: today's start refusals (`TOO_MANY_ATTACHMENTS`, `ATTACHED_TWICE`, `ATTACHMENT_UNAVAILABLE`, `FOLDER_FULL`),
    * `CONVERSATION_BUSY`, `CANCELLED` (the run was tombstoned), `CONVERSATION_DELETED`, `FACTS_BACKLOG` (Laravel has not
-   * acknowledged the conversation's facts for too long) and `ADMISSION_CLOSED`. `ATTACHMENT_UNAVAILABLE` is a staged object
+   * acknowledged the conversation's facts for too long), `ADMISSION_CLOSED`, and for an `approval`, `APPROVAL_UNKNOWN` (no
+   * such held run, or not exactly its open holds) and `APPROVAL_DECIDED` (a hold already used or closed). `ATTACHMENT_UNAVAILABLE` is a staged object
    * missing, of another size than declared or over the file limit, and `FOLDER_FULL` is judged from the declared sizes, both
    * before any byte past an object's first 8 KiB is read.
    */

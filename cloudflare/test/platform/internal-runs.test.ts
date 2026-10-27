@@ -390,6 +390,17 @@ describe("startRun", () => {
 		}
 	});
 
+	test("refuses a continuation, which this engine cannot carry out yet, and the refusal is its answer from then on", async () => {
+		const start = startOf(scope(), { message: { id: uuid7(), content: "Approved.", attachments: [] }, approval: { run: uuid7(), decisions: [{ position: 1, approve: true }] } });
+		const refused = { outcome: "refused", code: "APPROVAL_UNKNOWN", message: "This engine cannot carry out approvals yet." };
+		expect(await commands.startRun(start)).toEqual(refused);
+		expect(await commands.startRun(start)).toEqual(refused);
+		expect(await runRow(start)).toBeNull();
+		const plain = next(start);
+		expect(await commands.startRun(plain)).toMatchObject({ outcome: "accepted" });
+		await settled(plain);
+	});
+
 	test("is accepted after reading at most 8 KiB of each staged object, and the run then copies them into its base version", async () => {
 		const within = scope();
 		const large = new Uint8Array(1024 * 1024);

@@ -34,6 +34,11 @@ describe("the commands", () => {
 		const catalog = await commands.catalog();
 		expect(Catalog.parse(catalog)).toEqual(catalog);
 		expect(catalog.connectors.some((connector) => connector.slug === "todoist" && connector.auth.type === "oauth2")).toBe(true);
+		// A grant may ask before what only writes, never before what a read needs.
+		expect(catalog.connectors.find((connector) => connector.slug === "notes")?.actions).toEqual([
+			{ id: "read", label: "Read notes", requires: null, askable: false },
+			{ id: "create", label: "Create notes", requires: "read", askable: true },
+		]);
 		// The build's MINERVA_GITHUB_APP_SLUG (vitest.platform.config.ts), which the connector reads from the Worker's bindings.
 		expect(catalog.connectors.find((connector) => connector.slug === "github")?.manage).toEqual({
 			label: "Choose repositories on GitHub",

@@ -4,6 +4,7 @@ import { Catalog } from "@minerva/contract/internal";
 import { expect, test } from "vitest";
 import { CONNECTORS } from "../../src/connectors/catalog.ts";
 import { priceTable, pricesVersion } from "../../src/budget/prices.ts";
+import { askable } from "../../src/gateway/grants.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { catalogOf } from "../../src/internal/catalog.ts";
 import { keyedConnector, mixedConnector } from "./fakes.ts";
@@ -58,6 +59,19 @@ test("the version names the declarations: the same ones give the same version, a
 	const priced = await catalogOf(await Registry.create([mixedConnector(), keyedConnector()]), prices);
 	expect(priced).toEqual({ ...first, prices });
 	expect(Catalog.parse(priced)).toEqual(priced);
+});
+
+test("each action says whether a grant may ask before it: every write action, never one a read needs", async () => {
+	const catalog = await catalogOf(await Registry.create(CONNECTORS));
+	const actions = (slug: string) =>
+		Object.fromEntries(catalog.connectors.find((entry) => entry.slug === slug)!.actions.map((action) => [action.id, action.askable]));
+	expect(actions("gmail")).toEqual({ read: false, send: true, draft: true });
+	expect(actions("web")).toEqual({ browse: false });
+	for (const entry of catalog.connectors) {
+		const connector = CONNECTORS.find((item) => item.slug === entry.slug)!;
+		expect(entry.actions.map((action) => action.askable), entry.slug).toEqual(connector.actions.map((action) => askable(connector).has(action.id)));
+		expect(entry.actions.find((action) => action.id === "read")?.askable ?? false, entry.slug).toBe(false);
+	}
 });
 
 test("an operation's terms are what Laravel needs to ask for scopes", async () => {

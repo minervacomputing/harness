@@ -32,5 +32,5 @@ export {
   TenantId,
   engine,
 } from './engine.ts'
-export { Fact, FactBatch, MAX_ARGUMENTS, MAX_FACTS, MAX_HELD_ARGUMENTS, MAX_HOLDS } from './facts.ts'
+export { Fact, FactBatch, HeldPosition, MAX_ARGUMENTS, MAX_FACTS, MAX_HELD_ARGUMENTS, MAX_HOLDS } from './facts.ts'
 export { laravel } from './laravel.ts'

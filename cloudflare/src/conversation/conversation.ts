@@ -457,7 +457,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	async #startOnce(command: StartRun): Promise<StartRunResult> {
 		const runId = command.run;
 		const config = settings(this.env);
-		const refusal = messageRefusal(command, config.files);
+		const refusal =
+			messageRefusal(command, config.files) ?? (command.approval ? startRefusal("APPROVAL_UNKNOWN", "This engine cannot carry out approvals yet.") : null);
 		this.#connectors ??= await connectorRegistry();
 		const compiled =
 			refusal === null && this.#store.preparation(runId) === null

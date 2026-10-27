@@ -132,7 +132,7 @@ describe("the declaration", () => {
 				"Search for a domain or paste an address to add it. Open in browser loads pages in Cloudflare's browser and runs their scripts, which can act on the site as a visit would, such as following a sign-in link. Agents can also send information in the addresses they open, to these sites and to wherever they redirect, so allow only sites you trust. A block on a domain wins over access to a wider one.",
 			],
 		]);
-		expect(entry.actions).toEqual([{ id: "browse", label: "Open in browser", requires: null }]);
+		expect(entry.actions).toEqual([{ id: "browse", label: "Open in browser", requires: null, askable: false }]);
 		expect(entry.tenancy).toEqual({ kind: "resource", label: "domain" });
 		expect(entry.operations).toEqual([
 			{ name: "read_page", title: "Read a web page", needs: [{ kind: "site", action: "browse" }], consent: null, mutates: false, offered: true },

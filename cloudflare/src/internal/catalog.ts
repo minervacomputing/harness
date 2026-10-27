@@ -1,10 +1,11 @@
 // The catalog Laravel reads: every connector the registry serves, with its OAuth
-// descriptor, kinds, actions and operations' terms, and a version that names it, built from the declarations alone; and
+// descriptor, kinds, actions (each saying whether a grant may ask before it) and operations' terms, and a version that names it, built from the declarations alone; and
 // the build's prices (budget/prices.ts), with their own version.
 
 import type { Catalog, CatalogAuth, CatalogConnector } from "@minerva/contract/internal";
 import type { Prices } from "../budget/prices.ts";
 import type { Auth, Connector } from "../gateway/connector.ts";
+import { askable } from "../gateway/grants.ts";
 import type { Registry } from "../gateway/registry.ts";
 import { hashInput } from "../lib/canonical.ts";
 import { sha256Hex } from "../lib/hash.ts";
@@ -36,6 +37,7 @@ function authOf(auth: Auth): CatalogAuth {
 function connectorOf(connector: Connector): CatalogConnector {
 	const browsable = new Set(connector.browsable ?? []);
 	const manage = connector.manageLink ? connector.manageLink() : null;
+	const asks = askable(connector);
 	return {
 		slug: connector.slug,
 		name: connector.name,
@@ -50,7 +52,7 @@ function connectorOf(connector: Connector): CatalogConnector {
 			listed: kind.listed ?? true,
 			browsable: browsable.has(kind.id),
 		})),
-		actions: connector.actions.map((action) => ({ id: action.id, label: action.label, requires: action.requires ?? null })),
+		actions: connector.actions.map((action) => ({ id: action.id, label: action.label, requires: action.requires ?? null, askable: asks.has(action.id) })),
 		operations: connector.operations.map((op) => ({
 			name: op.name,
 			title: op.title,

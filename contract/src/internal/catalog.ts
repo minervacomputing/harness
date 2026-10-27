@@ -58,8 +58,11 @@ export const CatalogKind = z.object({
   browsable: z.boolean(),
 })
 
-/** Something agents may do on a kind's resources; allowing it needs what it `requires` too. */
-export const CatalogAction = z.object({ id: z.string(), label: z.string(), requires: z.string().nullable() })
+/**
+ * Something agents may do on a kind's resources; allowing it needs what it `requires` too. `askable`: a grant may ask
+ * before it, which no action a read needs can be; absent from an engine that predates asks.
+ */
+export const CatalogAction = z.object({ id: z.string(), label: z.string(), requires: z.string().nullable(), askable: z.boolean().optional() })
 
 /** One tool's terms: what it needs allowed, and the provider scopes it works with (any one set; null: unknown, the provider decides). */
 export const CatalogOperation = z.object({
