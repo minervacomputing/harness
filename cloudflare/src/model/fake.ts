@@ -43,6 +43,8 @@ export interface FakeTurn {
 	text?: string;
 	/** Answer with the first line holding this text in a message before the newest user message, or `Not found.` */
 	recall?: string;
+	/** Answer with the newest user message's paragraphs before its script: the note that starts the run's input. */
+	note?: true;
 	/** This many filler characters after the text, to fill the context without a large message. */
 	pad?: number;
 	tools?: { name: string; arguments: JsonObject }[];
@@ -267,9 +269,16 @@ function summaryTurn(context: TranscriptContext): FakeTurn {
 	return failures ? { ...summary, error: { message: "The fake model could not summarize.", times: failures } } : summary;
 }
 
-/** A turn's text: its own or what it recalls, then its padding. */
+/** The newest user message's paragraphs before its script paragraph. */
+function noted(messages: readonly Message[]): string {
+	const paragraphs = userText(messages.findLast((message) => message.role === "user")).split("\n\n");
+	const script = paragraphs.findLastIndex((paragraph) => paragraph.startsWith(SCRIPT_START));
+	return paragraphs.slice(0, Math.max(script, 0)).join("\n\n");
+}
+
+/** A turn's text: its own, what it recalls or the run's note, then its padding. */
 function answerOf(turn: FakeTurn, messages: readonly Message[]): string {
-	const text = turn.recall === undefined ? (turn.text ?? "") : recalled(messages, turn.recall);
+	const text = turn.note ? noted(messages) : turn.recall === undefined ? (turn.text ?? "") : recalled(messages, turn.recall);
 	return turn.pad ? text + "x".repeat(turn.pad) : text;
 }
 

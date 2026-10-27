@@ -20,6 +20,8 @@
 // - `loop:created`: the conversation's pi conversation created by its first run, before the run claims it (detail: its id);
 // - `pi:stop`: a run's end, before it marks pi's orphaned work (detail: the run's id); no other stop reaches it;
 // - `approval:held`: a call's hold and its `run.held_call` fact written, before the executor answers it (detail: the run's id);
+// - `approval:carried`: a continuation's approved call settled and its outcome stored on its hold, before the next approved
+//   call or the run's submission (detail: the continuation's id);
 // - `start:planned`: a start's staged attachments inspected, before the transaction that plans and stores its run;
 //   `copy:copied`: the run's attachments copied into the conversation's blobs, before the write that commits them (detail:
 //   the run's id, both);

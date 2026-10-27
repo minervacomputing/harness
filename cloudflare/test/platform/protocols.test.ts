@@ -153,7 +153,7 @@ function statuses(events: RunEvent[]) {
 }
 
 function toolCalls(events: RunEvent[]) {
-	return events.filter((event) => event.type === "tool_call").map((event) => event.data as { tool: string; decision: string; code?: string; message?: string; repeat?: boolean; count?: number });
+	return events.filter((event) => event.type === "tool_call").map((event) => event.data as { tool: string; decision: string; code?: string; message?: string; repeat?: boolean; count?: number; write?: string });
 }
 
 /** Waits until the object logged that it reached a fault point. */
@@ -938,8 +938,8 @@ describe("holds", () => {
 		expect(internals.writes).toEqual([]);
 		const [first, second] = internals.holds.map((hold) => hold.write_id);
 		expect(internals.holds).toEqual([
-			{ position: 1, key: expect.stringMatching(/^[0-9a-f]{64}$/), write_id: first, tool: SAVE, label: "Notes: Save a note", state: "open", arguments: '{"folder":"inbox","title":"First"}', requirements: JSON.stringify([requirement]) },
-			{ position: 2, key: expect.stringMatching(/^[0-9a-f]{64}$/), write_id: second, tool: SAVE, label: "Notes: Save a note", state: "open", arguments: '{"folder":"inbox","title":"Second"}', requirements: JSON.stringify([requirement]) },
+			{ position: 1, key: expect.stringMatching(/^[0-9a-f]{64}$/), write_id: first, tool: SAVE, label: "Notes: Save a note", state: "open", arguments: '{"folder":"inbox","title":"First"}', requirements: JSON.stringify([requirement]), decided_by: null, approve: null, outcome: null },
+			{ position: 2, key: expect.stringMatching(/^[0-9a-f]{64}$/), write_id: second, tool: SAVE, label: "Notes: Save a note", state: "open", arguments: '{"folder":"inbox","title":"Second"}', requirements: JSON.stringify([requirement]), decided_by: null, approve: null, outcome: null },
 		]);
 		expect(first).toMatch(/^[0-9a-f]{32}$/);
 		expect(second).not.toBe(first);
@@ -1052,5 +1052,368 @@ return out;`;
 		expect(requests(await provider(w))).toEqual([FOLDERS]);
 		expect(await heldFacts(w, runId)).toEqual([expect.objectContaining({ position: 1, write })]);
 		expect((await w.stub.faultFired()).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([["approval:held", "abort", runId]]);
+	});
+
+	describe("the continuation", () => {
+		const NOTE: FakeTurn = { note: true };
+		const LABEL = "Notes: Save a note";
+		const ran = (result: string) => `[You asked to ${LABEL}. The user approved it, and it ran: ${result}]`;
+
+		/** A held run of a save of each title, ended: its id. */
+		async function holding(w: World, titles: string[]): Promise<RunId> {
+			const runId = await post(w, [...titles.map(save), { text: "They wait for your approval." }], asking(w));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			return runId;
+		}
+
+		/** A continuation's start, deciding the held run's holds in position order. */
+		function answering(w: World, heldRun: RunId, approve: boolean[], change: Partial<StartRun> = {}): Partial<StartRun> {
+			return { ...asking(w), approval: { run: heldRun, decisions: approve.map((yes, index) => ({ position: index + 1, approve: yes })) }, ...change };
+		}
+
+		async function answerOf(w: World, runId: RunId): Promise<string | undefined> {
+			return ((await eventsOf(w, runId)).find((event) => event.type === "message")?.data as { content: string } | undefined)?.content;
+		}
+
+		/** The facts Laravel applied for a run, once it holds its last. */
+		async function factsOf(w: World, runId: RunId) {
+			const facts = await until(
+				async () => fake.facts(w.conversation),
+				(all) => all.some((fact) => fact.type === "run.settled" && fact.run === runId),
+			);
+			return facts.filter((fact) => fact.run === runId);
+		}
+
+		const POST_INBOX = { method: "POST", path: "/folders/inbox/notes" };
+		const declined = `[The user declined ${LABEL}. It did not run. Do not try it again unless they ask.]`;
+		/** A saved note's result as the model reads it. */
+		const result = (id: number, title: string) => JSON.stringify({ items: [{ id: String(id), title }], count: 1 });
+		const outcomeOf = (hold: { outcome: string | null } | undefined) => (hold?.outcome == null ? null : JSON.parse(hold.outcome));
+
+		test("approving one of two carries out exactly that save before the prompt, once, and the model reads what came of both", async () => {
+			const w = await world();
+			const heldRun = await holding(w, ["First", "Second"]);
+			// The model then asks for the approved save again: the ledger answers it from the record, under the same key.
+			const runId = await post(w, [save("First"), NOTE], answering(w, heldRun, [true, false]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			const state = await provider(w);
+			expect(state.notes.map((note) => note.title)).toEqual([...SEEDED, "First"]);
+			expect(requests(state)).toEqual([FOLDERS, FOLDERS, POST_INBOX]);
+			expect(await answerOf(w, runId)).toBe(`${ran(result(4, "First"))}\n\n${declined}`);
+			const holds = (await w.stub.faultRun(heldRun)).holds;
+			expect(holds.map(({ position, state: held, decided_by, approve }) => ({ position, held, decided_by, approve }))).toEqual([
+				{ position: 1, held: "used", decided_by: runId, approve: 1 },
+				{ position: 2, held: "used", decided_by: runId, approve: 0 },
+			]);
+			expect(holds.map(outcomeOf)).toEqual([{ kind: "ran", result: result(4, "First") }, null]);
+			const internals = await w.stub.faultRun(runId);
+			expect(internals.writes).toEqual([{ key: holds[0]?.key, status: "succeeded", attempt: 1, approved_run: heldRun, approved_position: 1 }]);
+			const [carried, repeated] = toolCalls(await eventsOf(w, runId));
+			expect(carried).toMatchObject({ tool: SAVE, decision: "allowed", count: 1, write: expect.stringMatching(/^[0-9a-f]{32}$/) });
+			expect(carried).not.toHaveProperty("repeat");
+			expect(repeated).toMatchObject({ tool: SAVE, decision: "allowed", repeat: true, write: carried?.write });
+			// Laravel reads which hold each record carried out.
+			const facts = (await factsOf(w, runId)).filter((fact) => fact.type === "run.write" || fact.type === "run.tool_call");
+			const approved = { run: heldRun, position: 1 };
+			expect(facts.map((fact) => [fact.type, (fact.data as { approved?: unknown }).approved])).toEqual([
+				["run.write", approved],
+				["run.tool_call", approved],
+				["run.tool_call", undefined],
+			]);
+			expect(facts[0]?.data).toMatchObject({ write: carried?.write, tool: SAVE, connection: w.connectionId, outcome: "done", afterCancel: false });
+		});
+
+		test("declining both runs nothing, and the continuation still answers", async () => {
+			const w = await world();
+			const heldRun = await holding(w, ["First", "Second"]);
+			const runId = await post(w, [NOTE], answering(w, heldRun, [false, false]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			expect(await answerOf(w, runId)).toBe(`${declined}\n\n${declined}`);
+			const state = await provider(w);
+			expect(state.notes.map((note) => note.title)).toEqual(SEEDED);
+			expect(requests(state)).toEqual([FOLDERS, FOLDERS]);
+			expect((await w.stub.faultRun(heldRun)).holds.map(({ state: held, approve, outcome }) => [held, approve, outcome])).toEqual([
+				["used", 0, null],
+				["used", 0, null],
+			]);
+			const internals = await w.stub.faultRun(runId);
+			expect([internals.writes, toolCalls(await eventsOf(w, runId))]).toEqual([[], []]);
+		});
+
+		test("an approved call that fails stops the approved calls after it", async () => {
+			const w = await world();
+			// The provider has no folder "gone": the first save is refused there.
+			const heldRun = await post(w, [{ tools: [{ name: SAVE, arguments: { folder: "gone", title: "Lost" } }] }, save("Second"), { text: "They wait." }], asking(w));
+			expect(await settled(w, heldRun)).toMatchObject({ status: "completed" });
+			const runId = await post(w, [NOTE], answering(w, heldRun, [true, true]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			const [call] = toolCalls(await eventsOf(w, runId));
+			expect(toolCalls(await eventsOf(w, runId))).toEqual([expect.objectContaining({ tool: SAVE, decision: "error", message: expect.any(String) })]);
+			const message = call?.message ?? "";
+			const holds = (await w.stub.faultRun(heldRun)).holds;
+			expect(holds.map(outcomeOf)).toEqual([
+				{ kind: "failed", message },
+				{ kind: "not_run", reason: "earlier" },
+			]);
+			expect(await answerOf(w, runId)).toBe(
+				`[You asked to ${LABEL}. The user approved it, but it failed: ${message.replace(/\.$/, "")}. The approved actions after it did not run.]\n\n[You asked to ${LABEL}. The user approved it, but it did not run, because an approved action before it did not succeed.]`,
+			);
+			const state = await provider(w);
+			expect(requests(state)).toEqual([FOLDERS, FOLDERS, { method: "POST", path: "/folders/gone/notes" }]);
+			expect(state.notes.map((note) => note.title)).toEqual(SEEDED);
+			// Not applied, so forgotten.
+			expect((await w.stub.faultRun(runId)).writes).toEqual([]);
+		});
+
+		test("a plain message closes the open holds, and its note says they were not approved: a continuation naming them is then refused", async () => {
+			const w = await world();
+			const heldRun = await holding(w, ["First", "Second"]);
+			const runId = await post(w, [NOTE], asking(w));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			const closed = `[${LABEL}, which you asked for, was not approved and did not run.]`;
+			expect(await answerOf(w, runId)).toBe(`${closed}\n\n${closed}`);
+			expect((await w.stub.faultRun(heldRun)).holds.map(({ state, decided_by, approve, outcome }) => [state, decided_by, approve, outcome])).toEqual([
+				["closed", runId, null, null],
+				["closed", runId, null, null],
+			]);
+			const late = startIn(w, script([NOTE]), answering(w, heldRun, [true, true]));
+			const refused = { outcome: "refused", code: "APPROVAL_DECIDED", message: "These actions were already answered." };
+			expect(await commands.startRun(late)).toEqual(refused);
+			expect(await commands.startRun(late)).toEqual(refused);
+			expect(await runOf(w, late.run)).toBeNull();
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual(SEEDED);
+			// The next message closes nothing more and says nothing of them.
+			const after = await post(w, [{ text: "Done." }]);
+			expect(await settled(w, after)).toMatchObject({ status: "completed" });
+			expect(await answerOf(w, after)).toBe("Done.");
+		});
+
+		test("a plain message stopped before its copy commits leaves the holds open, and the approval then carries them out", async () => {
+			const w = await world({ faults: [{ point: "copy:copied", mode: "hold" }] });
+			const heldRun = await holding(w, ["First"]);
+			const upload = `uploads/${w.within.workspace}/${uuid7()}`;
+			await env.FILES_EU.put(upload, "hello");
+			const attachments = [{ upload, name: "a.txt", size: 5, mediaType: "text/plain" }];
+			const plain = startIn(w, script([{ text: "Read it." }]), { ...asking(w), message: { id: uuid7(), content: script([{ text: "Read it." }]), attachments } });
+			expect(await commands.startRun(plain)).toMatchObject({ outcome: "accepted" });
+			await reached(() => w.stub.faultFired(), "copy:copied");
+			expect(await commands.cancelRun({ scope: w.within, conversation: w.conversation, run: plain.run, reason: "cancelled" })).toEqual({ state: "cancelled" });
+			await w.stub.faultRelease("copy:copied");
+			expect(await settled(w, plain.run)).toMatchObject({ status: "cancelled" });
+			expect((await w.stub.faultRun(heldRun)).holds.map(({ state, decided_by }) => [state, decided_by])).toEqual([["open", null]]);
+			const runId = await post(w, [NOTE], answering(w, heldRun, [true]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			expect(await answerOf(w, runId)).toBe(ran(result(4, "First")));
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "First"]);
+		});
+
+		test.each([
+			[
+				"a revocation that takes the save away: not available any more",
+				(w: World) => notesLayers(w.connectionId, [{ kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" }]),
+				"APPROVAL_STALE",
+				"This is not available any more, so it did not run.",
+				{ kind: "not_run", reason: "unavailable" },
+				`[You asked to ${LABEL}. The user approved it, but it is not available any more, so it did not run.]`,
+			],
+			[
+				"a deny on its folder: refused by the policy",
+				(w: World) =>
+					notesLayers(w.connectionId, [
+						{ kind: FOLDER, resource: "*", name: "", actions: ["read", "create"], effect: "allow" },
+						{ kind: FOLDER, resource: "inbox", name: "Inbox", actions: ["create"], effect: "deny" },
+					]),
+				"POLICY_DENIED",
+				null,
+				null,
+				null,
+			],
+		] as const)("between hold and approval, %s, and nothing reaches the provider", async (_name, layersOf, code, message, outcome, line) => {
+			const w = await world();
+			const heldRun = await holding(w, ["First", "Second"]);
+			const authority = { connections: [notesConnection(w.connectionId)], layers: layersOf(w) };
+			const runId = await post(w, [NOTE], answering(w, heldRun, [true, true], { authority }));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			const [call] = toolCalls(await eventsOf(w, runId));
+			expect(toolCalls(await eventsOf(w, runId))).toEqual([expect.objectContaining({ tool: SAVE, decision: "denied", code, message: message ?? expect.any(String) })]);
+			const said = message ?? call?.message ?? "";
+			const holds = (await w.stub.faultRun(heldRun)).holds;
+			expect(holds.map(outcomeOf)).toEqual([outcome ?? { kind: "failed", message: said }, { kind: "not_run", reason: "earlier" }]);
+			const first = line ?? `[You asked to ${LABEL}. The user approved it, but it failed: ${said.replace(/\.$/, "")}. The approved actions after it did not run.]`;
+			const after = `[You asked to ${LABEL}. The user approved it, but it did not run, because an approved action before it did not succeed.]`;
+			expect(await answerOf(w, runId)).toBe(`${first}\n\n${after}`);
+			const state = await provider(w);
+			expect(requests(state)).toEqual([FOLDERS, FOLDERS]);
+			expect(state.notes.map((note) => note.title)).toEqual(SEEDED);
+			// The refused row names its hold, for the card.
+			const facts = (await factsOf(w, runId)).filter((fact) => fact.type === "run.tool_call");
+			expect(facts.map((fact) => (fact.data as { approved?: unknown }).approved)).toEqual([{ run: heldRun, position: 1 }]);
+		});
+
+		test("a tool whose fingerprint changed since the hold is not called", async () => {
+			const w = await world();
+			const heldRun = await holding(w, ["First"]);
+			// What a deploy that changed save_note's contract leaves: the hold's fingerprint is not the new snapshot's.
+			await runInDurableObject(w.stub, (_instance, state) => {
+				state.storage.sql.exec("UPDATE run_holds SET contract = 'an older contract' WHERE run_id = ?", heldRun);
+			});
+			const runId = await post(w, [NOTE], answering(w, heldRun, [true]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			expect(toolCalls(await eventsOf(w, runId))).toEqual([
+				expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_STALE", message: "This changed since the user approved it, so it did not run." }),
+			]);
+			expect(outcomeOf((await w.stub.faultRun(heldRun)).holds[0])).toEqual({ kind: "not_run", reason: "changed" });
+			expect(await answerOf(w, runId)).toBe(`[You asked to ${LABEL}. The user approved it, but it changed since they approved it, so it did not run.]`);
+			expect(requests(await provider(w))).toEqual([FOLDERS]);
+		});
+
+		test("a tool that changed after the continuation was accepted is not called: the run no longer offers it as it was", async () => {
+			const w = await world({ faults: [{ point: "copy:copied", mode: "hold" }] });
+			const heldRun = await holding(w, ["First"]);
+			// An attachment, so the run waits at its copy, after its acceptance and before its section.
+			const upload = `uploads/${w.within.workspace}/${uuid7()}`;
+			await env.FILES_EU.put(upload, "hello");
+			const content = script([NOTE]);
+			const start = startIn(w, content, { ...answering(w, heldRun, [true]), message: { id: uuid7(), content, attachments: [{ upload, name: "a.txt", size: 5, mediaType: "text/plain" }] } });
+			expect(await commands.startRun(start)).toMatchObject({ outcome: "accepted" });
+			await reached(() => w.stub.faultFired(), "copy:copied");
+			// What a deploy meanwhile leaves: the snapshot's tool and its copy of the hold name a fingerprint the registry no longer has.
+			await runInDurableObject(w.stub, (_instance, state) => {
+				const sql = state.storage.sql;
+				const snapshot = JSON.parse(sql.exec<{ snapshot: string }>("SELECT snapshot FROM runs WHERE id = ?", start.run).one().snapshot);
+				for (const tool of snapshot.tools) if (tool.name === SAVE) tool.contract = "an older contract";
+				for (const hold of snapshot.approval.holds) hold.contract = "an older contract";
+				sql.exec("UPDATE runs SET snapshot = ? WHERE id = ?", JSON.stringify(snapshot), start.run);
+			});
+			await w.stub.faultRelease("copy:copied");
+			expect(await settled(w, start.run)).toMatchObject({ status: "completed" });
+			expect(toolCalls(await eventsOf(w, start.run))).toEqual([
+				expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_STALE", message: "This changed since the user approved it, so it did not run." }),
+			]);
+			expect(outcomeOf((await w.stub.faultRun(heldRun)).holds[0])).toEqual({ kind: "not_run", reason: "changed" });
+			expect(await answerOf(w, start.run)).toBe(`[You asked to ${LABEL}. The user approved it, but it changed since they approved it, so it did not run.]`);
+			expect(requests(await provider(w))).toEqual([FOLDERS]);
+		});
+
+		test("a held call on a connection the next start numbers differently runs under the continuation's name", async () => {
+			const w = await world();
+			const other = uuid7();
+			fake.connections.set(other, notesLease());
+			// The run's own connection is the second of two, so it is `notes2`; the continuation has it alone, as `notes`.
+			const connections = [
+				{ ...notesConnection(other), createdAt: "2026-01-01T00:00:00.000Z" },
+				{ ...notesConnection(w.connectionId), createdAt: "2026-01-02T00:00:00.000Z" },
+			];
+			const grants = [w.connectionId, other].flatMap((connection) => [
+				{ connection, kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" as const },
+				{ connection, kind: FOLDER, resource: "*", name: "", actions: ["create"], effect: "ask" as const },
+			]);
+			const layers = { ceiling: null, user: { restricted: true, revision: 1, grants }, agent: null };
+			const heldRun = await post(w, [{ tools: [{ name: "notes2_save_note", arguments: { folder: "inbox", title: "First" } }] }, { text: "It waits." }], {
+				attended: true,
+				authority: { connections, layers },
+			});
+			expect(await settled(w, heldRun)).toMatchObject({ status: "completed" });
+			const [hold] = (await w.stub.faultRun(heldRun)).holds;
+			expect(hold).toMatchObject({ position: 1, tool: "notes2_save_note", state: "open" });
+			const runId = await post(w, [NOTE], answering(w, heldRun, [true]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			expect(toolCalls(await eventsOf(w, runId))).toEqual([expect.objectContaining({ tool: SAVE, decision: "allowed" })]);
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "First"]);
+			expect(await answerOf(w, runId)).toBe(`[You asked to ${hold?.label}. The user approved it, and it ran: ${result(4, "First")}]`);
+		});
+
+		test("a Stop during the approved save: the save completes, and the next turn's note says it ran", async () => {
+			const w = await world({ delays: { "POST /folders/inbox/notes": 1500 } });
+			const heldRun = await holding(w, ["First", "Second"]);
+			const runId = await post(w, [{ text: "Not reached." }], answering(w, heldRun, [true, true]));
+			await until(() => provider(w), (state) => state.requests.some((request) => request.method === "POST"));
+			expect(await commands.cancelRun({ scope: w.within, conversation: w.conversation, run: runId, reason: "cancelled" })).toEqual({ state: "cancelled" });
+			expect(await settled(w, runId)).toMatchObject({ status: "cancelled" });
+			// The save settles after the Stop, and its settlement stores the hold's outcome; the second never started.
+			const holds = await until(
+				async () => (await w.stub.faultRun(heldRun)).holds,
+				(all) => all[0]?.outcome !== null,
+			);
+			expect(holds.map(outcomeOf)).toEqual([{ kind: "ran", result: result(4, "First") }, null]);
+			expect((await w.stub.faultRun(runId)).writes).toEqual([expect.objectContaining({ status: "succeeded", approved_run: heldRun, approved_position: 1 })]);
+			// After the run's run.settled, which the Stop wrote.
+			const facts = await until(
+				async () => fake.facts(w.conversation).filter((fact) => fact.type === "run.write" && fact.run === runId),
+				(all) => all.length > 0,
+			);
+			expect(facts.map((fact) => fact.data)).toEqual([expect.objectContaining({ outcome: "done", afterCancel: true, approved: { run: heldRun, position: 1 } })]);
+			const next = await post(w, [NOTE], asking(w));
+			expect(await settled(w, next)).toMatchObject({ status: "completed" });
+			expect(await answerOf(w, next)).toBe(
+				`${ran(result(4, "First"))}\n\n[You asked to ${LABEL}. The user approved it, but the turn was stopped before it ran.]`,
+			);
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "First"]);
+		});
+
+		test("the same continuation sent twice is one run, and another run naming the used holds is refused", async () => {
+			const w = await world();
+			const heldRun = await holding(w, ["First"]);
+			const start = startIn(w, script([NOTE]), answering(w, heldRun, [true]));
+			const accepted = await commands.startRun(start);
+			expect(accepted).toMatchObject({ outcome: "accepted" });
+			expect(await commands.startRun(start)).toEqual(accepted);
+			expect(await settled(w, start.run)).toMatchObject({ status: "completed" });
+			expect(await commands.startRun(start)).toEqual(accepted);
+			const other = startIn(w, script([NOTE]), answering(w, heldRun, [true]));
+			expect(await commands.startRun(other)).toEqual({ outcome: "refused", code: "APPROVAL_DECIDED", message: "These actions were already answered." });
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "First"]);
+			expect((await w.stub.faultRun(heldRun)).holds.map(({ decided_by }) => decided_by)).toEqual([start.run]);
+		});
+
+		test("decisions that leave an open hold out, or name another user's, are refused and use nothing", async () => {
+			const w = await world();
+			const heldRun = await holding(w, ["First", "Second"]);
+			const unknown = { outcome: "refused", code: "APPROVAL_UNKNOWN", message: "These decisions do not match the actions waiting for approval." };
+			expect(await commands.startRun(startIn(w, script([NOTE]), answering(w, heldRun, [true])))).toEqual(unknown);
+			expect(await commands.startRun(startIn(w, script([NOTE]), answering(w, heldRun, [true, true], { user: "43" })))).toEqual(unknown);
+			expect((await w.stub.faultRun(heldRun)).holds.map(({ state }) => state)).toEqual(["open", "open"]);
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual(SEEDED);
+		});
+
+		test("a reset at approval:carried: the section runs again and carries out only the holds with no outcome", async () => {
+			const w = await world({ faults: [{ point: "approval:carried", mode: "abort" }] });
+			const heldRun = await holding(w, ["First", "Second"]);
+			const runId = await post(w, [NOTE], answering(w, heldRun, [true, true]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "First", "Second"]);
+			expect(await answerOf(w, runId)).toBe(`${ran(result(4, "First"))}\n\n${ran(result(5, "Second"))}`);
+			expect((await w.stub.faultRun(runId)).writes.map(({ status, approved_position }) => [status, approved_position])).toEqual([
+				["succeeded", 1],
+				["succeeded", 2],
+			]);
+			expect((await w.stub.faultFired()).map((entry) => [entry.point, entry.mode, entry.detail])).toEqual([["approval:carried", "abort", runId]]);
+		});
+
+		test("a reset after the provider applied the first approved save: its outcome is unknown, and the rest do not run", async () => {
+			const w = await world({ faults: [{ point: "provider:write:applied", mode: "abort" }] });
+			const heldRun = await holding(w, ["First", "Second"]);
+			const runId = await post(w, [NOTE], answering(w, heldRun, [true, true]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "First"]);
+			expect((await w.stub.faultRun(heldRun)).holds.map(outcomeOf)).toEqual([{ kind: "unknown" }, { kind: "not_run", reason: "earlier" }]);
+			expect((await w.stub.faultRun(runId)).writes).toEqual([expect.objectContaining({ status: "uncertain", approved_position: 1 })]);
+			expect(await answerOf(w, runId)).toBe(
+				`[You asked to ${LABEL}. The user approved it, but whether it ran is unknown. Check before trying again.]\n\n[You asked to ${LABEL}. The user approved it, but it did not run, because an approved action before it did not succeed.]`,
+			);
+		});
+
+		test("an approved save whose response is lost: unknown, and the rest do not run", async () => {
+			const w = await world({ faults: [{ point: "provider:write:applied", mode: "lose" }] });
+			const heldRun = await holding(w, ["First", "Second"]);
+			const runId = await post(w, [NOTE], answering(w, heldRun, [true, true]));
+			expect(await settled(w, runId)).toMatchObject({ status: "completed" });
+			expect((await provider(w)).notes.map((note) => note.title)).toEqual([...SEEDED, "First"]);
+			expect((await w.stub.faultRun(heldRun)).holds.map(outcomeOf)).toEqual([{ kind: "unknown" }, { kind: "not_run", reason: "earlier" }]);
+			expect(toolCalls(await eventsOf(w, runId))).toEqual([expect.objectContaining({ tool: SAVE, decision: "denied", code: "WRITE_UNCERTAIN" })]);
+			expect(await answerOf(w, runId)).toBe(
+				`[You asked to ${LABEL}. The user approved it, but whether it ran is unknown. Check before trying again.]\n\n[You asked to ${LABEL}. The user approved it, but it did not run, because an approved action before it did not succeed.]`,
+			);
+		});
 	});
 });

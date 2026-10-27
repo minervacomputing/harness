@@ -18,7 +18,7 @@ import { z } from "zod";
 import { MAX_HELD_ARGUMENTS } from "@minerva/contract/internal";
 import { type Connector, type Operation, OperationError, type Prepared, type ProviderOutput, defineOperation, inTenant } from "../../src/gateway/connector.ts";
 import { visibleResult } from "../../src/gateway/executor.ts";
-import { APPROVAL_MESSAGES } from "../../src/gateway/holds.ts";
+import { APPROVAL_MESSAGES, type ApprovedCall, type HeldRequirement } from "../../src/gateway/holds.ts";
 import { WRITE_MESSAGES, writeKey } from "../../src/gateway/ledger.ts";
 import { Layer, Policy } from "../../src/gateway/policy.ts";
 import {
@@ -457,7 +457,7 @@ describe("an attended run holds a call the policy asks before", () => {
 				contract: run.registry.contract("todoist", "create_task"),
 				arguments: '{"project_id":"work","title":"a"}',
 				requirements: [{ kind: PROJECT, kindLabel: "Project", resource: "work", name: "Work", action: "create", actionLabel: "Create tasks", effect: "ask", asked: ["user"] }],
-				state: "open",
+				decision: { state: "open" },
 				createdAt: run.clock.now(),
 			},
 		]);
@@ -572,6 +572,69 @@ describe("an attended run holds a call the policy asks before", () => {
 			new Policy([Layer.build("user", true, effect === "ask" ? [row(["read", "create"], "allow"), row(["create"], "ask")] : [row(["read"], "allow"), row(["create"], "deny")])]);
 		expect(visibleResult(connector, op, ref, policy("ask"), { records: [record] })).toEqual({ result: { items: [{ board: "news" }], count: 1 }, images: [] });
 		expect(visibleResult(connector, op, ref, policy("deny"), { records: [record] })).toEqual({ result: { items: [], count: 0 }, images: [] });
+	});
+});
+
+describe("a continuation's approved call", () => {
+	const CREATE = "todoist_create_task";
+	const FIELDS = { project_id: "work", title: "a" };
+	const HELD = "0199a000-0000-7000-8000-0000000000d1";
+	const STALE = { code: "APPROVAL_STALE", message: "This changed since the user approved it, so it did not run." };
+	const WORK: HeldRequirement = { kind: PROJECT, kindLabel: "Project", resource: "work", name: "Work", action: "create", actionLabel: "Create tasks", effect: "ask", asked: ["user"] };
+	/** Reads on both projects, creates on `private`; `work` asks before a create, as when the call was held. */
+	const ASKING = [...userGrants(TODOIST, PROJECT, { work: ["read"], private: ["read", "create"] }), ...askingGrants(TODOIST, PROJECT, { work: ["create"] })];
+
+	/** The pass of the hold at position 2 of the held run, for these fields and what the user saw. */
+	async function pass(fields: { [key: string]: unknown } = FIELDS, requirements: HeldRequirement[] = [WORK]): Promise<ApprovedCall> {
+		return { run: HELD, position: 2, key: await writeKey(CREATE, fields), requirements };
+	}
+
+	function continuation(todoist: FakeTodoist, options: { user?: typeof ASKING; ceiling?: typeof ASKING; connector?: Connector } = {}) {
+		const { user = ASKING, ceiling, connector = todoistConnector() } = options;
+		return Scenario.start({ connectors: [connector], connections: [todoistConnection()], user, ...(ceiling ? { ceiling } : {}), fetch: todoist.fetch, attended: true });
+	}
+
+	test("runs under the ask it was held for, holding nothing, and its write names its hold; the model's same call is then answered from the record", async () => {
+		const todoist = new FakeTodoist();
+		const run = await continuation(todoist);
+		expect((await run.ok(CREATE, FIELDS, { approved: await pass() })).result.count).toBe(1);
+		expect([todoist.count("POST", "/tasks"), run.ledger.holds(RUN)]).toEqual([1, []]);
+		expect(run.ledger.approvedWrite(RUN, HELD, 2)).toMatchObject({ key: await writeKey(CREATE, FIELDS), status: "succeeded" });
+		expect((await run.ok(CREATE, FIELDS)).repeat).toBe(true);
+		expect(todoist.count("POST", "/tasks")).toBe(1);
+	});
+
+	test("runs where the layers now allow it, and is POLICY_DENIED where one now denies it", async () => {
+		const todoist = new FakeTodoist();
+		const allowed = await continuation(todoist, { user: userGrants(TODOIST, PROJECT, { work: ["read", "create"] }) });
+		expect((await allowed.ok(CREATE, FIELDS, { approved: await pass() })).result.count).toBe(1);
+		const ceiling = [{ layer: "ceiling" as const, subject: null, connectionId: TODOIST, kind: PROJECT, resourceId: "work", resourceName: "", actions: ["create"], effect: "deny" as const }];
+		const denied = await continuation(todoist, { ceiling });
+		expect(await denied.error(CREATE, FIELDS, { approved: await pass() })).toEqual({ code: "POLICY_DENIED", message: "This resource or action is not available under the current permissions." });
+		expect([todoist.count("POST", "/tasks"), denied.ledger.writes(RUN)]).toEqual([1, []]);
+	});
+
+	test("is APPROVAL_STALE, sending nothing, when its fields or destinations are not the ones the user approved, also when the new one is allowed", async () => {
+		const todoist = new FakeTodoist();
+		const run = await continuation(todoist);
+		expect(await run.error(CREATE, FIELDS, { approved: await pass({ project_id: "work", title: "b" }) })).toEqual(STALE);
+		// Approved only before a create in `work`, or before that and another one.
+		expect(await run.error(CREATE, FIELDS, { approved: await pass(FIELDS, [{ ...WORK, resource: "private", name: "Private" }]) })).toEqual(STALE);
+		expect(await run.error(CREATE, FIELDS, { approved: await pass(FIELDS, [WORK, { ...WORK, action: "read", actionLabel: "Read tasks" }]) })).toEqual(STALE);
+		// The same fields now name another project, one the layers allow: still not what the user saw.
+		const base = todoistConnector();
+		const moved: Connector = {
+			...base,
+			operations: base.operations.map((op) => (op.name !== "create_task" ? op : { ...op, prepare: (binding, data) => op.prepare(binding, { ...(data as object), project_id: "private" } as never) })),
+		};
+		const elsewhere = await continuation(todoist, { connector: moved });
+		expect(await elsewhere.error(CREATE, FIELDS, { approved: await pass() })).toEqual(STALE);
+		expect([todoist.count("POST", "/tasks"), run.ledger.writes(RUN), run.ledger.holds(RUN), elsewhere.ledger.writes(RUN)]).toEqual([0, [], [], []]);
+		expect(run.events.map((event) => [event.decision, (event as { code?: string }).code])).toEqual([
+			["denied", "APPROVAL_STALE"],
+			["denied", "APPROVAL_STALE"],
+			["denied", "APPROVAL_STALE"],
+		]);
 	});
 });
 

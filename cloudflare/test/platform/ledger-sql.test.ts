@@ -8,6 +8,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, test } from "vitest";
 import { scriptsObject } from "../../src/addressing.ts";
 import { HOLD_SCHEMA, LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA, LOST_WRITE_GRACE_MS, WRITE_MESSAGES, WriteLedger } from "../../src/gateway/ledger.ts";
+import { HOLD_DECISION_SCHEMA } from "../../src/gateway/schema.ts";
 import { PAGE_TOKEN_SCHEMA, PageTokens } from "../../src/gateway/page-tokens.ts";
 import { durableSql } from "../../src/lib/sql.ts";
 import { migrate } from "../../src/lib/sqlite.ts";
@@ -61,7 +62,7 @@ describe("the ledger on a Durable Object's SQLite", () => {
 	test("its schema is one migration step, and the protocol runs as on node:sqlite", async () => {
 		await runInDurableObject(object(), (_, state) => {
 			// A step id of its own: the Scripts object these tests borrow applies its own step 1 when it is built.
-			expect(migrate(state.storage, [{ id: 100, sql: [...LEDGER_SCHEMA, ...LEDGER_NOTES_SCHEMA, ...PAGE_TOKEN_SCHEMA, ...HOLD_SCHEMA].join(";\n") }])).toEqual([100]);
+			expect(migrate(state.storage, [{ id: 100, sql: [...LEDGER_SCHEMA, ...LEDGER_NOTES_SCHEMA, ...PAGE_TOKEN_SCHEMA, ...HOLD_SCHEMA, ...HOLD_DECISION_SCHEMA].join(";\n") }])).toEqual([100]);
 			const sql = durableSql(state.storage);
 			const ledger = new WriteLedger(sql, clock, { closed: () => false, close: () => {} });
 			expect(ledger.dispatch({ runId: RUN, attempt: 1 }, K1, null)).toEqual({ kind: "dispatched", deadline: 1_060_000 });

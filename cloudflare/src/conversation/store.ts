@@ -25,7 +25,7 @@ import { isoTime } from "../lib/dates.ts";
 import type { Attachment, FolderChanges, FolderWarnings, Run, ToolCallEventData } from "@minerva/contract";
 import type { Fact, StartRunResult } from "@minerva/contract/internal";
 import { type Prices, type TokenRates, callCharge, callPrice, containerTimeCharge, scriptCharge } from "../budget/prices.ts";
-import { type HeldCall, heldCallData } from "../gateway/holds.ts";
+import { type ClosedHold, type HeldCall, heldCallData } from "../gateway/holds.ts";
 import type { SettledWrite } from "../gateway/ledger.ts";
 import type { CallRequest, CallSettlement } from "../model/provider.ts";
 import type { Tokens } from "../model/tap.ts";
@@ -71,6 +71,11 @@ export interface RunSnapshot extends StartSnapshot {
 	 * it, selected and clipped, and its prompt.
 	 */
 	turn: { history: Replayed[]; prompt: string };
+	/**
+	 * For a start without an approval, the conversation's open holds when it was stored, which it closes once its prompt is
+	 * committed (ARCHITECTURE.md: Starting a run); its note names them. Absent when there were none.
+	 */
+	closed?: ClosedHold[];
 }
 
 /**
@@ -1170,11 +1175,14 @@ export class RunStore {
 		});
 	}
 
-	/** A `tool_call` event while the run is active, with its fact made from the call's own arguments (facts.ts `toolCallFact`). */
-	appendToolCall(runId: RunId, data: ToolCallEventData, args: Json | undefined): RunEvent | null {
+	/**
+	 * A `tool_call` event while the run is active, with its fact made from the call's own arguments (facts.ts `toolCallFact`);
+	 * `approved` names the hold a continuation carried out or refused, on the fact.
+	 */
+	appendToolCall(runId: RunId, data: ToolCallEventData, args: Json | undefined, approved?: { run: RunId; position: number }): RunEvent | null {
 		return this.write(() => {
 			const appended = this.append(runId, { type: "tool_call", data }, "active");
-			if (appended) this.#fact(runId, toolCallFact(data, args));
+			if (appended) this.#fact(runId, toolCallFact(data, args, approved));
 			return appended;
 		});
 	}
@@ -1383,7 +1391,8 @@ export class RunStore {
 	writeSettled(write: SettledWrite, outcome: WriteOutcome): void {
 		const run = this.#checked(write.runId);
 		const afterCancel = run === null || run.revoked === 1 || !ACTIVE.has(run.status);
-		this.#fact(write.runId, { type: "run.write", data: { write: write.write, tool: write.tool, connection: write.connection, outcome, afterCancel } });
+		const approved = write.approved ? { approved: write.approved } : {};
+		this.#fact(write.runId, { type: "run.write", data: { write: write.write, tool: write.tool, connection: write.connection, outcome, afterCancel, ...approved } });
 	}
 
 	/** A hold (the ledger's `LedgerRuns.callHeld`), in its transaction. */

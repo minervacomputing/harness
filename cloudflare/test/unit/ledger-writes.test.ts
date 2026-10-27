@@ -15,6 +15,8 @@ import { ledgerSql, openDatabase, scratchDirectory } from "./sqlite.ts";
 
 const RUN = "0199a000-0000-7000-8000-0000000000c1";
 const OTHER = "0199a000-0000-7000-8000-0000000000c2";
+const LATER = "0199a000-0000-7000-8000-0000000000c3";
+const PLAIN = "0199a000-0000-7000-8000-0000000000c4";
 const K1 = "a".repeat(64);
 const K2 = "b".repeat(64);
 const RESULT = { items: [{ id: "copy-1" }], count: 1 };
@@ -234,7 +236,7 @@ describe("holds", () => {
 	test("a hold claims nothing and keeps the call whole at the next position; the run's writes that do not ask are then refused and closed", () => {
 		const { clock, ledger, state } = setup();
 		const fence = { runId: RUN, attempt: 1 };
-		expect(state.holdCall(fence, hold(K1))).toEqual({ kind: "held", call: { ...hold(K1), runId: RUN, position: 1, state: "open", createdAt: clock.now() } });
+		expect(state.holdCall(fence, hold(K1))).toEqual({ kind: "held", call: { ...hold(K1), runId: RUN, position: 1, decision: { state: "open" }, createdAt: clock.now() } });
 		expect([state.heldCall(RUN, K1)?.position, state.heldCall(RUN, K2), state.knownWrite(RUN, K1), ledger.holding(RUN), state.writesClosed(RUN)]).toEqual([1, null, null, true, false]);
 		expect(state.dispatchWrite(fence, K2)).toEqual(PENDING);
 		expect([ledger.writes(RUN), state.writesClosed(RUN)]).toEqual([[], true]);
@@ -266,6 +268,86 @@ describe("holds", () => {
 		expect([ledger.holds(RUN), ledger.holds(OTHER), state.writesClosed(RUN)]).toEqual([[], [], false]);
 	});
 
+	test("a later run decides each open hold once: a continuation uses its run's with their decisions, a plain start closes the rest", () => {
+		const { ledger } = setup();
+		ledger.hold(RUN, hold(K1));
+		ledger.hold(RUN, hold(K2));
+		ledger.hold(OTHER, hold(key(3)));
+		expect(ledger.openHolds().map(({ runId, position }) => [runId, position])).toEqual([
+			[RUN, 1],
+			[RUN, 2],
+			[OTHER, 1],
+		]);
+		ledger.use(LATER, RUN, [
+			{ position: 1, approve: true },
+			{ position: 2, approve: false },
+		]);
+		// Used once: a second use, or a close, changes nothing.
+		ledger.use(PLAIN, RUN, [{ position: 1, approve: false }]);
+		ledger.close(PLAIN, [
+			{ run: RUN, position: 2 },
+			{ run: OTHER, position: 1 },
+		]);
+		expect([...ledger.holds(RUN), ...ledger.holds(OTHER)].map((held) => held.decision)).toEqual([
+			{ state: "used", by: LATER, approve: true, outcome: null },
+			{ state: "used", by: LATER, approve: false },
+			{ state: "closed", by: PLAIN },
+		]);
+		expect(ledger.openHolds()).toEqual([]);
+	});
+
+	test("an approved write's settlement stores its hold's outcome, also after its run was cancelled, and the first to know decides", () => {
+		const { ledger, runs } = setup();
+		for (let n = 1; n <= 4; n++) ledger.hold(OTHER, hold(key(n)));
+		ledger.use(RUN, OTHER, [1, 2, 3, 4].map((position) => ({ position, approve: true })));
+		const note = (position: number) => ({ tool: "notes_save_note", connection: "0199a000-0000-7000-8000-000000000001", write: "f".repeat(32), approved: { run: OTHER, position } });
+		const fence = { runId: RUN, attempt: 1 };
+		ledger.dispatch(fence, key(1), null, note(1));
+		expect(ledger.settle(RUN, key(1), { effect: "applied", result: RESULT })).toEqual({ runId: RUN, ...note(1) });
+		expect(ledger.approvedWrite(RUN, OTHER, 1)).toMatchObject({ key: key(1), status: "succeeded", result: RESULT });
+		runs.set(RUN, { status: "cancelled" });
+		ledger.dispatch(fence, key(2), null, note(2));
+		ledger.settle(RUN, key(2), { effect: "not_applied", message: "The provider refused this request." });
+		// Never sent: nothing is known, so the continuation decides.
+		ledger.dispatch(fence, key(3), null, note(3));
+		ledger.settle(RUN, key(3), { effect: "not_applied" });
+		ledger.dispatch(fence, key(4), null, note(4));
+		ledger.settle(RUN, key(4), { effect: "unknown" });
+		ledger.answer(OTHER, 1, { kind: "failed", message: "Too late." });
+		expect(ledger.holds(OTHER).map((held) => held.decision)).toEqual([
+			{ state: "used", by: RUN, approve: true, outcome: { kind: "ran", result: JSON.stringify(RESULT) } },
+			{ state: "used", by: RUN, approve: true, outcome: { kind: "failed", message: "The provider refused this request." } },
+			{ state: "used", by: RUN, approve: true, outcome: null },
+			{ state: "used", by: RUN, approve: true, outcome: { kind: "unknown" } },
+		]);
+		expect([ledger.approvedWrite(RUN, OTHER, 2), ledger.approvedWrite(RUN, OTHER, 3), ledger.approvedWrite(PLAIN, OTHER, 4)]).toEqual([null, null, null]);
+	});
+
+	test("an approved write the restart gate or the sweep marks has an unknown outcome; a declined or closed hold gets none", () => {
+		const { clock, ledger, runs } = setup();
+		runs.add(LATER, { deadline: null });
+		ledger.hold(OTHER, hold(K1));
+		ledger.hold(OTHER, hold(K2));
+		ledger.hold(OTHER, hold(key(3)));
+		ledger.use(RUN, OTHER, [
+			{ position: 1, approve: true },
+			{ position: 2, approve: true },
+			{ position: 3, approve: false },
+		]);
+		const note = (position: number) => ({ tool: "notes_save_note", connection: "c", write: "w", approved: { run: OTHER, position } });
+		ledger.dispatch({ runId: RUN, attempt: 1 }, K1, null, note(1));
+		expect(ledger.markDispatchedUncertain(RUN)).toEqual([{ runId: RUN, key: K1, ...note(1) }]);
+		ledger.dispatch({ runId: LATER, attempt: 1 }, K2, null, note(2));
+		clock.advance(WRITE_WINDOW_MS + LOST_WRITE_GRACE_MS + 1);
+		expect(ledger.sweep()).toEqual([{ runId: LATER, key: K2, ...note(2) }]);
+		ledger.answer(OTHER, 3, { kind: "ran", result: "{}" });
+		expect(ledger.holds(OTHER).map((held) => held.decision)).toEqual([
+			{ state: "used", by: RUN, approve: true, outcome: { kind: "unknown" } },
+			{ state: "used", by: RUN, approve: true, outcome: { kind: "unknown" } },
+			{ state: "used", by: RUN, approve: false },
+		]);
+	});
+
 	test("holds are kept in the database and go with the run's writes", () => {
 		const path = `${scratch.path}/holds.sqlite`;
 		const clock = new FakeClock();
@@ -273,7 +355,7 @@ describe("holds", () => {
 		new WriteLedger(ledgerSql(before), clock, new FakeRuns()).hold(RUN, hold(K1));
 		before.close();
 		const after = new WriteLedger(ledgerSql(openDatabase(path)), clock, new FakeRuns());
-		expect(after.held(RUN, K1)).toEqual({ ...hold(K1), runId: RUN, position: 1, state: "open", createdAt: clock.now() });
+		expect(after.held(RUN, K1)).toEqual({ ...hold(K1), runId: RUN, position: 1, decision: { state: "open" }, createdAt: clock.now() });
 		expect(after.dispatch({ runId: RUN, attempt: 2 }, K2, null)).toEqual(PENDING);
 		after.forget(RUN);
 		expect([after.holds(RUN), after.holding(RUN)]).toEqual([[], false]);

@@ -5,7 +5,8 @@
 // query hash → page token → write key, known write, held write and closed writes → open the client (a credential lease
 // fenced by run and attempt) → consent → prepare → authorize (declaration, then the policy's denies, the tenants and the
 // asks) → on an ask, name its resources and hold it (ARCHITECTURE.md: Writes), else current attempt → execute, or
-// dispatch, execute and settle the write → still active → close the client → run-bound page token.
+// dispatch, execute and settle the write → still active → close the client → run-bound page token. A continuation's
+// approved call takes the same path with its hold as its pass: its key and destinations must be the ones the user approved.
 //
 // It runs in the Conversation Durable Object, so every run-state check is a synchronous read
 // (RunStatePort): the revocation check before each provider request happens in the same tick as the
@@ -47,7 +48,7 @@ import {
 	requiresOf,
 	termsOf,
 } from "./connector.ts";
-import { APPROVAL_MESSAGES, type HeldRequirement, type Hold, heldCallData } from "./holds.ts";
+import { APPROVAL_MESSAGES, type ApprovedCall, type HeldRequirement, type Hold, heldCallData } from "./holds.ts";
 import { CallIo, type RunBrowser } from "./http.ts";
 import { RUN_ENDED_MESSAGE, WRITE_MESSAGES, type WriteNote, knownAnswer, writeKey } from "./ledger.ts";
 import { INVALID_CURSOR_MESSAGE, LIMIT_REACHED_MESSAGE, queryHash } from "./page-tokens.ts";
@@ -98,6 +99,8 @@ export interface ToolCallRequest {
 	 * a write already sent when the call was cancelled still gets its `tool_call` event from it.
 	 */
 	settled?: (outcome: ToolCallOutcome) => void;
+	/** A continuation's approved call: it runs only as the user approved it, and an ask over the same destinations passes. */
+	approved?: ApprovedCall;
 }
 
 /**
@@ -140,7 +143,9 @@ export type ToolCallOutcome =
  * Approvals (holds.ts `APPROVAL_MESSAGES`): a write the policy asks before is held for the user's approval, claiming
  * nothing, and answers APPROVAL_REQUIRED, as does a repeat of it, before its lease. Only an attended run holds; any other
  * answers APPROVAL_UNAVAILABLE. A held call too large for its card answers APPROVAL_TOO_LARGE. A later write that does not
- * ask, and every write once one was, answers APPROVAL_PENDING.
+ * ask, and every write once one was, answers APPROVAL_PENDING. A continuation's approved call whose write key, or whose
+ * destinations from `prepare`, differ from its hold's answers APPROVAL_STALE after the denies and the tenants; one whose
+ * destinations a layer asks before runs, since the user saw each of them.
  *
  * Revocation: the executor checks the run's local `revoked` flag and its state synchronously, with no
  * await in between, immediately before it dispatches any provider request, and again before it returns
@@ -606,6 +611,8 @@ export class ToolExecutor implements Executor {
 		}
 		// The full fields, so for a paginated write the page token too.
 		const key = terms.mutates ? await writeKey(request.name, fields) : null;
+		// Fields that validate to others than the hold's would run something the user never saw.
+		if (request.approved && key !== request.approved.key) throw new OperationError("APPROVAL_STALE", APPROVAL_MESSAGES.changed);
 		// Before dispatch, so the settlement can report it in the transaction that records it (an HMAC is asynchronous).
 		const write = key === null ? null : await writeId(this.#host.secretKey, this.#runId, key);
 		this.#step(request);
@@ -623,7 +630,8 @@ export class ToolExecutor implements Executor {
 			if (held !== null) throw new ApprovalRequired(held.write);
 			if (this.#run.writesClosed(this.#runId)) throw new OperationError("APPROVAL_PENDING", APPROVAL_MESSAGES.pending);
 		}
-		const writing = key === null || write === null ? null : { key, fields, note: { tool: request.name, connection: ref.connection_id, write } };
+		const approved = request.approved ? { approved: { run: request.approved.run, position: request.approved.position } } : {};
+		const writing = key === null || write === null ? null : { key, fields, note: { tool: request.name, connection: ref.connection_id, write, ...approved } };
 		const [result, repeat, images] = await this.#perform(request, ref, op, terms, data, hash, writing);
 		return { result, images, title: op.title, repeat, writeKey: key, write };
 	}
@@ -673,7 +681,7 @@ export class ToolExecutor implements Executor {
 			}
 			const prepared = await unlessAborted(op.prepare(binding(ref.connection_id, client), data as never), request.signal);
 			if (!Array.isArray(prepared?.requirements) || prepared.requirements.length === 0) throw this.#bug(`${ref.provider}.${op.name}`, "no requirements");
-			const asked = this.#authorize(connector, op, terms, ref, prepared.requirements);
+			const asked = this.#authorize(connector, op, terms, ref, prepared.requirements, request.approved ?? null);
 			if (asked !== null) {
 				// A read never asks (asks compile only on actions no read needs); the check keeps every hold keyed.
 				if (writing === null || !this.#attended) throw new OperationError("APPROVAL_UNAVAILABLE", APPROVAL_MESSAGES.unavailable);
@@ -724,9 +732,17 @@ export class ToolExecutor implements Executor {
 	 * connection policy's tenants. A connector bug throws at once; denial is decided after the loop (risk 15), the grants'
 	 * first, so the tenant's refusal names the tenant only of resources the run may otherwise use, and an ask last, so it
 	 * is answered only for a call nothing else refuses. Reads never ask: asks compile only on actions no read needs.
-	 * Returns every concrete requirement with its decision when the policy asks before any, else null.
+	 * Returns every concrete requirement with its decision when the policy asks before any, else null. An approved call
+	 * passes instead when its requirements are the ones its hold stored, whatever asks.
 	 */
-	#authorize(connector: Connector, op: Operation<never>, terms: OperationTerms, ref: ToolRef, requirements: readonly Requirement[]): Decided[] | null {
+	#authorize(
+		connector: Connector,
+		op: Operation<never>,
+		terms: OperationTerms,
+		ref: ToolRef,
+		requirements: readonly Requirement[],
+		approved: ApprovedCall | null,
+	): Decided[] | null {
 		const where = `${ref.provider}.${op.name}`;
 		const pairKey = (kind: string, action: string) => JSON.stringify([kind, action]);
 		const declared = new Set(op.needs.map(([kind, action]) => pairKey(kind, action)));
@@ -781,6 +797,13 @@ export class ToolExecutor implements Executor {
 		if (terms.mutates && !concrete) throw this.#bug(where, "a write needs a concrete destination");
 		if (refused) throw denied();
 		if (outside) throw tenantRefused(connector);
+		if (approved !== null) {
+			const needs = (items: { kind: string; id: string; action: string }[]) => new Set(items.map(({ kind, id, action }) => JSON.stringify([kind, id, action])));
+			const now = needs(decided.map(({ resource, action }) => ({ kind: resource.kind, id: resource.id, action })));
+			const seen = needs(approved.requirements.map(({ kind, resource, action }) => ({ kind, id: resource, action })));
+			if (now.size !== seen.size || [...now].some((need) => !seen.has(need))) throw new OperationError("APPROVAL_STALE", APPROVAL_MESSAGES.changed);
+			return null;
+		}
 		return asked ? decided : null;
 	}
 
@@ -919,7 +942,7 @@ export class ToolExecutor implements Executor {
 			} catch (error) {
 				const effect = attempt.outcome();
 				if (effect === "not_applied") {
-					await settle({ effect: "not_applied" });
+					await settle({ effect: "not_applied", message: publicError(error).message });
 					throw error;
 				}
 				if (effect === "applied") {

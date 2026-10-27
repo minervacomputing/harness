@@ -14,8 +14,17 @@ import type { InspectedUpload, ReservedUpload, StagedUpload } from "../files/sta
 import { systemClock } from "../gateway/clock.ts";
 import { type Executor, type ExecutorContext, createExecutor } from "../gateway/executor.ts";
 import { RunBrowser } from "../gateway/http.ts";
-import type { HeldCall, Hold } from "../gateway/holds.ts";
-import { type DispatchResult, type HoldResult, RUN_ENDED_MESSAGE, type SettledWrite, type Settlement, type WriteNote, WriteLedger as GatewayLedger } from "../gateway/ledger.ts";
+import type { HeldCall, Hold, HoldOutcome } from "../gateway/holds.ts";
+import {
+	type DispatchResult,
+	type HoldResult,
+	RUN_ENDED_MESSAGE,
+	type SettledWrite,
+	type Settlement,
+	type WriteNote,
+	type WriteRecord,
+	WriteLedger as GatewayLedger,
+} from "../gateway/ledger.ts";
 import { PageTokens } from "../gateway/page-tokens.ts";
 import type { Registry } from "../gateway/registry.ts";
 import type { RunStatePort } from "../gateway/run-state.ts";
@@ -51,6 +60,18 @@ export interface WriteLedger extends Pick<RunStatePort, "knownWrite" | "heldCall
 	 * Returns the runs affected and when to sweep next, null when nothing is dispatched.
 	 */
 	sweepLostWrites(now: EpochMs): { uncertain: RunId[]; nextAt: EpochMs | null };
+	/** The run's holds, in position order, with how each was decided (gateway/holds.ts). */
+	holds(runId: RunId): HeldCall[];
+	/** The conversation's open holds, of whichever run, oldest first. */
+	openHolds(): HeldCall[];
+	/** In the start's final write: a continuation uses the held run's holds with the user's decisions. */
+	useHolds(by: RunId, heldRun: RunId, decisions: readonly { position: number; approve: boolean }[]): void;
+	/** In the write that commits a start's prompt: the holds it closes, those still open. */
+	closeHolds(by: RunId, holds: readonly { run: RunId; position: number }[]): void;
+	/** An approved hold's outcome, unless its write's settlement stored one first. */
+	answerHold(heldRun: RunId, position: number, outcome: HoldOutcome): void;
+	/** The write the continuation `runId` made for an approved hold, if it made one. */
+	approvedWrite(runId: RunId, heldRun: RunId, position: number): WriteRecord | null;
 }
 
 /** What the ledger reads and writes of the run itself (`writes_uncertain` and `writes_closed` are run columns). */
@@ -172,7 +193,8 @@ export interface ConversationPorts {
 	 * creation of the conversation's pi conversation and the run's claim; `pi:stop` at a run's end, before it marks pi's orphaned work;
 	 * `start:planned` between a start's inspection of its attachments and the transaction that stores its run; `copy:copied`
 	 * between a run's copy of its attachments and the write that commits them; `approval:held` between a hold's write and
-	 * the executor's answer to its call.
+	 * the executor's answer to its call; `approval:carried` between an approved call's outcome and the next approved call or
+	 * the run's submission.
 	 */
 	point?(context: PortsContext, name: string, detail?: string): Promise<void>;
 	/**
@@ -262,6 +284,12 @@ export function gatewayLedger(storage: DurableObjectStorage, runs: LedgerRuns): 
 				for (const write of lost) runs.writeSettled(write, "uncertain");
 				return { uncertain, nextAt: ledger.nextSweepAt() };
 			}),
+		holds: (runId) => ledger.holds(runId),
+		openHolds: () => ledger.openHolds(),
+		useHolds: (by, heldRun, decisions) => ledger.use(by, heldRun, decisions),
+		closeHolds: (by, holds) => ledger.close(by, holds),
+		answerHold: (heldRun, position, outcome) => ledger.answer(heldRun, position, outcome),
+		approvedWrite: (runId, heldRun, position) => ledger.approvedWrite(runId, heldRun, position),
 	};
 }
 

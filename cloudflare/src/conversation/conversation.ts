@@ -33,9 +33,12 @@ import { connectorRegistry } from "../connectors/index.ts";
 import { type FolderLimit, folderLimitMessage, type FolderLimits } from "../files/limits.ts";
 import type { AttachmentCopies, DownloadTarget } from "../files/store.ts";
 import type { CredentialPort, Executor, ToolCallOutcome, ToolDeclaration } from "../gateway/executor.ts";
+import { APPROVAL_MESSAGES, type Approval, type ApprovedCall, type DecidedHold, type HoldOutcome, MAX_OUTCOME_RESULT } from "../gateway/holds.ts";
+import { writeKey } from "../gateway/ledger.ts";
+import { argumentsSummary, refusedEvent } from "../gateway/results.ts";
 import type { Registry as ConnectorRegistry } from "../gateway/registry.ts";
 import type { RunStatePort } from "../gateway/run-state.ts";
-import { modelTools } from "../gateway/tools.ts";
+import { modelTools, type ToolRef } from "../gateway/tools.ts";
 import { type About, identity } from "../lib/about.ts";
 import { type Json, parseJson } from "../lib/json.ts";
 import { isUuid, uuid7 } from "../lib/random.ts";
@@ -53,7 +56,20 @@ import type { ScriptsApi } from "../scripts/scripts.ts";
 import { scriptTool } from "../scripts/tool.ts";
 import type { Folder } from "@minerva/contract";
 import type { CancelRun, CancelRunResult, DeleteConversation, DeleteConversationResult, Fact, ReadFolder, ReplayFacts, ResolveDownload, StartRun, StartRunResult } from "@minerva/contract/internal";
-import { type Preparation, type StartRefusal, UNAVAILABLE, deletedRefusal, messageRefusal, prepareStart, promptOf as internalPrompt, startRefusal } from "../internal/start.ts";
+import {
+	type HeldRun,
+	type Preparation,
+	type StartRefusal,
+	UNAVAILABLE,
+	approvalOf,
+	approvalRefusal,
+	deletedRefusal,
+	messageRefusal,
+	prepareStart,
+	promptOf as internalPrompt,
+	startRefusal,
+} from "../internal/start.ts";
+import { sliceText } from "../lib/text.ts";
 import type { AttemptFence, RunId, Sha256, WorkspaceRef } from "../shared/rpc.ts";
 import {
 	ACTING,
@@ -74,7 +90,7 @@ import {
 	WORKSPACE_FULL,
 } from "./events.ts";
 import { decideGate, type PiWork } from "./gate.ts";
-import { HISTORY_LIMIT, sessionInstructions, turnNote, type UnseenTurn } from "./history.ts";
+import { type AnsweredHold, HISTORY_LIMIT, type HoldAnswer, holdAnswer, sessionInstructions, turnNote, type UnseenTurn } from "./history.ts";
 import { cloudflareImages } from "./images.ts";
 import { FolderOverLimit, LOCAL_TOOLS, type LocalTool, type LocalToolEvent, localToolSpecs, runGated, SandboxRefused } from "./local.ts";
 import { FactDelivery } from "./delivery.ts";
@@ -457,18 +473,22 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	async #startOnce(command: StartRun): Promise<StartRunResult> {
 		const runId = command.run;
 		const config = settings(this.env);
-		const refusal =
-			messageRefusal(command, config.files) ?? (command.approval ? startRefusal("APPROVAL_UNKNOWN", "This engine cannot carry out approvals yet.") : null);
+		const held = this.#heldRun(command);
+		const refusal = messageRefusal(command, config.files) ?? approvalRefusal(command, held);
 		this.#connectors ??= await connectorRegistry();
 		const compiled =
 			refusal === null && this.#store.preparation(runId) === null
-				? await prepareStart(this.#connectors, command, { now: this.#store.now(), runTimeoutMs: this.#ports.runTimeoutMs(this.#portsContext() as PortsContext) })
+				? await prepareStart(this.#connectors, command, {
+						now: this.#store.now(),
+						runTimeoutMs: this.#ports.runTimeoutMs(this.#portsContext() as PortsContext),
+						approval: approvalOf(command, held),
+					})
 				: null;
 		const first = await this.#store.outside(() =>
 			this.#store.write((): StartRunResult | Preparation => {
 				const answered = this.#store.answer(runId);
 				if (answered) return answered;
-				const refused = this.#startState(runId) ?? refusal;
+				const refused = this.#startState(runId) ?? refusal ?? approvalRefusal(command, this.#heldRun(command));
 				if (refused) return this.#answerRefused(runId, refused);
 				const prepared = this.#store.preparation(runId);
 				if (prepared) return prepared;
@@ -487,7 +507,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			this.#store.write((): StartRunResult => {
 				const answered = this.#store.answer(runId);
 				if (answered) return answered;
-				const refused = this.#startState(runId);
+				// Checked again here, where the holds are used: a hold is used once, by the first start this write stores.
+				const refused = this.#startState(runId) ?? approvalRefusal(command, this.#heldRun(command));
 				if (refused) return this.#answerRefused(runId, refused);
 				// In this write, so the folder it plans on is the one the run is stored with.
 				const planned = folder.planAttachments(uploads);
@@ -495,6 +516,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 				const plan = planned.value;
 				const now = this.#store.now();
 				const attachments = plan.attachments.map(({ path, size, mediaType }) => ({ path, size, mediaType }));
+				// The conversation stays busy until this run ends, so these are the holds its prompt's commit closes.
+				const closed = command.approval ? [] : this.#ledger().openHolds().map(({ runId: run, position, label }) => ({ run, position, label }));
 				const snapshot: RunSnapshot = {
 					...preparation.snapshot,
 					runId,
@@ -502,8 +525,12 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 					attachments,
 					limits: { folderBytes: config.files.folderBytes, folderEntries: config.files.folderEntries, runUploadBytes: config.files.runUploadBytes },
 					turn: { history: preparation.history, prompt: internalPrompt(command.message.content, attachments, preparation.snapshot.createdAt) },
+					...(closed.length ? { closed } : {}),
 				};
 				this.#store.insertRun({ id: runId, snapshot, deadline: snapshot.deadline, plan, createdAt: now, allowance: command.allowance ?? null, attended: snapshot.attended === true });
+				if (command.approval) this.#ledger().useHolds(runId, command.approval.run, command.approval.decisions);
+				// Without files, the prompt is committed here; with them, at the copy's commit (#attach).
+				else if (plan.attachments.length === 0) this.#ledger().closeHolds(runId, closed);
 				this.#store.append(runId, statusEvent({ status: "queued" }));
 				// Laravel registered the run before it sent the start, so it is active once stored: `provisioning` in this write.
 				this.#store.activate(runId);
@@ -524,6 +551,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		);
 		if (answer.outcome === "accepted") this.#defer(() => this.#startLoop(runId));
 		return answer;
+	}
+
+	/** The run a continuation's approval names, as the approval reads it; null for another start, or a run this conversation does not hold. */
+	#heldRun(command: StartRun): HeldRun | null {
+		if (command.approval === undefined) return null;
+		const run = this.#store.run(command.approval.run);
+		return run === null ? null : { attended: run.attended === 1, holds: this.#ledger().holds(run.id) };
 	}
 
 	/** What the conversation's state refuses a start for, in order: a tombstone, a deletion, another run. */
@@ -610,8 +644,10 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const committed = await this.#store.outside(() =>
 			this.#store.write(() => {
 				const base = folder.commitAttachments(fence, plan, hashes, copies);
-				if (base.ok) this.#store.setBase(runId, base.baseVersionId);
-				else if (base.reason !== "stale") this.#store.finish(runId, ATTACHMENT_UNAVAILABLE, { attempt: fence.attempt });
+				if (base.ok) {
+					this.#store.setBase(runId, base.baseVersionId);
+					this.#ledger().closeHolds(runId, this.#store.snapshot(run).closed ?? []);
+				} else if (base.reason !== "stale") this.#store.finish(runId, ATTACHMENT_UNAVAILABLE, { attempt: fence.attempt });
 				return base.ok;
 			}),
 		);
@@ -639,7 +675,8 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		this.#installTools(run);
 		let session = run.session;
 		// The turn came with its start, its history selected and clipped (internal/start.ts).
-		const { instructions, turn } = this.#store.snapshot(run);
+		const { instructions, turn, approval, tools } = this.#store.snapshot(run);
+		if (approval && !(await this.#carryOut(fence, approval, tools))) return;
 		const agent = { instructions: sessionInstructions(instructions, LOCAL_TOOLS) };
 		const pi = await this.harness.pi();
 		if (session === null) {
@@ -674,23 +711,137 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	}
 
 	/**
-	 * The note after a turn that did not complete (history.ts `turnNote`), from the runs before `run` back to the newest whose
-	 * `run:<id>` submission pi holds, or to the session's first run, whose seed has the ones before it, leaving out each run
-	 * that ended before its copy committed. Read after the settle, so every earlier run has ended.
+	 * A continuation's approved calls carried out before its prompt (ARCHITECTURE.md: The harness), in order, each through
+	 * `#invoke` under the run's fence with its hold as its pass: the one caller of the executor outside a placed submission.
+	 * A hold whose outcome is stored is not called again, and one that did not run stops the rest, also when the section runs
+	 * again after a restart. False when the run ended meanwhile.
+	 */
+	async #carryOut(fence: AttemptFence, approval: Approval, tools: readonly ToolRef[]): Promise<boolean> {
+		const approved = approval.holds.filter((hold) => hold.approve);
+		if (approved.length === 0) return true;
+		this.#phase(fence, "Using tools");
+		const declarations = new Map(this.#executor(fence.runId).declarations().map((declaration) => [declaration.name, declaration]));
+		const stored = (position: number): HoldOutcome | null => {
+			const decision = this.#ledger().holds(approval.run).find((hold) => hold.position === position)?.decision;
+			return decision?.state === "used" && decision.approve && decision.by === fence.runId ? decision.outcome : null;
+		};
+		for (const [index, hold] of approved.entries()) {
+			let outcome = stored(hold.position);
+			if (outcome === null) {
+				const called = await this.#carryOne(fence, approval.run, hold, tools, declarations);
+				if (called === null) return false;
+				await this.#store.outside(() => this.#store.write(() => this.#ledger().answerHold(approval.run, hold.position, called)));
+				outcome = stored(hold.position) ?? called;
+				await this.#point("approval:carried", fence.runId);
+			}
+			if (outcome.kind === "ran") continue;
+			const rest = approved.slice(index + 1);
+			await this.#store.outside(() =>
+				this.#store.write(() => {
+					for (const later of rest) this.#ledger().answerHold(approval.run, later.position, { kind: "not_run", reason: "earlier" });
+				}),
+			);
+			break;
+		}
+		return this.#store.isCurrent(fence);
+	}
+
+	/**
+	 * One approved call: refused `APPROVAL_STALE` when the run has no such tool, or one that changed since it was held,
+	 * else called under the continuation's alias. What it came to, or null when the run ended first.
+	 */
+	async #carryOne(fence: AttemptFence, heldRun: RunId, hold: DecidedHold, tools: readonly ToolRef[], declarations: ReadonlyMap<string, ToolDeclaration>): Promise<HoldOutcome | null> {
+		const ref = tools.find((tool) => tool.connection_id === hold.connection && tool.provider === hold.provider && tool.operation === hold.operation);
+		const declaration = ref === undefined ? undefined : declarations.get(ref.name);
+		const args = parseJson(hold.arguments);
+		const approved = { run: heldRun, position: hold.position };
+		// A declaration missing for a tool the snapshot has: the registry changed the operation since the start.
+		if (ref === undefined || declaration === undefined || ref.contract !== hold.contract) {
+			const reason = ref === undefined ? "unavailable" : "changed";
+			const shown = { tool: sliceText(hold.tool, 0, 64), label: hold.label, arguments: argumentsSummary(args) };
+			const event = refusedEvent(shown, "APPROVAL_STALE", reason === "unavailable" ? APPROVAL_MESSAGES.gone : APPROVAL_MESSAGES.changed);
+			const recorded = await this.#store.outside(() => this.#store.appendToolCall(fence.runId, event, args, approved));
+			return recorded === null ? null : { kind: "not_run", reason };
+		}
+		const pass: ApprovedCall = { ...approved, key: await writeKey(ref.name, args as { [key: string]: unknown }), requirements: hold.requirements };
+		let outcome: ToolCallOutcome;
+		try {
+			outcome = await this.#invoke(fence, declaration, args, { approved: pass });
+		} catch {
+			// Cut by the run's end: a write already sent settles, and its settlement stores the hold's outcome.
+			return null;
+		}
+		if (outcome.ok) return { kind: "ran", result: sliceText(JSON.stringify(outcome.result), 0, MAX_OUTCOME_RESULT) };
+		switch (outcome.error.code) {
+			case "RUN_ENDED":
+				return null;
+			case "WRITE_UNCERTAIN":
+				return { kind: "unknown" };
+			case "APPROVAL_STALE":
+			case "OPERATION_CHANGED":
+				return { kind: "not_run", reason: "changed" };
+			default:
+				return { kind: "failed", message: outcome.error.message };
+		}
+	}
+
+	/**
+	 * The note after a turn that did not complete, and after held calls were answered (history.ts `turnNote`), from the runs
+	 * before `run` back to the newest whose `run:<id>` submission pi holds, or to the session's first run, whose seed has the
+	 * ones before it, leaving out each run that ended before its copy committed; then what became of the holds `run`
+	 * answered or closed. Read after the settle, so every earlier run has ended.
 	 */
 	async #turnNote(run: RunRow, session: string): Promise<string> {
 		const storage = this.#piStorage;
 		if (!storage) return "";
+		const snapshot = this.#store.snapshot(run);
+		const current = { continuation: snapshot.approval !== undefined, answered: this.#answered(run.id, snapshot) };
 		const unseen: UnseenTurn[] = [];
 		for (const earlier of this.#store.earlierRuns(run, session, HISTORY_LIMIT)) {
 			// Laravel shows its message as not sent, and its prompt names files the folder never held.
 			if (this.#store.uncopiedAttachments(earlier.id) !== null) continue;
 			const submission = await storage.submissionByRequest(Number(session) as PiConversationId, `run:${earlier.id}`, BG);
-			if (submission) return turnNote({ status: earlier.status, code: earlier.error_code, answered: submission.status === "done" }, unseen.reverse());
+			if (submission) return turnNote({ status: earlier.status, code: earlier.error_code, answered: submission.status === "done" }, unseen.reverse(), current);
 			// A run's snapshot is deleted from its first prune step on.
-			unseen.push({ status: earlier.status, prompt: earlier.prune === null ? this.#store.snapshot(earlier).turn.prompt : null });
+			if (earlier.prune !== null) {
+				unseen.push({ status: earlier.status, prompt: null });
+				continue;
+			}
+			const before = this.#store.snapshot(earlier);
+			unseen.push({ status: earlier.status, prompt: before.turn.prompt, continuation: before.approval !== undefined, answered: this.#answered(earlier.id, before) });
 		}
-		return turnNote(null, unseen.reverse());
+		return turnNote(null, unseen.reverse(), current);
+	}
+
+	/**
+	 * What became of the holds a run answered (its approval's, in order) or closed. An approved one with no outcome stored, as
+	 * after a Stop, or once the held run's records are pruned, is read from the write the run made for it: applied is ran,
+	 * uncertain or still dispatched unknown, and none means the run stopped before it.
+	 */
+	#answered(runId: RunId, snapshot: RunSnapshot): AnsweredHold[] {
+		const answered: AnsweredHold[] = [];
+		const approval = snapshot.approval;
+		if (approval) {
+			const decided = new Map(this.#ledger().holds(approval.run).map((hold) => [hold.position, hold.decision]));
+			for (const hold of approval.holds) {
+				if (!hold.approve) {
+					answered.push({ label: hold.label, answer: { kind: "declined" } });
+					continue;
+				}
+				const decision = decided.get(hold.position);
+				const outcome = decision?.state === "used" && decision.approve && decision.by === runId ? decision.outcome : null;
+				answered.push({ label: hold.label, answer: outcome === null ? this.#writtenAnswer(runId, approval.run, hold.position) : holdAnswer(outcome) });
+			}
+		}
+		for (const hold of snapshot.closed ?? []) answered.push({ label: hold.label, answer: { kind: "closed" } });
+		return answered;
+	}
+
+	#writtenAnswer(runId: RunId, heldRun: RunId, position: number): HoldAnswer {
+		const write = this.#ledger().approvedWrite(runId, heldRun, position);
+		if (write === null) return { kind: "stopped" };
+		if (write.status === "succeeded") return { kind: "ran", result: sliceText(JSON.stringify(write.result), 0, MAX_OUTCOME_RESULT) };
+		return { kind: "unknown" };
 	}
 
 	/**
@@ -786,7 +937,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const work = acting ? await piWork(storage, run) : null;
 		const inert = this.#store.conversation()?.organization_id === null;
 		const decision = decideGate(run ? { status: run.status, attempt: run.attempt, deadline: run.deadline, inert } : null, work, Date.now());
-		if (decision.kind === "none" || run === null) return;
+		if (run === null) return;
+		if (decision.kind === "none") {
+			// A continuation writes before its submission, which the gate counts no attempt for: its write still died with
+			// the instance that dispatched it, and no new one can settle it.
+			if (acting) await this.#store.outside(() => this.#store.write(() => this.#ledger().markDispatchedUncertain(run.id)));
+			return;
+		}
 		// The test build's fault points (ConversationPorts.gate); production has none, and awaits nothing here.
 		const point = this.#ports.gate;
 		if (point) await point(this.#portsContext() as PortsContext, "decided", decision.kind);
@@ -1324,7 +1481,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			runs: this.#scriptRuns,
 			current: (call) => host.current(call),
 			runSignal: (runId) => (this.#store.isActive(runId) ? this.#controller(runId).signal : AbortSignal.abort(new Error(RUN_ENDED_MESSAGE))),
-			invoke: (fence, declaration, args, drop) => this.#invoke(fence, declaration, args, undefined, drop),
+			invoke: (fence, declaration, args, drop) => this.#invoke(fence, declaration, args, { drop }),
 			scripts: () => {
 				const conversation = this.#store.conversation();
 				if (!conversation) throw new Error("A run's conversation is stored.");
@@ -1413,7 +1570,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			// Outside pi's transactions (store.ts `outside`): the replay cap counts what ran, so its count must not roll back.
 			executions: (runId, callId) => store.outside(() => store.countExecution(runId, callId)),
 			argumentText: (runId, callId) => store.argumentText(runId, callId),
-			invoke: (fence, declaration, args, signal) => this.#invoke(fence, declaration, args, signal),
+			invoke: (fence, declaration, args, signal) => this.#invoke(fence, declaration, args, { signal }),
 			started: (runId, callId, name) => {
 				let running = this.#running.get(runId);
 				if (!running) this.#running.set(runId, (running = new Map()));
@@ -1433,14 +1590,13 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 	 * aborted the call is recorded with its real outcome), while the run is active (any attempt), never for
 	 * RUN_ENDED (the executor returns no event then); an outcome after the run ended is logged instead (`#lateResult`).
 	 * A scripted call passes `drop` instead of `signal`: the script's end drops it while it waits for its slot, but
-	 * never cuts it once sent.
+	 * never cuts it once sent. A continuation's approved call passes its pass (`approved`), which its fact names.
 	 */
 	#invoke(
 		fence: AttemptFence,
 		declaration: ToolDeclaration,
 		args: Json | undefined,
-		signal: AbortSignal | undefined,
-		drop?: AbortSignal,
+		{ signal, drop, approved }: { signal?: AbortSignal; drop?: AbortSignal; approved?: ApprovedCall },
 	): Promise<ToolCallOutcome> {
 		let queue = this.#queues.get(fence.runId);
 		if (!queue) this.#queues.set(fence.runId, (queue = new ToolQueue()));
@@ -1458,7 +1614,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 			const event = outcome.event;
 			recording ??= this.#store
 				.outside(() => {
-					if (event && this.#store.appendToolCall(fence.runId, event, args)) return;
+					if (event && this.#store.appendToolCall(fence.runId, event, args, approved && { run: approved.run, position: approved.position })) return;
 					// Here, beside the append, so a run that ended while this waited is seen; `late` keeps one line when an append is tried again.
 					if (late || this.#store.isActive(fence.runId)) return;
 					late = true;
@@ -1476,7 +1632,7 @@ export class Conversation extends Agent<Env> implements ConversationApi {
 		const call = queue
 			.send(
 				isWrite(declaration),
-				() => executor.invoke({ fence, name: declaration.name, arguments: args, signal: cut, settled }),
+				() => executor.invoke({ fence, name: declaration.name, arguments: args, signal: cut, settled, ...(approved ? { approved } : {}) }),
 				() => {
 					signal?.throwIfAborted();
 					drop?.throwIfAborted();

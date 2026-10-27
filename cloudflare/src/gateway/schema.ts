@@ -62,6 +62,21 @@ export const HOLD_SCHEMA: readonly string[] = [
 	) STRICT`,
 ];
 
+/**
+ * How a later run decided a hold (holds.ts `HoldDecision`): `decided_by` the run that used or closed it, `approve` 1 or 0 for
+ * a used one, and `outcome` its `HoldOutcome` as JSON. A write the continuation dispatches keeps its hold in `approved_run`
+ * and `approved_position`, so its settlement records the outcome whenever it comes, and the continuation's own records still
+ * say what the write did once the held run's are pruned. Steps after HOLD_SCHEMA and LEDGER_NOTES_SCHEMA.
+ */
+export const HOLD_DECISION_SCHEMA: readonly string[] = [
+	"ALTER TABLE run_holds ADD COLUMN decided_by TEXT",
+	"ALTER TABLE run_holds ADD COLUMN approve INTEGER CHECK (approve IS NULL OR approve IN (0, 1))",
+	"ALTER TABLE run_holds ADD COLUMN outcome TEXT",
+	"CREATE INDEX IF NOT EXISTS run_holds_open ON run_holds (run_id) WHERE state = 'open'",
+	"ALTER TABLE run_writes ADD COLUMN approved_run TEXT NOT NULL DEFAULT ''",
+	"ALTER TABLE run_writes ADD COLUMN approved_position INTEGER NOT NULL DEFAULT 0",
+];
+
 /** The page_tokens table. */
 export const PAGE_TOKEN_SCHEMA: readonly string[] = [
 	`CREATE TABLE IF NOT EXISTS page_tokens (

@@ -1,12 +1,16 @@
-// History replay: the turns, their files and what they changed, `clip` and `recentHistory`, and the note after a stopped turn.
+// History replay: the turns, their files and what they changed, `clip` and `recentHistory`, and the note after a stopped turn
+// or after held calls were answered.
 
 import { describe, expect, test } from "vitest";
 import {
+	ANSWERED_HEAD,
+	type AnsweredHold,
 	CLIPPED,
 	FOLDER_INSTRUCTIONS,
 	clip,
 	HISTORY_BUDGET,
 	historyOf,
+	type HoldAnswer,
 	MESSAGE_LIMIT,
 	notePaths,
 	QUOTE_END,
@@ -200,5 +204,68 @@ describe("the note after a stopped turn", () => {
 		for (const digit of ["1", "2", "3"]) expect(note).toContain(`${digit.repeat(MESSAGE_LIMIT)}${CLIPPED}\n\n${QUOTE_END}`);
 		expect(note).not.toContain("0000");
 		expect(note).not.toContain("old");
+	});
+});
+
+describe("the note after held calls were answered", () => {
+	const LABEL = "Gmail: Send mail";
+	const answered = (...answers: HoldAnswer[]): AnsweredHold[] => answers.map((answer) => ({ label: LABEL, answer }));
+	const continuation = (...answers: HoldAnswer[]) => ({ continuation: true, answered: answered(...answers) });
+	const STOPPED = "[The user stopped your previous turn before you answered it. Do not carry on with it unless the user asks you to.]";
+	const DECLINED = "[The user declined Gmail: Send mail. It did not run. Do not try it again unless they ask.]";
+	const CLOSED = "[Gmail: Send mail, which you asked for, was not approved and did not run.]";
+	const EARLIER = "[You asked to Gmail: Send mail. The user approved it, but it did not run, because an approved action before it did not succeed.]";
+
+	test("one line per held call, by what became of it", () => {
+		const cases: [HoldAnswer, string][] = [
+			[{ kind: "declined" }, DECLINED],
+			[{ kind: "closed" }, CLOSED],
+			[{ kind: "ran", result: '{"items":[{"id":"m1"}],"count":1}' }, '[You asked to Gmail: Send mail. The user approved it, and it ran: {"items":[{"id":"m1"}],"count":1}]'],
+			[{ kind: "failed", message: "The provider refused this request." }, "[You asked to Gmail: Send mail. The user approved it, but it failed: The provider refused this request.]"],
+			[{ kind: "unavailable" }, "[You asked to Gmail: Send mail. The user approved it, but it is not available any more, so it did not run.]"],
+			[{ kind: "changed" }, "[You asked to Gmail: Send mail. The user approved it, but it changed since they approved it, so it did not run.]"],
+			[{ kind: "earlier" }, EARLIER],
+			[{ kind: "stopped" }, "[You asked to Gmail: Send mail. The user approved it, but the turn was stopped before it ran.]"],
+			[{ kind: "unknown" }, "[You asked to Gmail: Send mail. The user approved it, but whether it ran is unknown. Check before trying again.]"],
+		];
+		for (const [answer, line] of cases) expect(turnNote(null, [], continuation(answer))).toBe(line);
+	});
+
+	test("a failure says the approved calls after it did not run only when one of them did not", () => {
+		const failed: HoldAnswer = { kind: "failed", message: "Refused" };
+		const line = "[You asked to Gmail: Send mail. The user approved it, but it failed: Refused.";
+		expect(turnNote(null, [], continuation(failed, { kind: "earlier" }))).toBe(`${line} The approved actions after it did not run.]\n\n${EARLIER}`);
+		expect(turnNote(null, [], continuation(failed, { kind: "declined" }))).toBe(`${line}]\n\n${DECLINED}`);
+		expect(turnNote(null, [], continuation({ kind: "declined" }, failed))).toBe(`${DECLINED}\n\n${line}]`);
+	});
+
+	test("a continuation's lines follow ANSWERED_HEAD only when the note says something before them", () => {
+		expect(turnNote({ status: "cancelled", code: "cancelled", answered: false }, [], continuation({ kind: "declined" }))).toBe([STOPPED, ANSWERED_HEAD, DECLINED].join("\n\n"));
+		expect(turnNote({ status: "completed", code: "", answered: true }, [], continuation({ kind: "declined" }))).toBe(DECLINED);
+		expect(turnNote(null, [{ status: "cancelled", prompt: "Hi." }], continuation({ kind: "declined" }))).toBe(
+			["[The user sent a message that was stopped before you saw it. It said:]", "Hi.", QUOTE_END, ANSWERED_HEAD, DECLINED].join("\n\n"),
+		);
+		// A plain start's closed holds need no head, and a continuation with nothing to say has no note.
+		expect(turnNote({ status: "cancelled", code: "cancelled", answered: false }, [], { continuation: false, answered: answered({ kind: "closed" }) })).toBe([STOPPED, CLOSED].join("\n\n"));
+		expect(turnNote({ status: "cancelled", code: "cancelled", answered: false }, [], { continuation: true, answered: [] })).toBe(STOPPED);
+	});
+
+	test("an earlier continuation pi never received is told by its lines, never its prompt; an earlier plain run by its quote, then what it closed", () => {
+		const note = turnNote(null, [
+			{ status: "cancelled", prompt: "Approved.", continuation: true, answered: answered({ kind: "ran", result: "{}" }, { kind: "stopped" }) },
+			{ status: "failed", prompt: null, answered: [] },
+			{ status: "failed", prompt: "Next.", answered: answered({ kind: "closed" }) },
+		]);
+		expect(note).toBe(
+			[
+				"[You asked to Gmail: Send mail. The user approved it, and it ran: {}]",
+				"[You asked to Gmail: Send mail. The user approved it, but the turn was stopped before it ran.]",
+				"[The user sent a message that did not reach you, because its turn failed before it started. It said:]",
+				"Next.",
+				QUOTE_END,
+				CLOSED,
+			].join("\n\n"),
+		);
+		expect(note).not.toContain("Approved.");
 	});
 });

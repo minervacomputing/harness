@@ -7,6 +7,7 @@ import type { StartRun, StartRunResult } from "@minerva/contract/internal";
 import type { Attachment } from "@minerva/contract";
 import { type Replayed, type StoredMessage, historyOf, recentHistory, withFiles } from "../conversation/history.ts";
 import type { GrantRow, LayerRows, Level, RunLayers } from "../gateway/grants.ts";
+import type { Approval, HeldCall } from "../gateway/holds.ts";
 import type { Registry } from "../gateway/registry.ts";
 import { COMPILER_VERSION, type ConnectionInfo, type StartSnapshot, startSnapshot } from "../gateway/tools.ts";
 import { hashInput } from "../lib/canonical.ts";
@@ -63,6 +64,44 @@ export function messageRefusal(command: StartRun, limits: { messageAttachments: 
 
 export const UNAVAILABLE = "An attached file is no longer available. Remove it and attach it again.";
 
+export const APPROVAL_UNKNOWN = "These decisions do not match the actions waiting for approval.";
+export const APPROVAL_DECIDED = "These actions were already answered.";
+
+/** A run the conversation holds, as a continuation's approval reads it: whether its start was attended, and its holds. */
+export interface HeldRun {
+	attended: boolean;
+	holds: readonly HeldCall[];
+}
+
+/**
+ * What refuses a continuation's approval, in order: a run this conversation does not hold or that was not attended, a
+ * position it holds nothing at, or a hold of another user (`APPROVAL_UNKNOWN`); a named hold already used or closed
+ * (`APPROVAL_DECIDED`); positions that are not exactly the run's open holds (`APPROVAL_UNKNOWN`). Null for a start without
+ * an approval, and for one that decides every open hold of its run.
+ */
+export function approvalRefusal(command: StartRun, held: HeldRun | null): StartRefusal | null {
+	const approval = command.approval;
+	if (approval === undefined) return null;
+	const unknown = startRefusal("APPROVAL_UNKNOWN", APPROVAL_UNKNOWN);
+	if (held === null || !held.attended) return unknown;
+	const named = approval.decisions.map((decision) => held.holds.find((hold) => hold.position === decision.position));
+	if (named.some((hold) => hold === undefined || hold.userId !== command.user)) return unknown;
+	if (named.some((hold) => hold?.decision.state !== "open")) return startRefusal("APPROVAL_DECIDED", APPROVAL_DECIDED);
+	const open = held.holds.filter((hold) => hold.decision.state === "open");
+	return open.length === named.length ? null : unknown;
+}
+
+/** The approval a continuation's snapshot copies: each decided hold whole, in position order. Only after `approvalRefusal` passed it. */
+export function approvalOf(command: StartRun, held: HeldRun | null): Approval | null {
+	const approval = command.approval;
+	if (approval === undefined || held === null) return null;
+	const holds = held.holds.flatMap(({ decision: _decision, createdAt: _createdAt, ...hold }) => {
+		const decided = approval.decisions.find((item) => item.position === hold.position);
+		return decided === undefined ? [] : [{ ...hold, approve: decided.approve }];
+	});
+	return { run: approval.run, holds };
+}
+
 /** One layer as the compiler reads it: the stored grants of that level, for its subject. */
 function layerOf(level: Level, subject: string | null, layer: StartRun["authority"]["layers"]["ceiling"]): LayerRows | null {
 	if (layer === null) return null;
@@ -96,7 +135,11 @@ function storedMessages(history: StartRun["history"]): StoredMessage[] {
  * The start's snapshot, versions, digest and history at `now`. `providerOf` knows the agent's connections only: an
  * allow on any other could never be used by this run, so dropping it changes nothing.
  */
-export async function prepareStart(registry: Registry, command: StartRun, options: { now: number; runTimeoutMs: number | null }): Promise<Preparation> {
+export async function prepareStart(
+	registry: Registry,
+	command: StartRun,
+	options: { now: number; runTimeoutMs: number | null; approval?: Approval | null },
+): Promise<Preparation> {
 	const connections: ConnectionInfo[] = command.authority.connections.map((connection) => ({
 		id: connection.id,
 		provider: connection.provider,
@@ -125,7 +168,7 @@ export async function prepareStart(registry: Registry, command: StartRun, option
 		runTimeoutMs: options.runTimeoutMs,
 		policy: command.authority.policy ?? null,
 	});
-	const snapshot: StartSnapshot = command.attended ? { ...compiled, attended: true } : compiled;
+	const snapshot: StartSnapshot = { ...compiled, ...(command.attended ? { attended: true } : {}), ...(options.approval ? { approval: options.approval } : {}) };
 	return {
 		snapshot,
 		catalog: await catalogVersion(registry),

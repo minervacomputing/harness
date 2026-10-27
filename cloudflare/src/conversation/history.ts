@@ -4,6 +4,7 @@
 // stopped turn's aborted partial entries out of the model's context (ARCHITECTURE.md: Events and the stream), and the next
 // run's input starts with a note on how that turn ended (`turnNote`).
 
+import type { HoldOutcome } from "../gateway/holds.ts";
 import { sliceText } from "../lib/text.ts";
 import type { Attachment, FolderChanges, RunStatus } from "@minerva/contract";
 
@@ -134,10 +135,79 @@ export interface ReceivedTurn {
 	answered: boolean;
 }
 
-/** An earlier run whose message pi never received, since it ended before it submitted: its prompt, null once pruned. */
+/**
+ * An earlier run whose message pi never received, since it ended before it submitted: its prompt, null once pruned, and
+ * what became of the held calls it answered or closed. A continuation's prompt is Laravel's ("Approved."), never quoted.
+ */
 export interface UnseenTurn {
 	status: RunStatus;
 	prompt: string | null;
+	continuation?: boolean;
+	answered?: readonly AnsweredHold[];
+}
+
+/** What became of a held call by the run that decided it, as the model reads it. */
+export type HoldAnswer =
+	| { kind: "declined" }
+	| { kind: "closed" }
+	| { kind: "ran"; result: string }
+	| { kind: "failed"; message: string }
+	| { kind: "unavailable" }
+	| { kind: "changed" }
+	| { kind: "earlier" }
+	| { kind: "stopped" }
+	| { kind: "unknown" };
+
+/** A held call by its label (`Gmail: Send mail`), and its answer. */
+export interface AnsweredHold {
+	label: string;
+	answer: HoldAnswer;
+}
+
+/** An approved call's stored outcome as the note answers it. */
+export function holdAnswer(outcome: HoldOutcome): HoldAnswer {
+	switch (outcome.kind) {
+		case "ran":
+		case "failed":
+		case "unknown":
+			return outcome;
+		case "not_run":
+			return { kind: outcome.reason };
+	}
+}
+
+/** What a continuation's note says before its lines when something precedes them. */
+export const ANSWERED_HEAD = "The user has since answered the actions you asked to approve:";
+
+const DID_NOT_RUN = new Set<HoldAnswer["kind"]>(["earlier", "stopped"]);
+
+/** One line per held call, in order. A failure says the approved calls after it did not run, when one did not. */
+export function answeredLines(answered: readonly AnsweredHold[]): string[] {
+	return answered.map(({ label, answer }, index) => {
+		const asked = `You asked to ${label}. The user approved it`;
+		switch (answer.kind) {
+			case "declined":
+				return `[The user declined ${label}. It did not run. Do not try it again unless they ask.]`;
+			case "closed":
+				return `[${label}, which you asked for, was not approved and did not run.]`;
+			case "ran":
+				return `[${asked}, and it ran: ${answer.result}]`;
+			case "failed": {
+				const after = answered.slice(index + 1).some((later) => DID_NOT_RUN.has(later.answer.kind)) ? " The approved actions after it did not run." : "";
+				return `[${asked}, but it failed: ${answer.message.replace(/\.$/, "")}.${after}]`;
+			}
+			case "unavailable":
+				return `[${asked}, but it is not available any more, so it did not run.]`;
+			case "changed":
+				return `[${asked}, but it changed since they approved it, so it did not run.]`;
+			case "earlier":
+				return `[${asked}, but it did not run, because an approved action before it did not succeed.]`;
+			case "stopped":
+				return `[${asked}, but the turn was stopped before it ran.]`;
+			case "unknown":
+				return `[${asked}, but whether it ran is unknown. Check before trying again.]`;
+		}
+	});
 }
 
 /** The stops that are the user's own; any other `cancelled` code is a revocation (events.ts `endFor`). */
@@ -161,23 +231,37 @@ function endNote({ status, code, answered }: ReceivedTurn): string | null {
 }
 
 /**
- * The note that starts a run's input after a turn that did not complete: the end of the newest earlier turn pi received
- * (null when the walk stopped at the conversation's first run), then each later message pi never received, oldest first,
- * each clipped and closed by QUOTE_END, the newest kept within HISTORY_BUDGET as `recentHistory` keeps them. Empty when
- * there is nothing to say. It rides in the run's own input, so each run still submits once to an idle session.
+ * The note that starts a run's input after a turn that did not complete, or after held calls were answered: the end of the
+ * newest earlier turn pi received (null when the walk stopped at the conversation's first run), then each later message pi
+ * never received, oldest first, each clipped and closed by QUOTE_END, the newest kept within HISTORY_BUDGET as
+ * `recentHistory` keeps them, with the held calls it answered or closed (a continuation's lines stand in for its message);
+ * then what became of the held calls this run answered or closes (`current`), after ANSWERED_HEAD for a continuation whose
+ * note says something before them. Empty when there is nothing to say. It rides in the run's own input, so each run still
+ * submits once to an idle session.
  */
-export function turnNote(received: ReceivedTurn | null, unseen: readonly UnseenTurn[]): string {
+export function turnNote(
+	received: ReceivedTurn | null,
+	unseen: readonly UnseenTurn[],
+	current: { continuation: boolean; answered: readonly AnsweredHold[] } = { continuation: false, answered: [] },
+): string {
 	const quotes: string[] = [];
 	let used = 0;
 	for (let i = unseen.length - 1; i >= 0; i--) {
-		const { status, prompt } = unseen[i] as UnseenTurn;
-		if (prompt === null) continue;
+		const { status, prompt, continuation, answered = [] } = unseen[i] as UnseenTurn;
+		const lines = answeredLines(answered);
+		if (prompt === null || continuation) {
+			quotes.unshift(...lines);
+			continue;
+		}
 		const text = clip(prompt);
 		if (used + text.length > HISTORY_BUDGET) break;
 		used += text.length;
 		const head = status === "cancelled" ? "[The user sent a message that was stopped before you saw it. It said:]" : "[The user sent a message that did not reach you, because its turn failed before it started. It said:]";
-		quotes.unshift(`${head}\n\n${text}\n\n${QUOTE_END}`);
+		quotes.unshift(`${head}\n\n${text}\n\n${QUOTE_END}`, ...lines);
 	}
 	const end = received ? endNote(received) : null;
-	return [...(end ? [end] : []), ...quotes].join("\n\n");
+	const before = [...(end ? [end] : []), ...quotes];
+	const lines = answeredLines(current.answered);
+	const head = current.continuation && before.length > 0 && lines.length > 0 ? [ANSWERED_HEAD] : [];
+	return [...before, ...head, ...lines].join("\n\n");
 }

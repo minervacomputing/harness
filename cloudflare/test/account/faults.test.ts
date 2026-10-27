@@ -18,6 +18,10 @@
 // - a turn under a user layer that asks before creating notes: attended, its two saves are held, Laravel gets both
 //   `run.held_call` facts whole and the provider no note; unattended, the save answers APPROVAL_UNAVAILABLE and holds
 //   nothing, the read works and the turn completes; and Laravel's grant edit refusing an ask before reading;
+// - the continuation of such a turn: approving one of two holds saves exactly that note before the prompt, and the answer
+//   says so; declining both, or a plain message, saves none and says why; a Stop during the approved save leaves the note
+//   saved, and the next turn knows it; a continuation sent again is answered as before; a revocation between hold and
+//   approval saves nothing;
 // - the local tools in the conversation's real container (ARCHITECTURE.md: Checkpoints; the Checkpoints and Files
 //   rows): write, edit, Python through bash and read, published with the run and hydrated into the next
 //   turn's container; a detached writer, a FIFO and a symlink at the checkpoint; five attachments of 50 MiB
@@ -32,7 +36,7 @@
 // sandbox-faults.test.ts's. Run with `pnpm test:faults` after `pnpm run deploy:test`; never against production.
 
 import { afterAll, describe, expect, test } from "vitest";
-import { FOLDER } from "../../src/faults/world.ts";
+import { FOLDER, notesConnection, notesLayers } from "../../src/faults/world.ts";
 import {
 	askingToSave,
 	cancel,
@@ -57,15 +61,21 @@ import {
 	replacedByPlatform,
 	restarts,
 	run,
+	type RunView,
 	SAVE,
 	SEEDED,
+	type StartOptions,
 	save,
 	script,
+	send,
 	settled,
 	sh,
 	sleep,
+	startOf,
 	toolCalls,
+	type Turn,
 	upload,
+	type World,
 	world,
 } from "./driver.ts";
 
@@ -347,6 +357,109 @@ describe.concurrent("asks", () => {
 		});
 		expect(await edit(["read"])).toEqual({ outcome: "invalid", message: "Notes cannot ask before Read notes; it is needed to read." });
 		expect((await provider(w)).requests).toEqual([]);
+	});
+});
+
+describe.concurrent("approvals", () => {
+	const LABEL = "Notes: Save a note";
+	const NOTE: Turn = { note: true };
+	const DECLINED = `[The user declined ${LABEL}. It did not run. Do not try it again unless they ask.]`;
+	const CLOSED = `[${LABEL}, which you asked for, was not approved and did not run.]`;
+	const ran = (id: number, title: string) => `[You asked to ${LABEL}. The user approved it, and it ran: ${JSON.stringify({ items: [{ id: String(id), title }], count: 1 })}]`;
+
+	/** A completed attended turn whose saves of `titles` are held under the asking layer: its id. */
+	async function holding(w: World, titles: string[]): Promise<string> {
+		const runId = await post(w, script([...titles.map(save), { text: "They wait for your approval." }]), [], { authority: askingToSave(w), attended: true });
+		const view = await settled(w, runId);
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(view.internals.holds.map(({ state }) => state)).toEqual(titles.map(() => "open"));
+		return runId;
+	}
+
+	/** A continuation's start options: the user's decision on each hold of `heldRun`, in position order. */
+	function deciding(w: World, heldRun: string, approve: boolean[], authority = askingToSave(w)): StartOptions {
+		return { authority, attended: true, approval: { run: heldRun, decisions: approve.map((yes, index) => ({ position: index + 1, approve: yes })) } };
+	}
+
+	const answerOf = (view: RunView) => view.events.findLast((event) => event.type === "message")?.data.content;
+	const titles = async (w: World) => (await provider(w)).notes.map((note) => note.title);
+
+	test("approving one of two held notes saves exactly that note, and the answer says so", async () => {
+		const w = await world();
+		const heldRun = await holding(w, ["First", "Second"]);
+		const runId = await post(w, script([NOTE]), [], deciding(w, heldRun, [true, false]));
+		const view = await settled(w, runId);
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(await titles(w)).toEqual([...SEEDED, "First"]);
+		expect(answerOf(view)).toBe(`${ran(4, "First")}\n\n${DECLINED}`);
+		expect(view.internals.writes).toEqual([expect.objectContaining({ status: "succeeded", approved_run: heldRun, approved_position: 1 })]);
+		const held = await run(w, heldRun);
+		expect(held.internals.holds.map(({ state, decided_by, approve }) => [state, decided_by, approve])).toEqual([
+			["used", runId, 1],
+			["used", runId, 0],
+		]);
+		const writes = (await delivered(w, runId)).filter((fact) => fact.run === runId && fact.type === "run.write");
+		expect(writes.map((fact) => fact.data)).toEqual([expect.objectContaining({ tool: SAVE, outcome: "done", afterCancel: false, approved: { run: heldRun, position: 1 } })]);
+	});
+
+	test("declining both saves none, and a plain message after a hold saves none and says neither was approved", async () => {
+		const [declining, plain] = [await world(), await world()];
+		const [declined, closed] = [await holding(declining, ["First", "Second"]), await holding(plain, ["First", "Second"])];
+		const [a, b] = [await post(declining, script([NOTE]), [], deciding(declining, declined, [false, false])), await post(plain, script([NOTE]), [], { authority: askingToSave(plain), attended: true })];
+		const [first, second] = [await settled(declining, a), await settled(plain, b)];
+		expect([first.head?.status, second.head?.status], `${outcome(first)} ${outcome(second)}`).toEqual(["completed", "completed"]);
+		expect(answerOf(first)).toBe(`${DECLINED}\n\n${DECLINED}`);
+		expect(answerOf(second)).toBe(`${CLOSED}\n\n${CLOSED}`);
+		expect([await titles(declining), await titles(plain)]).toEqual([SEEDED, SEEDED]);
+		expect([first.internals.writes, second.internals.writes]).toEqual([[], []]);
+		expect((await run(plain, closed)).internals.holds.map(({ state, decided_by }) => [state, decided_by])).toEqual([
+			["closed", b],
+			["closed", b],
+		]);
+	});
+
+	test("a Stop during the approved save leaves the note saved, and the next turn's answer knows it", async () => {
+		const w = await world({ delays: { "POST /folders/inbox/notes": 3000 } });
+		const heldRun = await holding(w, ["First"]);
+		const runId = await post(w, script([{ text: "Not reached." }]), [], deciding(w, heldRun, [true]));
+		await until(() => provider(w), (state) => state.requests.some((request) => request.method === "POST"), "the approved save was sent");
+		expect(await cancel(w, runId, "cancelled")).toEqual({ state: "cancelled" });
+		const view = await settled(w, runId);
+		expect(view.head?.status, outcome(view)).toBe("cancelled");
+		const held = await until(() => run(w, heldRun), (seen) => seen.internals.holds[0]?.outcome != null, "the save settled after the Stop");
+		expect(JSON.parse(held.internals.holds[0]?.outcome ?? "null")).toEqual({ kind: "ran", result: JSON.stringify({ items: [{ id: "4", title: "First" }], count: 1 }) });
+		const next = await settled(w, await post(w, script([NOTE]), [], { authority: askingToSave(w), attended: true }));
+		expect(next.head?.status, outcome(next)).toBe("completed");
+		expect(answerOf(next)).toBe(ran(4, "First"));
+		expect(await titles(w)).toEqual([...SEEDED, "First"]);
+	});
+
+	test("a continuation sent again is answered as before and saves once; another naming the same holds is refused", async () => {
+		const w = await world();
+		const heldRun = await holding(w, ["First"]);
+		const start = startOf(w, script([NOTE]), [], deciding(w, heldRun, [true]));
+		const accepted = await send(w, start);
+		expect(accepted).toMatchObject({ outcome: "accepted" });
+		expect(await send(w, start)).toEqual(accepted);
+		const view = await settled(w, start.run);
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(await send(w, start)).toEqual(accepted);
+		const other = startOf(w, script([NOTE]), [], deciding(w, heldRun, [true]));
+		expect(await send(w, other)).toEqual({ outcome: "refused", code: "APPROVAL_DECIDED", message: "These actions were already answered." });
+		expect(await titles(w)).toEqual([...SEEDED, "First"]);
+		expect((await provider(w)).requests.filter((request) => request.method === "POST")).toHaveLength(1);
+	});
+
+	test("a revocation between hold and approval: the approved save is not available any more, and nothing is saved", async () => {
+		const w = await world();
+		const heldRun = await holding(w, ["First"]);
+		const readOnly = { connections: [notesConnection(w.connectionId)], layers: notesLayers(w.connectionId, [{ kind: FOLDER, resource: "*", name: "", actions: ["read"], effect: "allow" }]) };
+		const view = await settled(w, await post(w, script([NOTE]), [], deciding(w, heldRun, [true], readOnly)));
+		expect(view.head?.status, outcome(view)).toBe("completed");
+		expect(toolCalls(view.events)).toEqual([expect.objectContaining({ tool: SAVE, decision: "denied", code: "APPROVAL_STALE", message: "This is not available any more, so it did not run." })]);
+		expect(answerOf(view)).toBe(`[You asked to ${LABEL}. The user approved it, but it is not available any more, so it did not run.]`);
+		expect(await titles(w)).toEqual(SEEDED);
+		expect((await provider(w)).requests.filter((request) => request.method === "POST")).toEqual([]);
 	});
 });
 

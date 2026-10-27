@@ -3,6 +3,7 @@
 // (ARCHITECTURE.md: Starting a run).
 
 import type { AgentId, ConnectionId, ConversationId, EpochMs, UserId, WorkspaceId } from "../shared/rpc.ts";
+import type { Approval } from "./holds.ts";
 import { consentGiven, nests, operationOf, requiresOf } from "./connector.ts";
 import { effectivePolicy, type ProviderOf, type RunLayers } from "./grants.ts";
 import type { Policy, PolicySnapshot } from "./policy.ts";
@@ -56,6 +57,11 @@ export interface StartSnapshot {
 	 * for their approval. Absent otherwise, so an unattended start's snapshot is what it was before.
 	 */
 	attended?: true;
+	/**
+	 * A continuation's approval (`startRun.approval`): the held run and its holds as the user decided them, copied whole so the
+	 * digest covers them and the held run's prune cannot reach them. Absent for any other start.
+	 */
+	approval?: Approval;
 }
 
 export const SAFETY_INSTRUCTIONS =

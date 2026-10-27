@@ -390,9 +390,9 @@ describe("startRun", () => {
 		}
 	});
 
-	test("refuses a continuation, which this engine cannot carry out yet, and the refusal is its answer from then on", async () => {
+	test("refuses a continuation naming a run the conversation does not hold, and the refusal is its answer from then on", async () => {
 		const start = startOf(scope(), { message: { id: uuid7(), content: "Approved.", attachments: [] }, approval: { run: uuid7(), decisions: [{ position: 1, approve: true }] } });
-		const refused = { outcome: "refused", code: "APPROVAL_UNKNOWN", message: "This engine cannot carry out approvals yet." };
+		const refused = { outcome: "refused", code: "APPROVAL_UNKNOWN", message: "These decisions do not match the actions waiting for approval." };
 		expect(await commands.startRun(start)).toEqual(refused);
 		expect(await commands.startRun(start)).toEqual(refused);
 		expect(await runRow(start)).toBeNull();

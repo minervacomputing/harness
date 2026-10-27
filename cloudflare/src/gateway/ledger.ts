@@ -10,7 +10,8 @@
 // It also keeps the run's holds (holds.ts), calls the policy asks before, held for the user's approval and claimed nothing
 // here. While a run holds one, a write that does not ask is refused APPROVAL_PENDING, the pause's second reason, and the
 // refusal closes the run's writes for good (`ClosedWrites`), so a later asking write is refused too rather than held: nothing
-// runs out of the model's order. A paused run holds nothing.
+// runs out of the model's order. A paused run holds nothing. A continuation's write names the hold it carries out
+// (`WriteNote.approved`), and its settlement stores the hold's outcome in the same transaction, whenever it comes.
 //
 // Every method is synchronous and each is atomic: run it in the same synchronous stretch as the run-state
 // check it depends on (gateway/run-state.ts), with no await between.
@@ -21,9 +22,10 @@ import { sha256Hex } from "../lib/hash.ts";
 import { hashInput } from "../lib/canonical.ts";
 import { parseJson } from "../lib/json.ts";
 import type { Sql } from "../lib/sql.ts";
+import { sliceText } from "../lib/text.ts";
 import type { AttemptFence, EpochMs, RunId } from "../shared/rpc.ts";
 import type { Clock } from "./clock.ts";
-import { APPROVAL_MESSAGES, type HeldCall, type HeldRequirement, type Hold, type HoldState } from "./holds.ts";
+import { APPROVAL_MESSAGES, type HeldCall, type HeldRequirement, type Hold, type HoldDecision, type HoldOutcome, MAX_OUTCOME_RESULT } from "./holds.ts";
 import type { Effect } from "./http.ts";
 import type { ToolResult } from "./results.ts";
 
@@ -45,11 +47,15 @@ export interface WriteRecord {
 	write: string | null;
 }
 
-/** What a write's settlement reports (a Laravel run's `run.write` fact): its tool, connection and keyed hash, fixed at dispatch. */
+/**
+ * What a write's settlement reports (a Laravel run's `run.write` fact): its tool, connection and keyed hash, fixed at dispatch,
+ * and for a continuation's approved call, the hold it carries out.
+ */
 export interface WriteNote {
 	tool: string;
 	connection: string;
 	write: string;
+	approved?: { run: RunId; position: number };
 }
 
 /** A write that settled, with what its dispatch noted. */
@@ -76,8 +82,11 @@ export interface ClosedWrites {
 }
 
 export type Settlement =
-	/** Forgotten: the row is deleted, so the same write may be tried again. */
-	| { effect: Extract<Effect, "not_applied"> }
+	/**
+	 * Forgotten: the row is deleted, so the same write may be tried again. `message`: what its call answers, which an approved
+	 * call's hold keeps as its failure; absent for a write that was never sent.
+	 */
+	| { effect: Extract<Effect, "not_applied">; message?: string }
 	/** `result` is APPLIED_WITHOUT_RESULT when the response was unusable. */
 	| { effect: Extract<Effect, "applied">; result: ToolResult }
 	/** Pauses every later write in the run. */
@@ -136,6 +145,8 @@ interface WriteRow {
 	tool: string;
 	connection_id: string;
 	write_id: string;
+	approved_run: string;
+	approved_position: number;
 }
 
 function record(row: WriteRow): WriteRecord {
@@ -151,13 +162,22 @@ function record(row: WriteRow): WriteRecord {
 	};
 }
 
-function settledOf(row: Pick<WriteRow, "run_id" | "tool" | "connection_id" | "write_id">): SettledWrite {
-	return { runId: row.run_id, tool: row.tool, connection: row.connection_id, write: row.write_id };
+function settledOf(row: Pick<WriteRow, "run_id" | "tool" | "connection_id" | "write_id" | "approved_run" | "approved_position">): SettledWrite {
+	const settled: SettledWrite = { runId: row.run_id, tool: row.tool, connection: row.connection_id, write: row.write_id };
+	if (row.approved_run !== "") settled.approved = { run: row.approved_run, position: row.approved_position };
+	return settled;
 }
 
-const SETTLED = "RETURNING run_id, key, tool, connection_id, write_id";
+const SETTLED = "RETURNING run_id, key, tool, connection_id, write_id, approved_run, approved_position";
 
-interface HoldRow {
+/** An approved call's outcome as its write settled; null for a write never sent, which leaves the hold to its continuation. */
+function settledOutcome(settlement: Settlement, stored: string): HoldOutcome | null {
+	if (settlement.effect === "applied") return { kind: "ran", result: sliceText(stored, 0, MAX_OUTCOME_RESULT) };
+	if (settlement.effect === "unknown") return { kind: "unknown" };
+	return settlement.message === undefined ? null : { kind: "failed", message: settlement.message };
+}
+
+export interface HoldRow {
 	[column: string]: string | number | null;
 	run_id: string;
 	position: number;
@@ -174,9 +194,20 @@ interface HoldRow {
 	requirements: string;
 	state: string;
 	created_at: number;
+	decided_by: string | null;
+	approve: number | null;
+	outcome: string | null;
 }
 
-function heldCall(row: HoldRow): HeldCall {
+function decisionOf(row: HoldRow): HoldDecision {
+	if (row.state === "open" || row.decided_by === null) return { state: "open" };
+	if (row.state === "closed") return { state: "closed", by: row.decided_by };
+	if (row.approve !== 1) return { state: "used", by: row.decided_by, approve: false };
+	return { state: "used", by: row.decided_by, approve: true, outcome: row.outcome === null ? null : (parseJson(row.outcome) as unknown as HoldOutcome) };
+}
+
+/** A `run_holds` row as the call it holds and how it was decided (`SELECT *`). */
+export function heldCall(row: HoldRow): HeldCall {
 	return {
 		runId: row.run_id,
 		position: row.position,
@@ -191,7 +222,7 @@ function heldCall(row: HoldRow): HeldCall {
 		contract: row.contract,
 		arguments: row.arguments,
 		requirements: parseJson(row.requirements) as unknown as HeldRequirement[],
-		state: row.state as HoldState,
+		decision: decisionOf(row),
 		createdAt: row.created_at,
 	};
 }
@@ -224,6 +255,12 @@ export class WriteLedger {
 		return row === undefined ? null : record(row);
 	}
 
+	/** The write a continuation made for an approved hold, if it made one: the hold's outcome while none is stored. */
+	approvedWrite(runId: RunId, heldRun: RunId, position: number): WriteRecord | null {
+		const [row] = this.#sql.exec<WriteRow>("SELECT * FROM run_writes WHERE run_id = ? AND approved_run = ? AND approved_position = ?", runId, heldRun, position);
+		return row === undefined ? null : record(row);
+	}
+
 	/** Every write of the run, in no particular order (tests and diagnostics). */
 	writes(runId: RunId): WriteRecord[] {
 		return this.#sql.exec<WriteRow>("SELECT * FROM run_writes WHERE run_id = ? ORDER BY dispatched_at, key", runId).map(record);
@@ -243,6 +280,25 @@ export class WriteLedger {
 	/** The run's holds, in the order it held them. */
 	holds(runId: RunId): HeldCall[] {
 		return this.#sql.exec<HoldRow>("SELECT * FROM run_holds WHERE run_id = ? ORDER BY position", runId).map(heldCall);
+	}
+
+	/** Every open hold of the conversation, of whichever run, in the order they were held. */
+	openHolds(): HeldCall[] {
+		return this.#sql.exec<HoldRow>("SELECT * FROM run_holds WHERE state = 'open' ORDER BY created_at, run_id, position").map(heldCall);
+	}
+
+	/** A continuation's start uses the held run's holds, each with its decision, in its caller's transaction. */
+	use(by: RunId, heldRun: RunId, decisions: readonly { position: number; approve: boolean }[]): void {
+		for (const { position, approve } of decisions) {
+			this.#sql.exec("UPDATE run_holds SET state = 'used', decided_by = ?, approve = ? WHERE run_id = ? AND position = ? AND state = 'open'", by, approve ? 1 : 0, heldRun, position);
+		}
+	}
+
+	/** A start without an approval closes these holds once its prompt is committed, those still open, in its caller's transaction. */
+	close(by: RunId, holds: readonly { run: RunId; position: number }[]): void {
+		for (const { run, position } of holds) {
+			this.#sql.exec("UPDATE run_holds SET state = 'closed', decided_by = ? WHERE run_id = ? AND position = ? AND state = 'open'", by, run, position);
+		}
 	}
 
 	/** Whether a write was refused APPROVAL_PENDING in the run, which refuses every later one. */
@@ -271,7 +327,7 @@ export class WriteLedger {
 			if (this.paused(runId)) return { kind: "refused", code: "WRITE_UNCERTAIN", message: WRITE_MESSAGES.paused };
 			const held = this.#sql.exec<{ count: number }>("SELECT count(*) AS count FROM run_holds WHERE run_id = ?", runId)[0]?.count ?? 0;
 			if (this.#closed.closed(runId) || held >= MAX_HOLDS) return this.#pending(runId);
-			const call: HeldCall = { ...hold, runId, position: held + 1, state: "open", createdAt: this.#clock.now() };
+			const call: HeldCall = { ...hold, runId, position: held + 1, decision: { state: "open" }, createdAt: this.#clock.now() };
 			this.#sql.exec(
 				"INSERT INTO run_holds (run_id, position, key, write_id, user_id, tool, label, connection_id, provider, operation, contract, arguments, requirements, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 				runId,
@@ -287,7 +343,7 @@ export class WriteLedger {
 				call.contract,
 				call.arguments,
 				JSON.stringify(call.requirements),
-				call.state,
+				call.decision.state,
 				call.createdAt,
 			);
 			return { kind: "held", call };
@@ -313,7 +369,7 @@ export class WriteLedger {
 			if (inFlight.length > 0) return { kind: "refused", code: "WRITE_IN_PROGRESS", message: WRITE_MESSAGES.otherInProgress };
 			const deadlineAt = runDeadline === null ? now + WRITE_WINDOW_MS : Math.min(now + WRITE_WINDOW_MS, runDeadline);
 			this.#sql.exec(
-				"INSERT INTO run_writes (run_id, key, status, result, attempt, dispatched_at, deadline_at, tool, connection_id, write_id) VALUES (?, ?, 'dispatched', NULL, ?, ?, ?, ?, ?, ?)",
+				"INSERT INTO run_writes (run_id, key, status, result, attempt, dispatched_at, deadline_at, tool, connection_id, write_id, approved_run, approved_position) VALUES (?, ?, 'dispatched', NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
 				fence.runId,
 				key,
 				fence.attempt,
@@ -322,6 +378,8 @@ export class WriteLedger {
 				note?.tool ?? "",
 				note?.connection ?? "",
 				note?.write ?? "",
+				note?.approved?.run ?? "",
+				note?.approved?.position ?? 0,
 			);
 			return { kind: "dispatched", deadline: clock + (deadlineAt - now) };
 		});
@@ -332,19 +390,46 @@ export class WriteLedger {
 	 * applied deletes the row, so the same write may be tried again; applied stores the result that answers
 	 * repeats; unknown makes it uncertain, which pauses the run. Only a row still `dispatched` changes, so a
 	 * write the sweep or the restart gate already judged uncertain stays uncertain. Returns the write that was
-	 * settled, or null when none was dispatched.
+	 * settled, or null when none was dispatched. A continuation's write stores its hold's outcome too.
 	 */
 	settle(runId: RunId, key: string, settlement: Settlement): SettledWrite | null {
 		const where = `WHERE run_id = ? AND key = ? AND status = 'dispatched' ${SETTLED}`;
 		let rows: WriteRow[];
+		let stored = "";
 		if (settlement.effect === "not_applied") rows = this.#sql.exec<WriteRow>(`DELETE FROM run_writes ${where}`, runId, key);
 		else if (settlement.effect === "applied") {
 			const text = JSON.stringify(settlement.result);
-			const stored = utf8(text).byteLength > MAX_STORED_RESULT_BYTES ? APPLIED_WITHOUT_RESULT : text;
+			stored = utf8(text).byteLength > MAX_STORED_RESULT_BYTES ? APPLIED_WITHOUT_RESULT : text;
 			rows = this.#sql.exec<WriteRow>(`UPDATE run_writes SET status = 'succeeded', result = ? ${where}`, stored, runId, key);
 		} else rows = this.#sql.exec<WriteRow>(`UPDATE run_writes SET status = 'uncertain' ${where}`, runId, key);
 		const [row] = rows;
-		return row === undefined ? null : settledOf(row);
+		if (row === undefined) return null;
+		const settled = settledOf(row);
+		const outcome = settledOutcome(settlement, stored);
+		if (settled.approved && outcome !== null) this.answer(settled.approved.run, settled.approved.position, outcome);
+		return settled;
+	}
+
+	/**
+	 * Stores an approved hold's outcome unless it has one: the first to know it, its write's settlement or its continuation's
+	 * carry-out, decides. Nothing changes for a hold that is not approved, or no longer held.
+	 */
+	answer(heldRun: RunId, position: number, outcome: HoldOutcome): void {
+		this.#sql.exec(
+			"UPDATE run_holds SET outcome = ? WHERE run_id = ? AND position = ? AND state = 'used' AND approve = 1 AND outcome IS NULL",
+			JSON.stringify(outcome),
+			heldRun,
+			position,
+		);
+	}
+
+	/** Writes made uncertain by the sweep or the gate: their holds' outcomes are unknown. */
+	#lost(rows: WriteRow[]): LostWrite[] {
+		return rows.map((row) => {
+			const lost: LostWrite = { ...settledOf(row), key: row.key };
+			if (lost.approved) this.answer(lost.approved.run, lost.approved.position, { kind: "unknown" });
+			return lost;
+		});
 	}
 
 	/**
@@ -353,9 +438,7 @@ export class WriteLedger {
 	 * `nextSweepAt()` and when it starts.
 	 */
 	sweep(now: EpochMs = this.#clock.now()): LostWrite[] {
-		return this.#sql
-			.exec<WriteRow>(`UPDATE run_writes SET status = 'uncertain' WHERE status = 'dispatched' AND deadline_at < ? ${SETTLED}`, now - LOST_WRITE_GRACE_MS)
-			.map((row) => ({ ...settledOf(row), key: row.key }));
+		return this.#lost(this.#sql.exec<WriteRow>(`UPDATE run_writes SET status = 'uncertain' WHERE status = 'dispatched' AND deadline_at < ? ${SETTLED}`, now - LOST_WRITE_GRACE_MS));
 	}
 
 	/** When the sweep next has something to do: the earliest dispatched write's deadline plus the grace, or null. */
@@ -370,9 +453,7 @@ export class WriteLedger {
 	 * never settle it.
 	 */
 	markDispatchedUncertain(runId: RunId): LostWrite[] {
-		return this.#sql
-			.exec<WriteRow>(`UPDATE run_writes SET status = 'uncertain' WHERE run_id = ? AND status = 'dispatched' ${SETTLED}`, runId)
-			.map((row) => ({ ...settledOf(row), key: row.key }));
+		return this.#lost(this.#sql.exec<WriteRow>(`UPDATE run_writes SET status = 'uncertain' WHERE run_id = ? AND status = 'dispatched' ${SETTLED}`, runId));
 	}
 
 	/** Drops a run's writes and holds, for retention once the run has ended. */

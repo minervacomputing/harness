@@ -72,9 +72,25 @@ export interface RunInternals {
 		created_at: number;
 		settled_at: number | null;
 	}[];
-	writes: { key: string; status: string; attempt: number }[];
-	/** The calls it holds for approval, in position order. */
-	holds: { position: number; key: string; write_id: string; tool: string; label: string; state: string; arguments: string; requirements: string }[];
+	/** Its writes, each with the hold it carries out (`approved_run` empty for none). */
+	writes: { key: string; status: string; attempt: number; approved_run: string; approved_position: number }[];
+	/**
+	 * The calls it holds for approval, in position order, with how a later run decided each: `decided_by`, `approve` (1 or 0
+	 * for a used one) and `outcome` (its JSON), all null while it is open.
+	 */
+	holds: {
+		position: number;
+		key: string;
+		write_id: string;
+		tool: string;
+		label: string;
+		state: string;
+		arguments: string;
+		requirements: string;
+		decided_by: string | null;
+		approve: number | null;
+		outcome: string | null;
+	}[];
 	executions: { call_id: string; executions: number }[];
 	/** The tools the run's snapshot offers. */
 	tools: string[];
@@ -292,9 +308,14 @@ export class Conversation extends BaseConversation {
 				)
 				.toArray()
 				.map((call) => ({ ...call, summary: call.summary === 1 })),
-			writes: sql.exec<{ key: string; status: string; attempt: number }>("SELECT key, status, attempt FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId).toArray(),
+			writes: sql
+				.exec<RunInternals["writes"][number]>("SELECT key, status, attempt, approved_run, approved_position FROM run_writes WHERE run_id = ? ORDER BY dispatched_at", runId)
+				.toArray(),
 			holds: sql
-				.exec<RunInternals["holds"][number]>("SELECT position, key, write_id, tool, label, state, arguments, requirements FROM run_holds WHERE run_id = ? ORDER BY position", runId)
+				.exec<RunInternals["holds"][number]>(
+					"SELECT position, key, write_id, tool, label, state, arguments, requirements, decided_by, approve, outcome FROM run_holds WHERE run_id = ? ORDER BY position",
+					runId,
+				)
 				.toArray(),
 			executions: sql.exec<{ call_id: string; executions: number }>("SELECT call_id, executions FROM tool_executions WHERE run_id = ? ORDER BY call_id", runId).toArray(),
 		};

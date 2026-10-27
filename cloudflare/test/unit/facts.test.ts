@@ -81,6 +81,26 @@ describe("a held call's facts", () => {
 		for (const code of ["APPROVAL_REQUIRED", "APPROVAL_PENDING", "APPROVAL_TOO_LARGE", "APPROVAL_UNAVAILABLE"]) expect(refusedEvent(shown, code, "m").decision).toBe("denied");
 		expect(refusedEvent(shown, "APPROVAL_PENDING", APPROVAL_MESSAGES.pending)).not.toHaveProperty("write");
 	});
+
+	test("a continuation's row for an approved call names its hold, and the fact parses", () => {
+		const shown = { tool: "gmail_send_message", label: "Gmail: Send mail", arguments: { to: ["ada@example.com"] } };
+		const approved = { run: "0199a000-0000-7000-8000-0000000000c1", position: 2 };
+		const event = refusedEvent(shown, "APPROVAL_STALE", APPROVAL_MESSAGES.changed);
+		const fact = toolCallFact(event, { to: ["ada@example.com"] }, approved);
+		expect(fact.data).toEqual({
+			tool: "gmail_send_message",
+			label: "Gmail: Send mail",
+			arguments: '{"to":["ada@example.com"]}',
+			truncated: false,
+			decision: "denied",
+			code: "APPROVAL_STALE",
+			message: "This changed since the user approved it, so it did not run.",
+			approved,
+		});
+		const stored = { seq: 8, run: "0199a000-0000-7000-8000-0000000000c2", at: "2026-10-27T12:00:00.000Z", ...fact };
+		expect(Fact.parse(stored)).toEqual(stored);
+		expect(toolCallFact(event, {}).data).not.toHaveProperty("approved");
+	});
 });
 
 describe("a fact's charge", () => {

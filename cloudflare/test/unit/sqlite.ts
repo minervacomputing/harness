@@ -3,6 +3,7 @@
 // type-checked with the Worker's runtime types, which lack Node's.
 
 import { HOLD_SCHEMA, LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA } from "../../src/gateway/ledger.ts";
+import { HOLD_DECISION_SCHEMA } from "../../src/gateway/schema.ts";
 import { PAGE_TOKEN_SCHEMA } from "../../src/gateway/page-tokens.ts";
 import { type Sql, type SqlValue, type SyncDatabase, applySchema, sqliteSql } from "../../src/lib/sql.ts";
 
@@ -27,7 +28,9 @@ export function ledgerSql(db: Database = openDatabase()): Sql {
 	const sql = sqliteSql(db);
 	applySchema(sql, [...LEDGER_SCHEMA, ...PAGE_TOKEN_SCHEMA, ...HOLD_SCHEMA]);
 	// The ledger's later columns, which (as ALTERs) cannot be made "if not exists".
-	if (!sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('run_writes')").some((column) => column.name === "tool")) applySchema(sql, LEDGER_NOTES_SCHEMA);
+	const columns = new Set(sql.exec<{ name: string }>("SELECT name FROM pragma_table_info('run_writes')").map((column) => column.name));
+	if (!columns.has("tool")) applySchema(sql, LEDGER_NOTES_SCHEMA);
+	if (!columns.has("approved_run")) applySchema(sql, HOLD_DECISION_SCHEMA);
 	return sql;
 }
 

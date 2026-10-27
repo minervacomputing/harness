@@ -3,7 +3,7 @@
 // they land (additive only, lib/sqlite.ts).
 
 import { FOLDER_REPORT_SCHEMA, FOLDER_SCHEMA, FOLDER_STORED_SIZE_SCHEMA } from "../files/schema.ts";
-import { HOLD_SCHEMA, LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA, PAGE_TOKEN_SCHEMA } from "../gateway/schema.ts";
+import { HOLD_DECISION_SCHEMA, HOLD_SCHEMA, LEDGER_NOTES_SCHEMA, LEDGER_SCHEMA, PAGE_TOKEN_SCHEMA } from "../gateway/schema.ts";
 
 /** lib/sqlite.ts `Migration`, written out so the account tests (Node) can read the ids without the Worker's types. */
 interface Migration {
@@ -356,4 +356,6 @@ CREATE TABLE run_attachments (
 			...HOLD_SCHEMA,
 		].join(";\n"),
 	},
+	// How a later run decided each hold, and the hold a continuation's write carries out (gateway/schema.ts).
+	{ id: 19, sql: HOLD_DECISION_SCHEMA.join(";\n") },
 ];

@@ -38,15 +38,15 @@ export function backoffMs(failures: number): number {
 
 /**
  * A `run.tool_call` fact's data: the event's, with the call's own arguments as their JSON cut to its first 2000 characters,
- * one fewer where the cut would split a surrogate pair. Made from the arguments rather than the event's `{truncated}` form,
+ * one fewer where the cut would split a surrogate pair, and the hold of a continuation's approved call. Made from the arguments rather than the event's `{truncated}` form,
  * which a call's real arguments could also have.
  */
-export function toolCallFact(event: ToolCallEventData, args: Json | undefined): NewFact {
+export function toolCallFact(event: ToolCallEventData, args: Json | undefined, approved?: { run: string; position: number }): NewFact {
 	const text = JSON.stringify(args ?? {});
 	const cut = text.length <= MAX_ARGUMENTS ? text : text.slice(0, MAX_ARGUMENTS);
 	const argumentsText = cut.isWellFormed() ? cut : cut.slice(0, -1);
 	const { arguments: _shown, ...rest } = event;
-	return { type: "run.tool_call", data: { ...rest, arguments: argumentsText, truncated: argumentsText.length < text.length } };
+	return { type: "run.tool_call", data: { ...rest, arguments: argumentsText, truncated: argumentsText.length < text.length, ...(approved ? { approved } : {}) } };
 }
 
 /**

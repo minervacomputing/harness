@@ -51,6 +51,12 @@ class FakeLedger implements WriteLedger {
 	sweepLostWrites() {
 		return { uncertain: [], nextAt: null };
 	}
+	holds = () => [];
+	openHolds = () => [];
+	useHolds = () => {};
+	closeHolds = () => {};
+	answerHold = () => {};
+	approvedWrite = () => null;
 }
 
 interface Fakes {

@@ -7,7 +7,8 @@ import { CLIPPED, MESSAGE_LIMIT } from "../../src/conversation/history.ts";
 import { Registry } from "../../src/gateway/registry.ts";
 import { COMPILER_VERSION, startSnapshot } from "../../src/gateway/tools.ts";
 import { catalogOf } from "../../src/internal/catalog.ts";
-import { inputDigest, messageRefusal, prepareStart, promptOf } from "../../src/internal/start.ts";
+import type { HeldCall, HoldDecision } from "../../src/gateway/holds.ts";
+import { type HeldRun, approvalOf, approvalRefusal, inputDigest, messageRefusal, prepareStart, promptOf } from "../../src/internal/start.ts";
 import { FOLDER, keyedConnector, mixedConnector } from "./fakes.ts";
 
 const ORG = "0199a000-0000-7000-8000-0000000000e1";
@@ -174,5 +175,83 @@ describe("the message", () => {
 	test("the input's digest names the whole command", async () => {
 		expect(await inputDigest(command())).toBe(await inputDigest(command()));
 		expect(await inputDigest(command({ user: "43" }))).not.toBe(await inputDigest(command()));
+	});
+});
+
+describe("the approval", () => {
+	const HELD = "0199a000-0000-7000-8000-0000000000e8";
+	const OTHER = "0199a000-0000-7000-8000-0000000000e9";
+	const unknown = { outcome: "refused", code: "APPROVAL_UNKNOWN", message: "These decisions do not match the actions waiting for approval." };
+	const decided = { outcome: "refused", code: "APPROVAL_DECIDED", message: "These actions were already answered." };
+
+	function hold(position: number, decision: HoldDecision = { state: "open" }, userId = "42"): HeldCall {
+		return {
+			runId: HELD,
+			position,
+			key: String(position).repeat(64),
+			write: String(position).repeat(32),
+			userId,
+			tool: "mixed_save_file",
+			label: "Mixed: Save a file",
+			connection: MINE,
+			provider: "mixed",
+			operation: "save_file",
+			contract: "fingerprint",
+			arguments: `{"name":"${position}"}`,
+			requirements: [],
+			decision,
+			createdAt: NOW - 60_000,
+		};
+	}
+
+	const run = (holds: HeldCall[], attended = true): HeldRun => ({ attended, holds });
+	const deciding = (...decisions: [number, boolean][]) => command({ approval: { run: HELD, decisions: decisions.map(([position, approve]) => ({ position, approve })) } });
+
+	test("a start without one passes, whatever the conversation holds", () => {
+		expect(approvalRefusal(command(), null)).toBeNull();
+		expect(approvalOf(command(), run([hold(1)]))).toBeNull();
+	});
+
+	test("deciding every open hold of an attended run of the user passes, also beside holds decided earlier", () => {
+		expect(approvalRefusal(deciding([1, true], [2, false]), run([hold(1), hold(2)]))).toBeNull();
+		expect(approvalRefusal(deciding([2, true], [1, true]), run([hold(1), hold(2)]))).toBeNull();
+	});
+
+	test.each([
+		["a run the conversation does not hold", null],
+		["a run nobody attended", run([hold(1), hold(2)], false)],
+		["a position the run holds nothing at", run([hold(1)])],
+		["another user's hold", run([hold(1), hold(2, { state: "open" }, "7")])],
+		["one open hold left out", run([hold(1), hold(2), hold(3)])],
+	] as const)("%s is APPROVAL_UNKNOWN", (_name, held) => {
+		expect(approvalRefusal(deciding([1, true], [2, true]), held)).toEqual(unknown);
+	});
+
+	test.each([
+		["used", { state: "used", by: OTHER, approve: true, outcome: null }],
+		["declined", { state: "used", by: OTHER, approve: false }],
+		["closed", { state: "closed", by: OTHER }],
+	] as const)("a hold already %s is APPROVAL_DECIDED, before a set that no longer matches", (_name, decision) => {
+		expect(approvalRefusal(deciding([1, true], [2, true]), run([hold(1, decision), hold(2)]))).toEqual(decided);
+		expect(approvalRefusal(deciding([1, true]), run([hold(1, decision), hold(2)]))).toEqual(decided);
+	});
+
+	test("a hold of another user is APPROVAL_UNKNOWN even when it was decided", () => {
+		expect(approvalRefusal(deciding([1, true]), run([hold(1, { state: "closed", by: OTHER }, "7")]))).toEqual(unknown);
+	});
+
+	test("the snapshot copies each decided hold whole with its decision, in position order, and the digest names it", async () => {
+		const start = deciding([2, false], [1, true]);
+		const held = run([hold(1), hold(2)]);
+		const approval = approvalOf(start, held);
+		const { decision: _one, createdAt: _at1, ...first } = hold(1);
+		const { decision: _two, createdAt: _at2, ...second } = hold(2);
+		expect(approval).toEqual({ run: HELD, holds: [{ ...first, approve: true }, { ...second, approve: false }] });
+		const plain = await prepareStart(registry, command(), { now: NOW, runTimeoutMs: null });
+		const prepared = await prepareStart(registry, start, { now: NOW, runTimeoutMs: null, approval });
+		expect(prepared.snapshot).toEqual({ ...plain.snapshot, approval });
+		expect(prepared.digest).not.toBe(plain.digest);
+		const declined = await prepareStart(registry, deciding([2, false], [1, false]), { now: NOW, runTimeoutMs: null, approval: approvalOf(deciding([2, false], [1, false]), held) });
+		expect(declined.digest).not.toBe(prepared.digest);
 	});
 });

@@ -79,9 +79,21 @@ export interface RunView {
 			created_at: number;
 			settled_at: number | null;
 		}[];
-		writes: { key: string; status: string; attempt: number }[];
-		/** The calls the run holds for approval, in position order (src/faults/index.ts, `RunInternals`). */
-		holds: { position: number; key: string; write_id: string; tool: string; label: string; state: string; arguments: string; requirements: string }[];
+		writes: { key: string; status: string; attempt: number; approved_run: string; approved_position: number }[];
+		/** The calls the run holds for approval, in position order, with how a later run decided each (src/faults/index.ts, `RunInternals`). */
+		holds: {
+			position: number;
+			key: string;
+			write_id: string;
+			tool: string;
+			label: string;
+			state: string;
+			arguments: string;
+			requirements: string;
+			decided_by: string | null;
+			approve: number | null;
+			outcome: string | null;
+		}[];
 		executions: { call_id: string; executions: number }[];
 		/** The connector tools the run's snapshot offers. */
 		tools: string[];
@@ -118,7 +130,8 @@ export interface World {
 }
 
 export type Attachment = StartRun["message"]["attachments"][number];
-export type Turn = { text?: string; tools?: { name: string; arguments: { [key: string]: unknown } }[] };
+/** One of the fake model's turns (src/model/fake.ts): its text, its tool calls, or `note`, the run's note as its answer. */
+export type Turn = { text?: string; tools?: { name: string; arguments: { [key: string]: unknown } }[]; note?: true };
 export type LocalCard = { tool: string; summary: string; ok: boolean; excerpt: string };
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -210,21 +223,33 @@ export type HistoryMessage = StartRun["history"][number];
 /** A start's authority once the user's connection was removed: no connection, and no grant. */
 export const NO_CONNECTIONS: StartRun["authority"] = { connections: [], layers: { ceiling: null, user: { restricted: true, revision: 1, grants: [] }, agent: null } };
 
+export type StartOptions = {
+	allowance?: number | null;
+	history?: HistoryMessage[];
+	message?: string;
+	authority?: StartRun["authority"];
+	attended?: true;
+	approval?: StartRun["approval"];
+};
+
 /**
  * Sends a message as Laravel does: the fake Laravel holds the run, then `startRun` names the agent's Notes connection, which the
  * user may use in every folder, to read and create (unless `authority` says otherwise), and gives it `allowance` (µ$; none when
  * null; by default, LARGE_ALLOWANCE with every other start), and the conversation's earlier messages as Laravel sends them
- * (`history`, none by default); `attended` when a person made the start, so a call a layer asks before is held. Answers the
- * run's id; a refusal throws.
+ * (`history`, none by default); `attended` when a person made the start, so a call a layer asks before is held, and
+ * `approval` for a continuation. Answers the run's id; a refusal throws.
  */
-export async function post(
-	w: World,
-	content: string,
-	attachments: Attachment[] = [],
-	options: { allowance?: number | null; history?: HistoryMessage[]; message?: string; authority?: StartRun["authority"]; attended?: true } = {},
-): Promise<string> {
+export async function post(w: World, content: string, attachments: Attachment[] = [], options: StartOptions = {}): Promise<string> {
+	const start = startOf(w, content, attachments, options);
+	const answer = await send(w, start);
+	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
+	return start.run;
+}
+
+/** The start `post` sends, not sent, so a test can send the same one again. */
+export function startOf(w: World, content: string, attachments: Attachment[] = [], options: StartOptions = {}): StartRun {
 	const allowance = options.allowance !== undefined ? options.allowance : starts++ % 2 === 0 ? LARGE_ALLOWANCE : null;
-	const start: StartRun = {
+	return {
 		scope: w.scope,
 		conversation: w.conversationId,
 		run: uuid7(),
@@ -235,12 +260,16 @@ export async function post(
 		authority: options.authority ?? { connections: [notesConnection(w.connectionId)], layers: notesLayers(w.connectionId) },
 		...(allowance === null ? {} : { allowance }),
 		...(options.attended ? { attended: true as const } : {}),
+		...(options.approval ? { approval: options.approval } : {}),
 	};
+}
+
+/** Holds the start's run in the fake Laravel and sends it; the engine's answer, refusals included. */
+export async function send(w: World, start: StartRun): Promise<Awaited<ReturnType<typeof commands.startRun>>> {
 	await driver("hold", { ...base(w), runId: start.run, run: heldRun(start) });
 	const answer = await sendStart(start);
-	if (answer.outcome !== "accepted") throw new Error(`Refused: ${answer.code} ${answer.message}`);
-	runs.push({ w, runId: start.run });
-	return start.run;
+	if (answer.outcome === "accepted" && !runs.some((sent) => sent.runId === start.run)) runs.push({ w, runId: start.run });
+	return answer;
 }
 
 /**
